@@ -1,0 +1,152 @@
+---
+description: Master rule for PHOENIX project. Always applied. Defines the goal, architecture, tech stack, and engineering standards that every persona and every file must follow.
+globs: ["**/*"]
+---
+# PHOENIX - Master Project Rule
+
+## The Goal
+
+Build an automated cricket betting system that learns to make consistent profits over time. The system scrapes live odds from **LotusBook** (`https://lotusbook.site/cricket`), trains a **reinforcement learning agent** through virtual betting, and only graduates to real money once profitability is proven.
+
+**We are NOT building a rule-based betting system.** We are building a self-improving RL agent that discovers profitable betting behavior through experience.
+
+## How We Achieve It
+
+```
+1. SCRAPE live odds from LotusBook (Playwright, every 3-5 seconds)
+2. ENRICH with raw match statistics (Cricbuzz: score, wickets, overs, run rate)
+3. ENGINEER 66 data-backed features (odds momentum, volatility, microstructure, raw stats, portfolio)
+4. TRAIN an RL agent (PPO via Stable-Baselines3) on a custom Gymnasium environment
+5. VIRTUAL BET until the agent proves: >55% win rate, >8% ROI, >1.5 Sharpe over 14 days
+6. GRADUATE to live execution only after human approval
+```
+
+**DATA-ONLY PHILOSOPHY:** Every feature must be either raw data from LotusBook/Cricbuzz, a mathematical transformation of that data, or the agent's own portfolio state. NO cricket domain heuristics, NO subjective judgments, NO hand-coded patterns. The RL agent discovers all patterns from data.
+
+## Architecture (6 Layers)
+
+- **Layer 1 - Data:** LotusBook scraper + Cricbuzz enricher -> Redis pub/sub -> TimescaleDB
+- **Layer 2 - Features:** 66-feature observation vector (odds, momentum, raw stats, portfolio state)
+- **Layer 3 - RL Engine:** Gymnasium env + PPO agent + reward shaping + curriculum learning
+- **Layer 4 - Execution:** Virtual bet engine + risk manager + [live executor post-graduation]
+- **Layer 5 - API:** FastAPI backend + WebSocket streaming
+- **Layer 6 - Dashboard:** Next.js 14 (training curves, P&L charts, graduation progress)
+
+## Tech Stack
+
+- **Python 3.11+**, FastAPI, SQLAlchemy (async), Pydantic v2
+- **RL:** Stable-Baselines3, Gymnasium, PyTorch
+- **Scraping:** Playwright (CDP WebSocket interception)
+- **Database:** TimescaleDB (time-series), Redis 7 (pub/sub + cache)
+- **Frontend:** Next.js 14, Tailwind CSS, Recharts, TypeScript
+- **Infra:** Docker Compose, Prometheus, Grafana
+- **Quality:** ruff, mypy, pytest, pre-commit, structlog
+
+## Project Structure
+
+```
+shared/              # Shared package (config, schemas, logging, redis, db, constants)
+scraper/             # LotusBook scraper + parsers
+features/            # Feature pipeline + extractors
+rl/                  # Gymnasium env, PPO agent, reward, trainer, graduation
+virtual_trading/     # Virtual bet engine, portfolio, settlement
+backend/             # FastAPI API + routers + services
+frontend/            # Next.js dashboard
+tests/               # unit/ integration/ rl/ e2e/
+infra/               # Prometheus, Grafana configs
+models/              # ML model checkpoints
+docs/architecture/   # Architecture documentation
+```
+
+## Engineering Standards (Always Enforce)
+
+### Code Organization
+- **Use `shared/` for all cross-service code.** Never duplicate schemas, config, or constants across services.
+- **Import config via `shared.config.get_settings()`**, never raw `os.getenv()`.
+- **Import schemas from `shared.schemas`**, never re-define `OddsEvent`, `VirtualBet`, etc.
+- **Import constants from `shared.constants`**, never use magic strings for Redis channels or risk limits.
+
+### Code Quality
+- **Type hints on every function** (enforced by mypy strict mode).
+- **Pydantic models for all data** crossing service boundaries.
+- **Ruff for linting and formatting** (line length 100, configured in pyproject.toml).
+- **Docstrings on all public functions and classes** (Google style).
+- **No print statements.** Use `shared.logging.setup_logging()` for structured JSON logs.
+
+### Architecture Patterns
+- **Microservices via Docker Compose** -- each service is independently deployable.
+- **Redis pub/sub for inter-service communication** -- use `shared.redis_client.ReliableRedis` with retry and dead letter support.
+- **Async everywhere** -- all I/O is async (asyncio, asyncpg, aioredis).
+- **Pydantic Settings for config** -- typed, validated, with env_prefix per service.
+- **Alembic for database migrations** -- never modify schema with raw SQL in production.
+- **Graceful shutdown** -- all services handle SIGTERM/SIGINT to close connections cleanly.
+
+### Docker & Deployment
+- **Multi-stage Dockerfiles** -- builder stage for deps, slim runtime image, non-root user.
+- **Health checks on every service** in docker-compose.yml.
+- **3 Docker networks** -- `phoenix-data`, `phoenix-app`, `phoenix-monitor` (isolation).
+- **Docker profiles** -- `dev` (includes pgadmin, redis-commander), `prod` (lean), `monitor` (prometheus, grafana).
+- **Secrets via .env** -- never commit `.env`, use `.env.example` as template.
+
+### Testing
+- **pytest markers:** `@pytest.mark.unit`, `@pytest.mark.integration`, `@pytest.mark.rl`.
+- **RL sanity checks are mandatory** -- agent mostly HOLDs, no NaN observations, passes `check_env()`.
+- **Reward function tests are critical** -- winning bets give positive reward, losing gives negative, HOLD is near-zero.
+
+### RL-Specific Standards
+- **Observation vector must be fixed-size (66 floats)**, no NaN, normalized via `OnlineNormalizer`.
+- **All 66 features are data-backed only:** raw odds, mathematical momentum/volatility, raw match stats, temporal, portfolio state, statistical patterns. NO cricket heuristics (no "match phase", no "team strength", no "venue factor", no "dew factor").
+- **HOLD should be ~90% of actions** -- the agent learns patience.
+- **Reward function has 6 components:** P&L, patience, overtrading penalty, risk penalty, drawdown penalty, Sharpe bonus. NO domain-specific shaping (no "death over penalty", no "phase-based" adjustments).
+- **Curriculum learning:** 4 stages (pattern recognition -> full actions -> live simulation -> adversarial).
+- **Graduation requires ALL criteria met for 14 consecutive days:** win rate >55%, ROI >8%, Sharpe >1.5, drawdown <15%, 10+ profitable days, 100+ bets.
+
+### Feature Philosophy (Data-Only)
+- **Group 1 (12):** Raw odds from LotusBook (back/lay prices, implied probs, overround, spreads)
+- **Group 2 (16):** Odds momentum (velocity, acceleration, volatility, EMA crossover -- math on price data)
+- **Group 3 (8):** Market microstructure (spread dynamics, efficiency, staleness -- derived from odds)
+- **Group 4 (8):** Raw match stats (is_live, overs, wickets, score, run_rate, req_rr, innings, balls_remaining)
+- **Group 5 (6):** Temporal (cyclical hour/day, match_minutes, tick_interval)
+- **Group 6 (8):** Portfolio state (bankroll, exposure, streak, win_rate, pnl)
+- **Group 7 (8):** Statistical patterns (z-scores, percentiles, autocorrelation, trend strength -- pure math)
+
+### Anti-Detection (from The House)
+- **Random delays 5-15s** before any bet placement.
+- **Stake noise +/-20%** on every bet.
+- **Win rate capped at 58%** -- higher triggers bookmaker detection.
+- **Never bet immediately after odds change** -- looks like a bot.
+- **Vary session behavior** -- viewport, user agent, scroll patterns.
+
+## Key Files Reference
+
+| Purpose | File |
+|---------|------|
+| All shared types | `shared/schemas.py` |
+| All config | `shared/config.py` |
+| All constants | `shared/constants.py` |
+| Redis connection | `shared/redis_client.py` |
+| DB connection | `shared/db.py` |
+| Logging setup | `shared/logging.py` |
+| RL environment | `rl/environment.py` |
+| Reward function | `rl/reward.py` |
+| Feature pipeline | `features/pipeline.py` |
+| LotusBook parser | `scraper/parsers/lotusbook_parser.py` |
+| Backend API | `backend/main.py` |
+| Docker setup | `docker-compose.yml` |
+| Architecture doc | `docs/architecture/01-system-architecture.md` |
+
+## Persona Quick Reference
+
+| # | Rule File | Persona | Domain |
+|---|-----------|---------|--------|
+| 01 | `01-data-engineer.mdc` | The Ghost | Scraping, data pipeline |
+| 02 | `02-rl-engineer.mdc` | The Learner | RL env, agent, reward, graduation |
+| 03 | `03-quant-analyst.mdc` | The Math | Features, statistics |
+| 04 | `04-full-stack.mdc` | The Architect | API, dashboard |
+| 05 | `05-betting-expert.mdc` | The Oracle | Cricket betting domain |
+| 06 | `06-bookmaker.mdc` | The House | Adversarial, detection avoidance |
+| 07 | `07-devops.mdc` | The Sentinel | Docker, infra, monitoring |
+| 08 | `08-tester.mdc` | The Guardian | Testing, QA |
+| 09 | `09-ui-designer.mdc` | The Visionary | UI/UX, design system |
+
+When working on a specific file, the matching persona rule (via globs) provides deep domain context. This master rule provides the overarching standards that apply everywhere.

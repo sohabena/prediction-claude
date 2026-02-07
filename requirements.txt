@@ -1,0 +1,53 @@
+# ============================================================
+# PHOENIX - Cricket Betting RL System
+# Python 3.11+ required
+# ============================================================
+
+# --- Core Framework ---
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.6.0
+pydantic-settings>=2.1.0
+
+# --- Database ---
+sqlalchemy[asyncio]>=2.0.25
+asyncpg>=0.29.0
+alembic>=1.13.0
+
+# --- Redis ---
+redis>=5.0.1
+hiredis>=2.3.0
+
+# --- Reinforcement Learning ---
+stable-baselines3>=2.3.0
+gymnasium>=0.29.0
+torch>=2.2.0
+tensorboard>=2.15.0
+
+# --- Data & ML ---
+pandas>=2.2.0
+numpy>=1.26.0
+scikit-learn>=1.4.0
+
+# --- Web Scraping ---
+playwright>=1.41.0
+
+# --- Logging & Monitoring ---
+structlog>=24.1.0
+prometheus-client>=0.20.0
+
+# --- Code Quality (dev) ---
+ruff>=0.2.0
+mypy>=1.8.0
+pre-commit>=3.6.0
+
+# --- Testing ---
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+pytest-cov>=4.1.0
+httpx>=0.26.0
+
+# --- Utilities ---
+python-dotenv>=1.0.0
+httpx>=0.26.0
+orjson>=3.9.0

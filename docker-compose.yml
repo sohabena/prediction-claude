@@ -1,0 +1,297 @@
+version: '3.8'
+
+# ============================================================
+# PHOENIX - Cricket Betting RL System
+# Docker Compose for local Windows deployment
+#
+# Usage:
+#   Development:  docker compose --profile dev up -d
+#   Production:   docker compose --profile prod up -d
+#   Full stack:   docker compose --profile dev --profile monitor up -d
+# ============================================================
+
+services:
+  # ==================== Core Infrastructure ====================
+
+  redis:
+    image: redis:7-alpine
+    container_name: phoenix-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - phoenix-data
+      - phoenix-app
+
+  timescaledb:
+    image: timescale/timescaledb:latest-pg15
+    container_name: phoenix-timescaledb
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-phoenix}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-phoenix_secure_2026}
+      POSTGRES_DB: ${POSTGRES_DB:-phoenix_betting}
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U phoenix"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - phoenix-data
+      - phoenix-app
+
+  # ==================== Application Services ====================
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: phoenix-backend
+    ports:
+      - "${API_PORT:-8000}:8000"
+    environment:
+      - POSTGRES_HOST=timescaledb
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-phoenix_betting}
+      - POSTGRES_USER=${POSTGRES_USER:-phoenix}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-phoenix_secure_2026}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - API_PORT=8000
+      - API_CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_FORMAT=json
+    depends_on:
+      redis:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/api/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    profiles: ["dev", "prod"]
+    networks:
+      - phoenix-app
+      - phoenix-monitor
+
+  scraper:
+    build:
+      context: .
+      dockerfile: Dockerfile.scraper
+    container_name: phoenix-scraper
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - SCRAPER_BETTING_SITE_URL=${SCRAPER_BETTING_SITE_URL:-https://lotusbook.site/cricket}
+      - SCRAPER_HEADLESS=${SCRAPER_HEADLESS:-true}
+      - SCRAPER_POLL_INTERVAL=${SCRAPER_POLL_INTERVAL:-3}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_FORMAT=json
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles: ["dev", "prod"]
+    networks:
+      - phoenix-data
+
+  rl-trainer:
+    build:
+      context: .
+      dockerfile: Dockerfile.rl
+    container_name: phoenix-rl-trainer
+    environment:
+      - POSTGRES_HOST=timescaledb
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-phoenix_betting}
+      - POSTGRES_USER=${POSTGRES_USER:-phoenix}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-phoenix_secure_2026}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - RL_TRAINING_MODE=${RL_TRAINING_MODE:-offline}
+      - RL_MODEL_PATH=/app/models/best_model.zip
+      - RL_STARTING_BANKROLL=${RL_STARTING_BANKROLL:-100000}
+      - RL_GRADUATION_ENABLED=${RL_GRADUATION_ENABLED:-true}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_FORMAT=json
+    volumes:
+      - ./models:/app/models
+      - ./logs:/app/logs
+    depends_on:
+      redis:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles: ["dev", "prod"]
+    networks:
+      - phoenix-data
+      - phoenix-app
+      - phoenix-monitor
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile.rl
+    container_name: phoenix-orchestrator
+    command: ["python", "-m", "rl.orchestrator"]
+    environment:
+      - POSTGRES_HOST=timescaledb
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-phoenix_betting}
+      - POSTGRES_USER=${POSTGRES_USER:-phoenix}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-phoenix_secure_2026}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - RL_MODEL_PATH=/app/models/best_model.zip
+      - RL_STARTING_BANKROLL=${RL_STARTING_BANKROLL:-100000}
+      - RL_GRADUATION_ENABLED=${RL_GRADUATION_ENABLED:-true}
+      - RL_MIN_MATCHES_TO_TRAIN=${RL_MIN_MATCHES_TO_TRAIN:-30}
+      - RL_NIGHTLY_RETRAIN_STEPS=${RL_NIGHTLY_RETRAIN_STEPS:-50000}
+      - RL_AUTO_ADVANCE_CURRICULUM=true
+      - SCRAPER_INTERNATIONAL_ONLY=true
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_FORMAT=json
+    volumes:
+      - ./models:/app/models
+      - ./logs:/app/logs
+    depends_on:
+      redis:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+      scraper:
+        condition: service_started
+    restart: unless-stopped
+    profiles: ["dev", "prod"]
+    networks:
+      - phoenix-data
+      - phoenix-app
+      - phoenix-monitor
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: phoenix-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:${API_PORT:-8000}
+      - NEXT_PUBLIC_WS_URL=ws://localhost:${API_PORT:-8000}/ws
+    depends_on:
+      - backend
+    restart: unless-stopped
+    profiles: ["dev", "prod"]
+    networks:
+      - phoenix-app
+
+  # ==================== Dev Tools (dev profile only) ====================
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: phoenix-pgadmin
+    ports:
+      - "5050:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@phoenix.local
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+    depends_on:
+      - timescaledb
+    restart: unless-stopped
+    profiles: ["dev"]
+    networks:
+      - phoenix-data
+
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: phoenix-redis-commander
+    ports:
+      - "8081:8081"
+    environment:
+      REDIS_HOSTS: local:redis:6379
+    depends_on:
+      - redis
+    restart: unless-stopped
+    profiles: ["dev"]
+    networks:
+      - phoenix-data
+
+  # ==================== Monitoring (monitor profile) ====================
+
+  prometheus:
+    image: prom/prometheus:v2.50.0
+    container_name: phoenix-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    restart: unless-stopped
+    profiles: ["monitor"]
+    networks:
+      - phoenix-monitor
+
+  grafana:
+    image: grafana/grafana:10.3.0
+    container_name: phoenix-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-phoenixadmin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    profiles: ["monitor"]
+    networks:
+      - phoenix-monitor
+
+# ==================== Volumes ====================
+
+volumes:
+  redis_data:
+    name: phoenix-redis-data
+  timescale_data:
+    name: phoenix-timescale-data
+  prometheus_data:
+    name: phoenix-prometheus-data
+  grafana_data:
+    name: phoenix-grafana-data
+
+# ==================== Networks ====================
+
+networks:
+  phoenix-data:
+    name: phoenix-data
+    driver: bridge
+  phoenix-app:
+    name: phoenix-app
+    driver: bridge
+  phoenix-monitor:
+    name: phoenix-monitor
+    driver: bridge

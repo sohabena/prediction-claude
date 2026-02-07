@@ -1,0 +1,866 @@
+{
+  "match_id": "test_ind_vs_aus_2025",
+  "teams": {
+    "home": "India",
+    "away": "Australia"
+  },
+  "recorded_at": "2026-02-07T16:54:39.254542",
+  "final_result": null,
+  "ticks": [
+    {
+      "timestamp": "2026-02-07T16:54:39.252605",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:54:44.267094",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:54:49.280037",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:54:54.294302",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:54:59.300133",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:55:04.318650",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:55:09.334170",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:55:14.349403",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:55:19.364819",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:55:24.380481",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:55:29.379768",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:55:34.396726",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:55:39.418422",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:55:44.432651",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:55:49.446620",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:55:54.459695",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:55:59.467833",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:56:04.490344",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:56:09.505612",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:56:14.517801",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:56:19.533574",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:56:24.552508",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:56:29.561804",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:56:34.580114",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:56:39.595064",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:56:44.609423",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:56:49.624458",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:56:54.640358",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:56:59.652001",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:57:04.667052",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:57:09.681561",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:57:14.699066",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:57:19.713675",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:57:24.723863",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:57:29.747354",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:57:34.765939",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:57:39.778813",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:57:44.812203",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:57:49.827521",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:57:54.835443",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:57:59.848335",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:58:04.863396",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:58:09.877976",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:58:14.892015",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    },
+    {
+      "timestamp": "2026-02-07T16:58:19.905365",
+      "odds": {
+        "India": {
+          "back": 1.85,
+          "lay": 1.87
+        },
+        "Australia": {
+          "back": 2.1,
+          "lay": 2.12
+        }
+      },
+      "score": {
+        "runs": 145,
+        "wickets": 3,
+        "overs": 15.2
+      },
+      "is_suspended": false
+    }
+  ]
+}

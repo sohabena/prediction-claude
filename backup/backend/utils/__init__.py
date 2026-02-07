@@ -1,4 +1,0 @@
-"""
-TITAN Utility Functions
-"""
-
