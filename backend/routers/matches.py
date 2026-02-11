@@ -1,13 +1,14 @@
-"""Match data endpoints: live odds, historical data."""
+"""Match data endpoints: live odds, historical data, training approval."""
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from fastapi import APIRouter, Query
-from sqlalchemy import select, text
+from fastapi import APIRouter, HTTPException, Query
+from sqlalchemy import select, text, update
 
+from backend.models.match_status import MatchTrainingStatus
 from shared.db import get_session
 from shared.logging import setup_logging
 from shared.redis_client import get_redis
@@ -119,3 +120,135 @@ async def get_match_context(
     except Exception as e:
         logger.error("context_query_error", match_id=match_id, error=str(e))
         return {"match_id": match_id, "count": 0, "context": [], "error": str(e)}
+
+
+# ============================================================
+# Training Approval Endpoints
+# ============================================================
+
+
+@router.get("/training-status")
+async def get_training_status(
+    status_filter: Optional[str] = Query(None, alias="status"),
+) -> dict[str, Any]:
+    """List all matches with their training approval status.
+
+    Optional query param ``status`` filters by: pending, approved, rejected.
+    Also returns tick counts for each match.
+    """
+    try:
+        async with get_session() as session:
+            # Build query - join with odds_ticks to get tick counts
+            where_clause = ""
+            params: dict[str, Any] = {}
+            if status_filter and status_filter in ("pending", "approved", "rejected"):
+                where_clause = "WHERE mts.training_status = :status"
+                params["status"] = status_filter
+
+            result = await session.execute(
+                text(f"""
+                    SELECT
+                        mts.match_id,
+                        mts.team_home,
+                        mts.team_away,
+                        mts.competition,
+                        mts.training_status,
+                        mts.auto_approved,
+                        mts.approved_at,
+                        mts.created_at,
+                        COALESCE(tc.tick_count, 0) as tick_count
+                    FROM match_training_status mts
+                    LEFT JOIN (
+                        SELECT match_id, COUNT(*) as tick_count
+                        FROM odds_ticks
+                        GROUP BY match_id
+                    ) tc ON tc.match_id = mts.match_id
+                    {where_clause}
+                    ORDER BY mts.created_at DESC
+                """),
+                params,
+            )
+            rows = result.fetchall()
+
+            matches = [
+                {
+                    "match_id": row[0],
+                    "team_home": row[1],
+                    "team_away": row[2],
+                    "competition": row[3],
+                    "training_status": row[4],
+                    "auto_approved": row[5],
+                    "approved_at": row[6].isoformat() if row[6] else None,
+                    "created_at": row[7].isoformat() if row[7] else None,
+                    "tick_count": row[8],
+                }
+                for row in rows
+            ]
+
+            # Summary counts
+            summary = {"pending": 0, "approved": 0, "rejected": 0}
+            for m in matches:
+                s = m["training_status"]
+                if s in summary:
+                    summary[s] += 1
+
+            return {
+                "matches": matches,
+                "total": len(matches),
+                "summary": summary,
+            }
+    except Exception as e:
+        logger.error("training_status_query_error", error=str(e))
+        return {"matches": [], "total": 0, "summary": {}, "error": str(e)}
+
+
+@router.patch("/{match_id}/approve")
+async def approve_match(match_id: str) -> dict[str, Any]:
+    """Approve a match for RL training."""
+    try:
+        async with get_session() as session:
+            result = await session.execute(
+                select(MatchTrainingStatus).where(
+                    MatchTrainingStatus.match_id == match_id
+                )
+            )
+            record = result.scalar_one_or_none()
+            if record is None:
+                raise HTTPException(status_code=404, detail="Match not found")
+
+            record.training_status = "approved"
+            record.approved_at = datetime.now(timezone.utc)
+
+        logger.info("match_approved", match_id=match_id)
+        return {"match_id": match_id, "training_status": "approved"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("approve_error", match_id=match_id, error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.patch("/{match_id}/reject")
+async def reject_match(match_id: str) -> dict[str, Any]:
+    """Reject a match from RL training."""
+    try:
+        async with get_session() as session:
+            result = await session.execute(
+                select(MatchTrainingStatus).where(
+                    MatchTrainingStatus.match_id == match_id
+                )
+            )
+            record = result.scalar_one_or_none()
+            if record is None:
+                raise HTTPException(status_code=404, detail="Match not found")
+
+            record.training_status = "rejected"
+            record.approved_at = None
+
+        logger.info("match_rejected", match_id=match_id)
+        return {"match_id": match_id, "training_status": "rejected"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("reject_error", match_id=match_id, error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))

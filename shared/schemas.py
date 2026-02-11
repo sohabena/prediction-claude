@@ -27,8 +27,10 @@ class BettingAction(IntEnum):
     BACK_HOME_LG = 2  # Back home team, 3% bankroll
     BACK_AWAY_SM = 3  # Back away team, 1% bankroll
     BACK_AWAY_LG = 4  # Back away team, 3% bankroll
-    LAY_HOME_SM = 5  # Lay home team, 1% bankroll
-    LAY_AWAY_SM = 6  # Lay away team, 1% bankroll
+    LAY_HOME_SM = 5   # Lay home team, 1% bankroll
+    LAY_AWAY_SM = 6   # Lay away team, 1% bankroll
+    LAY_HOME_LG = 7   # Lay home team, 3% bankroll
+    LAY_AWAY_LG = 8   # Lay away team, 3% bankroll
 
 
 class MatchStatus(StrEnum):
@@ -127,6 +129,8 @@ class VirtualBet(BaseModel):
     settled_at: Optional[datetime] = None
     outcome: BetOutcome = BetOutcome.PENDING
     profit_loss: float = 0.0
+    closing_odds: Optional[float] = None  # Odds at match completion
+    clv: Optional[float] = None  # Closing Line Value
 
     # RL metadata
     agent_version: str = ""
@@ -195,6 +199,20 @@ class TrainingMetrics(BaseModel):
     value_loss: float = 0.0
     entropy: float = 0.0
     agent_version: str = ""
+
+
+class MatchResult(BaseModel):
+    """Final match result (who won)."""
+
+    match_id: str
+    completed_at: datetime
+    winner: str  # Team name of the winner
+    loser: str  # Team name of the loser
+    result_type: str = "win"  # win | tie | no_result | draw | abandoned
+    margin: str = ""  # e.g. "5 wickets", "23 runs"
+    team_home: str = ""
+    team_away: str = ""
+    source: str = "cricbuzz"
 
 
 class HealthStatus(BaseModel):

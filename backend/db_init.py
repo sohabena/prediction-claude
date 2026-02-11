@@ -20,6 +20,8 @@ from backend.models import (  # noqa: F401 - ensure all models are registered
     VirtualBetRecord,
     TrainingMetricRecord,
     GraduationSnapshot,
+    MatchResultRecord,
+    MatchTrainingStatus,
 )
 from shared.config import get_settings
 from shared.logging import setup_logging
@@ -40,6 +42,8 @@ INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_odds_live ON odds_ticks (is_live, time DESC)",
     "CREATE INDEX IF NOT EXISTS idx_context_match_time ON match_context (match_id, time DESC)",
     "CREATE INDEX IF NOT EXISTS idx_bets_match ON virtual_bets (match_id, placed_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_results_match ON match_results (match_id)",
+    "CREATE INDEX IF NOT EXISTS idx_training_status ON match_training_status (training_status)",
 ]
 
 RETENTION_STATEMENTS = [

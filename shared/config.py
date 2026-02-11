@@ -77,6 +77,7 @@ class RLConfig(BaseSettings):
     auto_advance_curriculum: bool = True  # Auto-advance curriculum stages
     data_lookback_days: int = 90  # How far back to load training data
     min_ticks_per_match: int = 50  # Minimum odds ticks for a match to be usable
+    algorithm: str = "ppo"  # ppo | dqn -- algorithm selection for agent training
 
     model_config = {"env_prefix": "RL_"}
 

@@ -36,6 +36,7 @@ class GraduationEvaluator:
         max_drawdown: float,
         profitable_days: int,
         total_bets: int,
+        avg_clv: float = 0.0,
     ) -> GraduationStatus:
         """
         Evaluate all graduation criteria.
@@ -47,6 +48,7 @@ class GraduationEvaluator:
             max_drawdown: Max drawdown over last 30 days.
             profitable_days: Number of profitable days in last 14.
             total_bets: Total bets in last 30 days.
+            avg_clv: Average Closing Line Value over last 200 bets.
 
         Returns:
             GraduationStatus with all criteria evaluations.
@@ -61,6 +63,7 @@ class GraduationEvaluator:
             "max_drawdown": 1.0 - max_drawdown,  # Invert: lower drawdown is better
             "profitable_days": float(profitable_days),
             "bet_volume": float(total_bets),
+            "avg_clv": avg_clv,
         }
 
         for name, config in self.criteria.items():

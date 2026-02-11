@@ -10,6 +10,7 @@ from typing import Any
 
 from sqlalchemy import text
 
+from features.data_quality import EpisodeQualityGate, EpisodeQualityReport
 from shared.config import get_settings
 from shared.db import get_session
 from shared.logging import setup_logging
@@ -23,10 +24,16 @@ class MatchDataLoader:
 
     Groups odds_ticks by match_id, left-joins match_context,
     and returns episodes suitable for CricketBettingEnv.
+
+    Includes an episode-level quality gate: episodes that fail quality
+    checks (low completeness, excessive jumps, etc.) are rejected
+    before they reach the RL environment.
     """
 
     def __init__(self) -> None:
         self.settings = get_settings()
+        self._quality_gate = EpisodeQualityGate()
+        self._quality_reports: list[EpisodeQualityReport] = []
 
     async def load_completed_matches(
         self,
@@ -56,34 +63,89 @@ class MatchDataLoader:
         if not match_ids:
             return []
 
-        # Step 2: Load ticks for each match
+        # Step 1b: Load match results for these matches
+        results = await self._load_match_results(match_ids)
+
+        # Step 2: Load ticks for each match, run quality gate, attach metadata
         episodes: list[list[dict[str, Any]]] = []
+        self._quality_reports = []
+        rejected_count = 0
+
         for match_id in match_ids:
             episode = await self._load_match_episode(match_id)
-            if episode:
-                episodes.append(episode)
+            if not episode:
+                continue
+
+            # ── Quality gate ──────────────────────────────────
+            report = self._quality_gate.evaluate(episode)
+            self._quality_reports.append(report)
+
+            if not report.passed:
+                rejected_count += 1
+                logger.warning(
+                    "episode_rejected_quality",
+                    match_id=match_id,
+                    score=report.quality_score,
+                    issues=report.issues,
+                    ticks=report.total_ticks,
+                )
+                continue
+            # ──────────────────────────────────────────────────
+
+            # Attach match result metadata to the first tick
+            result = results.get(match_id)
+            if result:
+                episode[0]["_meta"] = {
+                    "winner": result["winner"],
+                    "loser": result["loser"],
+                    "team_home": result["team_home"],
+                    "team_away": result["team_away"],
+                    "result_type": result["result_type"],
+                    "margin": result["margin"],
+                    "has_real_outcome": True,
+                }
+            else:
+                # No verified result -- mark as simulated
+                episode[0]["_meta"] = {
+                    "winner": "",
+                    "team_home": episode[0].get("team_home", ""),
+                    "team_away": episode[0].get("team_away", ""),
+                    "result_type": "",
+                    "has_real_outcome": False,
+                }
+            episodes.append(episode)
 
         logger.info(
             "matches_loaded",
             total_episodes=len(episodes),
             total_ticks=sum(len(ep) for ep in episodes),
+            quality_rejected=rejected_count,
+            quality_reports=len(self._quality_reports),
         )
         return episodes
+
+    @property
+    def quality_reports(self) -> list[EpisodeQualityReport]:
+        """Access the quality reports from the most recent load."""
+        return self._quality_reports
 
     async def _get_qualifying_match_ids(
         self, min_ticks: int, days_back: int
     ) -> list[str]:
-        """Get match_ids that have enough data points."""
+        """Get match_ids that have enough data points AND are approved for training."""
         try:
             async with get_session() as session:
                 result = await session.execute(
                     text("""
-                        SELECT match_id, COUNT(*) as tick_count
-                        FROM odds_ticks
-                        WHERE time > NOW() - MAKE_INTERVAL(days => :days_back)
-                        GROUP BY match_id
+                        SELECT ot.match_id, COUNT(*) as tick_count
+                        FROM odds_ticks ot
+                        INNER JOIN match_training_status mts
+                            ON ot.match_id = mts.match_id
+                        WHERE ot.time > NOW() - MAKE_INTERVAL(days => :days_back)
+                          AND mts.training_status = 'approved'
+                        GROUP BY ot.match_id
                         HAVING COUNT(*) >= :min_ticks
-                        ORDER BY MIN(time) ASC
+                        ORDER BY MIN(ot.time) ASC
                     """),
                     {"min_ticks": min_ticks, "days_back": days_back},
                 )
@@ -164,25 +226,76 @@ class MatchDataLoader:
             logger.error("episode_load_error", match_id=match_id, error=str(e))
             return []
 
+    async def _load_match_results(
+        self, match_ids: list[str]
+    ) -> dict[str, dict[str, Any]]:
+        """Load verified match results from the match_results table."""
+        results: dict[str, dict[str, Any]] = {}
+        if not match_ids:
+            return results
+
+        try:
+            async with get_session() as session:
+                # Use a parameterized IN query
+                placeholders = ", ".join(f":id_{i}" for i in range(len(match_ids)))
+                params = {f"id_{i}": mid for i, mid in enumerate(match_ids)}
+
+                result = await session.execute(
+                    text(f"""
+                        SELECT match_id, winner, loser, result_type, margin,
+                               team_home, team_away
+                        FROM match_results
+                        WHERE match_id IN ({placeholders})
+                    """),
+                    params,
+                )
+                rows = result.fetchall()
+                for row in rows:
+                    results[row[0]] = {
+                        "winner": row[1],
+                        "loser": row[2],
+                        "result_type": row[3],
+                        "margin": row[4],
+                        "team_home": row[5],
+                        "team_away": row[6],
+                    }
+
+                logger.info(
+                    "match_results_loaded",
+                    requested=len(match_ids),
+                    found=len(results),
+                )
+        except Exception as e:
+            logger.warning("match_results_load_error", error=str(e))
+
+        return results
+
     async def get_accumulation_stats(self) -> dict[str, Any]:
-        """Get statistics about accumulated data for the dashboard."""
+        """Get statistics about accumulated data for the dashboard.
+
+        Only counts *approved* matches as qualifying for training.
+        """
         try:
             async with get_session() as session:
                 result = await session.execute(
                     text("""
                         SELECT
-                            COUNT(DISTINCT match_id) as total_matches,
+                            COUNT(DISTINCT ot.match_id) as total_matches,
                             COUNT(*) as total_ticks,
-                            MIN(time) as earliest,
-                            MAX(time) as latest,
-                            COUNT(DISTINCT match_id) FILTER (
-                                WHERE match_id IN (
-                                    SELECT match_id FROM odds_ticks
-                                    GROUP BY match_id
+                            MIN(ot.time) as earliest,
+                            MAX(ot.time) as latest,
+                            COUNT(DISTINCT ot.match_id) FILTER (
+                                WHERE ot.match_id IN (
+                                    SELECT ot2.match_id
+                                    FROM odds_ticks ot2
+                                    INNER JOIN match_training_status mts
+                                        ON ot2.match_id = mts.match_id
+                                    WHERE mts.training_status = 'approved'
+                                    GROUP BY ot2.match_id
                                     HAVING COUNT(*) >= :min_ticks
                                 )
                             ) as qualifying_matches
-                        FROM odds_ticks
+                        FROM odds_ticks ot
                     """),
                     {"min_ticks": self.settings.rl.min_ticks_per_match},
                 )

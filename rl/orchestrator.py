@@ -494,62 +494,62 @@ class Orchestrator:
             logger.error("advisor_mode_error", error=str(e))
 
     async def _settle_shadow_bets(self) -> None:
-        """Settle any shadow bets for matches that have completed."""
+        """Settle shadow bets using verified match results from match_results table."""
         try:
+            open_match_ids = list(self._shadow_trader._open_bets.keys())
+            if not open_match_ids:
+                return
+
             async with get_session() as session:
                 from sqlalchemy import text
 
-                # Find matches that have completed (no new odds ticks in 30 min)
-                open_match_ids = list(self._shadow_trader._open_bets.keys())
-                if not open_match_ids:
-                    return
-
                 for match_id in open_match_ids:
+                    # Check for a verified result in match_results
                     result = await session.execute(
                         text("""
-                            SELECT
-                                MAX(time) as last_tick,
-                                NOW() - MAX(time) > INTERVAL '30 minutes' as is_completed
-                            FROM odds_ticks
+                            SELECT winner, loser, result_type, team_home, team_away
+                            FROM match_results
                             WHERE match_id = :match_id
                         """),
                         {"match_id": match_id},
                     )
                     row = result.fetchone()
 
-                    if row and row[1]:  # Match appears completed
-                        # Determine outcome by final odds movement
-                        # If home back odds dropped significantly, home likely won
-                        odds_result = await session.execute(
-                            text("""
-                                SELECT back_home, back_away
-                                FROM odds_ticks
-                                WHERE match_id = :match_id
-                                ORDER BY time DESC
-                                LIMIT 1
-                            """),
-                            {"match_id": match_id},
-                        )
-                        odds_row = odds_result.fetchone()
+                    if not row:
+                        continue  # No verified result yet -- keep bet open
 
-                        if odds_row:
-                            bet = self._shadow_trader._open_bets.get(match_id)
-                            if bet:
-                                action = bet.action
-                                home_odds = float(odds_row[0] or 2.0)
-                                away_odds = float(odds_row[1] or 2.0)
+                    winner = row[0]
+                    result_type = row[2]
+                    team_home = row[3]
 
-                                # Heuristic: very low final odds (~1.01) indicates winner
-                                home_won = home_odds < away_odds
+                    bet = self._shadow_trader._open_bets.get(match_id)
+                    if not bet:
+                        continue
 
-                                if "HOME" in action:
-                                    is_back = "BACK" in action
-                                    won = (is_back and home_won) or (not is_back and not home_won)
-                                else:  # AWAY
-                                    is_back = "BACK" in action
-                                    won = (is_back and not home_won) or (not is_back and home_won)
+                    # Handle ties/no_result/abandoned -- void the bet
+                    if result_type in ("tie", "no_result", "draw", "abandoned"):
+                        self._shadow_trader.void_shadow_bet(match_id)
+                        logger.info("shadow_bet_voided", match_id=match_id, reason=result_type)
+                        continue
 
-                                self._shadow_trader.settle_shadow_bet(match_id, won)
+                    # Determine win/loss from verified result
+                    action = bet.action
+                    home_won = (winner == team_home)
+
+                    if "HOME" in action:
+                        is_back = "BACK" in action
+                        won = (is_back and home_won) or (not is_back and not home_won)
+                    else:  # AWAY
+                        is_back = "BACK" in action
+                        won = (is_back and not home_won) or (not is_back and home_won)
+
+                    self._shadow_trader.settle_shadow_bet(match_id, won)
+                    logger.info(
+                        "shadow_bet_settled",
+                        match_id=match_id,
+                        won=won,
+                        winner=winner,
+                    )
 
         except Exception as e:
             logger.error("settle_shadow_bets_error", error=str(e))
@@ -610,6 +610,7 @@ class Orchestrator:
                 "HOLD", "BACK_HOME_SM", "BACK_HOME_LG",
                 "BACK_AWAY_SM", "BACK_AWAY_LG",
                 "LAY_HOME_SM", "LAY_AWAY_SM",
+                "LAY_HOME_LG", "LAY_AWAY_LG",
             ]
 
             confidence = float(probs[action]) if action < len(probs) else 0.0

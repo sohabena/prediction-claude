@@ -20,7 +20,27 @@ If the user asked for a variation:
 - "with monitoring" or "with grafana": `.\phoenix.ps1 start -Monitor`
 - "start everything" or "all tools": `.\phoenix.ps1 start -All`
 
-**Step 3: Verify**
-Wait 5 seconds, then run `.\phoenix.ps1 status` to verify all services are healthy. Report the results to the user.
+**Step 3: Fix frontend if it failed to start**
+`phoenix.ps1` may fail to launch the Next.js frontend on Windows (`Start-Process npm` error).
+Check if port 3000 is listening:
+```powershell
+$f = Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue; if ($f) { Write-Host "Frontend already running" } else { Write-Host "Frontend NOT running -- starting manually" }
+```
+If the frontend is NOT running, start it as a background shell command (use `block_until_ms: 0`):
+```powershell
+Set-Location frontend; npx next dev --port 3000
+```
+Then wait ~10 seconds for it to compile.
+
+**Step 4: Verify**
+Run `.\phoenix.ps1 status` (from the project root) and confirm ALL of these are healthy:
+- Redis: Healthy
+- TimescaleDB: Healthy
+- Backend API: Running (port 8000)
+- Frontend: Running (port 3000)
+- Scraper: Running
+- Orchestrator: Running
+
+Report the full status table to the user.
 
 This starts ALL services: Redis, TimescaleDB, Backend API (port 8000), Scraper (LotusBook polling), Orchestrator (autonomous training), and Frontend (port 3000).

@@ -14,6 +14,7 @@ from stable_baselines3.common.env_checker import check_env
 from stable_baselines3.common.evaluation import evaluate_policy
 
 from rl.agent import PhoenixAgent
+from rl.agent_dqn import PhoenixDQNAgent
 from rl.callbacks import MetricsLogger, PhoenixCallback
 from rl.curriculum import CurriculumManager
 from rl.environment import CricketBettingEnv
@@ -36,9 +37,10 @@ class Trainer:
     def __init__(self, data: Optional[list[list[dict[str, Any]]]] = None) -> None:
         self.settings = get_settings()
         self._data = data or []
-        self._agent: Optional[PhoenixAgent] = None
+        self._agent: Optional[PhoenixAgent | PhoenixDQNAgent] = None
         self._env: Optional[CricketBettingEnv] = None
         self._curriculum = CurriculumManager()
+        self._algorithm = self.settings.rl.algorithm  # "ppo" or "dqn"
 
     def create_env(
         self, data: Optional[list[dict[str, Any]]] = None
@@ -80,13 +82,22 @@ class Trainer:
         stage_data = self._curriculum.get_stage_data(self._data)
         self._env = self.create_env(stage_data)
 
-        # Create agent
-        self._agent = PhoenixAgent(
-            env=self._env,
-            learning_rate=self.settings.rl.learning_rate,
-            n_steps=self.settings.rl.n_steps,
-            batch_size=self.settings.rl.batch_size,
-        )
+        # Create agent based on configured algorithm
+        if self._algorithm == "dqn":
+            self._agent = PhoenixDQNAgent(
+                env=self._env,
+                learning_rate=self.settings.rl.learning_rate,
+                batch_size=self.settings.rl.batch_size,
+            )
+            logger.info("using_dqn_agent")
+        else:
+            self._agent = PhoenixAgent(
+                env=self._env,
+                learning_rate=self.settings.rl.learning_rate,
+                n_steps=self.settings.rl.n_steps,
+                batch_size=self.settings.rl.batch_size,
+            )
+            logger.info("using_ppo_agent")
 
         # Callbacks
         callbacks = [

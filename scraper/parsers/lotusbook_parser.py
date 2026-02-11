@@ -1,6 +1,11 @@
 """
 LotusBook DOM/WebSocket parser.
 Converts raw scraped data into normalized OddsEvent objects.
+
+Tailored for LotusBook's DOM where:
+  - Match ID comes from the URL (lotus_id) for stable identification
+  - Odds may be None for suspended markets (still emit the event)
+  - Team names are already clean from the JS extractor
 """
 
 from __future__ import annotations
@@ -25,7 +30,7 @@ class LotusBookParser:
     - DOM data (HTML elements -> structured data)
     - WebSocket frames (JSON -> structured data)
     - Data validation (required fields, valid ranges)
-    - Match ID generation and caching
+    - Match ID generation (prefers LotusBook URL ID when available)
     - Odds format normalization (ensure decimal)
     """
 
@@ -38,9 +43,10 @@ class LotusBookParser:
         Parse DOM-scraped match data into OddsEvent list.
 
         Args:
-            raw_matches: List of dicts extracted from DOM, each with keys:
-                team_home, team_away, competition, is_live,
-                back_home, lay_home, back_draw, lay_draw, back_away, lay_away
+            raw_matches: List of dicts extracted from LotusBook JS evaluator.
+                Keys: team_home, team_away, competition, is_live, lotus_id,
+                      back_home, lay_home, back_draw, lay_draw, back_away, lay_away,
+                      volume_back_home, volume_lay_home, etc.
 
         Returns:
             List of validated OddsEvent objects.
@@ -54,10 +60,17 @@ class LotusBookParser:
                 team_away = self._clean_team_name(raw.get("team_away", ""))
 
                 if not team_home or not team_away:
-                    logger.warning("missing_team_names", raw=raw)
+                    logger.warning("missing_team_names", raw=str(raw)[:200])
                     continue
 
-                match_id = self._generate_match_id(team_home, team_away, raw.get("competition", ""))
+                # Prefer LotusBook URL ID for stable match identification
+                lotus_id = raw.get("lotus_id", "")
+                if lotus_id:
+                    match_id = f"lb_{lotus_id}"
+                else:
+                    match_id = self._generate_match_id(
+                        team_home, team_away, raw.get("competition", "")
+                    )
 
                 event = OddsEvent(
                     match_id=match_id,
@@ -88,6 +101,18 @@ class LotusBookParser:
                 self._last_events[match_id] = fingerprint
 
                 events.append(event)
+
+                logger.debug(
+                    "match_parsed",
+                    match_id=match_id,
+                    home=team_home,
+                    away=team_away,
+                    back_home=event.back_home,
+                    lay_home=event.lay_home,
+                    back_away=event.back_away,
+                    lay_away=event.lay_away,
+                    is_live=event.is_live,
+                )
 
             except Exception as e:
                 logger.error("parse_dom_error", error=str(e), raw=str(raw)[:200])
@@ -149,29 +174,37 @@ class LotusBookParser:
 
     def validate_event(self, event: OddsEvent) -> bool:
         """
-        Validate an OddsEvent passes all quality checks.
+        Validate an OddsEvent passes quality checks.
+
+        For LotusBook, markets can be suspended (odds = None) during certain
+        periods. We accept events if at least ONE back price is present,
+        since partial data is still valuable for tracking match status.
 
         Checks:
-        1. At least home and away back prices present
-        2. Odds within valid range
-        3. Back <= Lay (spread consistency)
+        1. At least one back price present (home or away)
+        2. Any present odds within valid range
+        3. Back <= Lay where both exist (spread consistency)
         """
-        # Must have at least home and away back prices
-        if event.back_home is None or event.back_away is None:
-            logger.debug("validation_fail_missing_odds", match_id=event.match_id)
+        # Must have at least one back price
+        if event.back_home is None and event.back_away is None:
+            logger.debug("validation_fail_no_odds", match_id=event.match_id)
             return False
 
-        # Check odds ranges
+        # Check odds ranges for all non-None values
         for odds_val in [
             event.back_home, event.lay_home,
             event.back_draw, event.lay_draw,
             event.back_away, event.lay_away,
         ]:
             if odds_val is not None and not (VALID_ODDS_MIN <= odds_val <= VALID_ODDS_MAX):
-                logger.debug("validation_fail_range", match_id=event.match_id, odds=odds_val)
+                logger.debug(
+                    "validation_fail_range",
+                    match_id=event.match_id,
+                    odds=odds_val,
+                )
                 return False
 
-        # Back <= Lay check
+        # Back <= Lay check (only when both sides present)
         if event.back_home and event.lay_home and event.back_home > event.lay_home:
             logger.debug("validation_fail_spread_home", match_id=event.match_id)
             return False

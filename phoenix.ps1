@@ -179,46 +179,34 @@ function Invoke-Start {
         Write-Warn "Schema init skipped (may already exist)"
     }
 
+    # Logs directory for process output
+    $logsDir = Join-Path $ProjectRoot "logs"
+    if (-not (Test-Path $logsDir)) { New-Item -ItemType Directory -Path $logsDir -Force | Out-Null }
+
     # --- Backend API ---
     Write-Step "4/8" "Starting Backend API (port 8000)..."
-    $backendJob = Start-Job -ScriptBlock {
-        Set-Location $using:ProjectRoot
-        $env:PYTHONPATH = $using:ProjectRoot
-        $env:POSTGRES_PASSWORD = "phoenix_secure_2026"
-        python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
-    }
+    $env:PYTHONPATH = $ProjectRoot
+    $env:POSTGRES_PASSWORD = "phoenix_secure_2026"
+    $backendProc = Start-Process -FilePath "python" -ArgumentList "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload" -WorkingDirectory $ProjectRoot -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logsDir "backend.out") -RedirectStandardError (Join-Path $logsDir "backend.err")
     Start-Sleep -Seconds 3
-    Write-Ok "Backend API started (Job $($backendJob.Id))"
+    Write-Ok "Backend API started (PID $($backendProc.Id))"
 
     # --- Scraper ---
     Write-Step "5/8" "Starting Scraper..."
-    $scraperJob = Start-Job -ScriptBlock {
-        Set-Location $using:ProjectRoot
-        $env:PYTHONPATH = $using:ProjectRoot
-        $env:POSTGRES_PASSWORD = "phoenix_secure_2026"
-        $env:SCRAPER_HEADLESS = "true"
-        python -m scraper.manager
-    }
-    Write-Ok "Scraper started (Job $($scraperJob.Id))"
+    $env:SCRAPER_HEADLESS = "true"
+    $scraperProc = Start-Process -FilePath "python" -ArgumentList "-m", "scraper.manager" -WorkingDirectory $ProjectRoot -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logsDir "scraper.out") -RedirectStandardError (Join-Path $logsDir "scraper.err")
+    Write-Ok "Scraper started (PID $($scraperProc.Id))"
 
     # --- Orchestrator ---
     Write-Step "6/8" "Starting Orchestrator (autonomous training)..."
-    $orchestratorJob = Start-Job -ScriptBlock {
-        Set-Location $using:ProjectRoot
-        $env:PYTHONPATH = $using:ProjectRoot
-        $env:POSTGRES_PASSWORD = "phoenix_secure_2026"
-        python -m rl.orchestrator
-    }
-    Write-Ok "Orchestrator started (Job $($orchestratorJob.Id))"
+    $orchestratorProc = Start-Process -FilePath "python" -ArgumentList "-m", "rl.orchestrator" -WorkingDirectory $ProjectRoot -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logsDir "orchestrator.out") -RedirectStandardError (Join-Path $logsDir "orchestrator.err")
+    Write-Ok "Orchestrator started (PID $($orchestratorProc.Id))"
 
     # --- Frontend ---
     Write-Step "7/8" "Starting Frontend Dashboard (port 3000)..."
     $frontendPath = Join-Path $ProjectRoot "frontend"
-    $frontendJob = Start-Job -ScriptBlock {
-        Set-Location $using:frontendPath
-        npm run dev
-    }
-    Write-Ok "Frontend started (Job $($frontendJob.Id))"
+    $frontendProc = Start-Process -FilePath "npm" -ArgumentList "run", "dev" -WorkingDirectory $frontendPath -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logsDir "frontend.out") -RedirectStandardError (Join-Path $logsDir "frontend.err")
+    Write-Ok "Frontend started (PID $($frontendProc.Id))"
 
     # --- Dev / Monitor ---
     if ($Dev -or $All) {
@@ -234,12 +222,12 @@ function Invoke-Start {
         Write-Ok "Grafana:     http://localhost:3001"
     }
 
-    # Save PIDs
+    # Save PIDs (process IDs so status/stop work from any terminal)
     $pids = @{
-        backend      = $backendJob.Id
-        scraper      = $scraperJob.Id
-        orchestrator = $orchestratorJob.Id
-        frontend     = $frontendJob.Id
+        backend      = $backendProc.Id
+        scraper      = $scraperProc.Id
+        orchestrator = $orchestratorProc.Id
+        frontend     = $frontendProc.Id
     }
     Save-Pids $pids
 
@@ -266,18 +254,25 @@ function Invoke-Start {
 function Invoke-Stop {
     Write-Banner "Stopping Services" "Yellow"
 
-    # --- Stop PowerShell jobs ---
+    # --- Stop application processes (by PID, kill process tree) ---
     Write-Step "1/3" "Stopping application services..."
     $pids = Load-Pids
     if ($pids) {
         $services = @("backend", "scraper", "orchestrator", "frontend")
         foreach ($svc in $services) {
-            $jobId = $pids.$svc
-            if ($jobId) {
+            $pidVal = $pids.$svc
+            if ($pidVal) {
                 try {
-                    Stop-Job -Id $jobId -ErrorAction SilentlyContinue
-                    Remove-Job -Id $jobId -Force -ErrorAction SilentlyContinue
-                    Write-Ok "Stopped: $svc (Job $jobId)"
+                    $proc = Get-Process -Id $pidVal -ErrorAction SilentlyContinue
+                    if ($proc) {
+                        Stop-Process -Id $pidVal -Force -ErrorAction SilentlyContinue
+                        # Kill process tree on Windows so child processes (e.g. node from npm) are stopped
+                        $null = cmd /c "taskkill /PID $pidVal /T /F 2>nul"
+                        Write-Ok "Stopped: $svc (PID $pidVal)"
+                    }
+                    else {
+                        Write-Info "Already stopped: $svc"
+                    }
                 }
                 catch {
                     Write-Info "Already stopped: $svc"
@@ -303,8 +298,6 @@ function Invoke-Stop {
 
     # --- Cleanup ---
     Write-Step "3/3" "Cleanup..."
-    Get-Job | Where-Object { $_.State -eq "Failed" -or $_.State -eq "Completed" } |
-        Remove-Job -Force -ErrorAction SilentlyContinue
 
     Write-Banner "All Services Stopped" "Green"
     if ($KeepInfra) {
@@ -351,20 +344,20 @@ function Invoke-Status {
     if (Test-Port 3000) { Write-Ok "Frontend:        Running (port 3000)" }
     else                { Write-Err "Frontend:        DOWN" }
 
-    # Background jobs
+    # Background processes (scraper, orchestrator) - PIDs work from any terminal
     $pids = Load-Pids
     if ($pids) {
         foreach ($svc in @("scraper", "orchestrator")) {
-            $jobId = $pids.$svc
+            $pidVal = $pids.$svc
             $label = $svc.PadRight(16)
-            if ($jobId) {
+            if ($pidVal) {
                 try {
-                    $job = Get-Job -Id $jobId -ErrorAction Stop
-                    if ($job.State -eq "Running") {
-                        Write-Ok "${label} Running (Job $jobId)"
+                    $proc = Get-Process -Id $pidVal -ErrorAction SilentlyContinue
+                    if ($proc) {
+                        Write-Ok "${label} Running (PID $pidVal)"
                     }
                     else {
-                        Write-Err "${label} $($job.State)"
+                        Write-Err "${label} Not running (PID $pidVal)"
                     }
                 }
                 catch {
@@ -422,24 +415,26 @@ function Invoke-Status {
 # ============================================================
 
 function Invoke-Logs {
+    $logsDir = Join-Path $ProjectRoot "logs"
     if ($Service -ne "") {
         Write-Banner "Logs: $Service"
-        $pids = Load-Pids
 
         switch ($Service.ToLower()) {
             "redis"      { docker logs phoenix-redis --tail 50 }
             "timescaledb" { docker logs phoenix-timescaledb --tail 50 }
             default {
-                if ($pids -and $pids.$Service) {
-                    try {
-                        Receive-Job -Id $pids.$Service -Keep -ErrorAction Stop
-                    }
-                    catch {
-                        Write-Warn "Could not retrieve logs for $Service"
-                    }
+                $outFile = Join-Path $logsDir "$Service.out"
+                $errFile = Join-Path $logsDir "$Service.err"
+                if (Test-Path $outFile) {
+                    Write-Host "  --- stdout ---" -ForegroundColor Cyan
+                    Get-Content $outFile -Tail 30
                 }
-                else {
-                    Write-Warn "Unknown service or no PID found: $Service"
+                if (Test-Path $errFile) {
+                    Write-Host "  --- stderr ---" -ForegroundColor Cyan
+                    Get-Content $errFile -Tail 30
+                }
+                if (-not (Test-Path $outFile) -and -not (Test-Path $errFile)) {
+                    Write-Warn "No log files for $Service (or service not started with current script)"
                     Write-Info "Available: backend, scraper, orchestrator, frontend, redis, timescaledb"
                 }
             }
@@ -447,31 +442,25 @@ function Invoke-Logs {
     }
     else {
         Write-Banner "Recent Logs (all services)"
-        $pids = Load-Pids
-        if ($pids) {
-            foreach ($svc in @("backend", "scraper", "orchestrator")) {
+        if (Test-Path $logsDir) {
+            foreach ($svc in @("backend", "scraper", "orchestrator", "frontend")) {
                 Write-Host ""
                 Write-Host "  --- $svc ---" -ForegroundColor Cyan
-                $jobId = $pids.$svc
-                if ($jobId) {
-                    try {
-                        $output = Receive-Job -Id $jobId -Keep -ErrorAction Stop |
-                            Select-Object -Last 10
-                        if ($output) {
-                            $output | ForEach-Object { Write-Host "    $_" }
-                        }
-                        else {
-                            Write-Info "(no output yet)"
-                        }
-                    }
-                    catch {
-                        Write-Info "(job not found)"
-                    }
+                $outFile = Join-Path $logsDir "$svc.out"
+                $errFile = Join-Path $logsDir "$svc.err"
+                if (Test-Path $outFile) {
+                    Get-Content $outFile -Tail 10 | ForEach-Object { Write-Host "    $_" }
+                }
+                if (Test-Path $errFile) {
+                    Get-Content $errFile -Tail 10 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkYellow }
+                }
+                if (-not (Test-Path $outFile) -and -not (Test-Path $errFile)) {
+                    Write-Info "(no output yet)"
                 }
             }
         }
         else {
-            Write-Warn "No PID file. Start services first: .\phoenix.ps1 start"
+            Write-Warn "No logs directory. Start services first: .\phoenix.ps1 start"
         }
     }
 }
@@ -490,51 +479,39 @@ function Invoke-Restart {
             return
         }
 
-        # Stop
-        $jobId = $pids.$Service
-        if ($jobId) {
+        # Stop by PID (process tree)
+        $pidVal = $pids.$Service
+        if ($pidVal) {
             try {
-                Stop-Job -Id $jobId -ErrorAction SilentlyContinue
-                Remove-Job -Id $jobId -Force -ErrorAction SilentlyContinue
+                $null = Get-Process -Id $pidVal -ErrorAction SilentlyContinue
+                Stop-Process -Id $pidVal -Force -ErrorAction SilentlyContinue
+                $null = cmd /c "taskkill /PID $pidVal /T /F 2>nul"
                 Write-Ok "Stopped: $Service"
             }
             catch { }
+            Start-Sleep -Seconds 2
         }
 
-        # Restart
+        # Restart as process
+        $logsDir = Join-Path $ProjectRoot "logs"
+        if (-not (Test-Path $logsDir)) { New-Item -ItemType Directory -Path $logsDir -Force | Out-Null }
         $frontendPath = Join-Path $ProjectRoot "frontend"
-        $newJob = $null
+        $env:PYTHONPATH = $ProjectRoot
+        $env:POSTGRES_PASSWORD = "phoenix_secure_2026"
+        $newProc = $null
         switch ($Service.ToLower()) {
             "backend" {
-                $newJob = Start-Job -ScriptBlock {
-                    Set-Location $using:ProjectRoot
-                    $env:PYTHONPATH = $using:ProjectRoot
-                    $env:POSTGRES_PASSWORD = "phoenix_secure_2026"
-                    python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
-                }
+                $newProc = Start-Process -FilePath "python" -ArgumentList "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload" -WorkingDirectory $ProjectRoot -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logsDir "backend.out") -RedirectStandardError (Join-Path $logsDir "backend.err")
             }
             "scraper" {
-                $newJob = Start-Job -ScriptBlock {
-                    Set-Location $using:ProjectRoot
-                    $env:PYTHONPATH = $using:ProjectRoot
-                    $env:POSTGRES_PASSWORD = "phoenix_secure_2026"
-                    $env:SCRAPER_HEADLESS = "true"
-                    python -m scraper.manager
-                }
+                $env:SCRAPER_HEADLESS = "true"
+                $newProc = Start-Process -FilePath "python" -ArgumentList "-m", "scraper.manager" -WorkingDirectory $ProjectRoot -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logsDir "scraper.out") -RedirectStandardError (Join-Path $logsDir "scraper.err")
             }
             "orchestrator" {
-                $newJob = Start-Job -ScriptBlock {
-                    Set-Location $using:ProjectRoot
-                    $env:PYTHONPATH = $using:ProjectRoot
-                    $env:POSTGRES_PASSWORD = "phoenix_secure_2026"
-                    python -m rl.orchestrator
-                }
+                $newProc = Start-Process -FilePath "python" -ArgumentList "-m", "rl.orchestrator" -WorkingDirectory $ProjectRoot -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logsDir "orchestrator.out") -RedirectStandardError (Join-Path $logsDir "orchestrator.err")
             }
             "frontend" {
-                $newJob = Start-Job -ScriptBlock {
-                    Set-Location $using:frontendPath
-                    npm run dev
-                }
+                $newProc = Start-Process -FilePath "npm" -ArgumentList "run", "dev" -WorkingDirectory $frontendPath -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logsDir "frontend.out") -RedirectStandardError (Join-Path $logsDir "frontend.err")
             }
             default {
                 Write-Err "Unknown service: $Service"
@@ -543,10 +520,10 @@ function Invoke-Restart {
             }
         }
 
-        if ($newJob) {
-            $pids | Add-Member -NotePropertyName $Service -NotePropertyValue $newJob.Id -Force
+        if ($newProc) {
+            $pids.$Service = $newProc.Id
             Save-Pids $pids
-            Write-Ok "Restarted: $Service (Job $($newJob.Id))"
+            Write-Ok "Restarted: $Service (PID $($newProc.Id))"
         }
     }
     else {
@@ -680,6 +657,78 @@ function Invoke-OrchStatus {
 }
 
 # ============================================================
+# BACKUP / RESTORE
+# ============================================================
+
+function Invoke-Backup {
+    Write-Banner "Database Backup"
+
+    $backupDir = Join-Path $ProjectRoot "backups"
+    if (-not (Test-Path $backupDir)) {
+        New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
+    }
+
+    $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $backupFile = Join-Path $backupDir "phoenix_backup_$timestamp.sql"
+
+    Write-Step "1/2" "Dumping database..."
+    try {
+        docker exec phoenix-timescaledb pg_dump -U phoenix -d phoenix_betting > $backupFile
+        $size = (Get-Item $backupFile).Length / 1MB
+        Write-Ok "Backup saved: $backupFile ($([math]::Round($size, 2)) MB)"
+    }
+    catch {
+        Write-Err "Backup failed: $_"
+        return
+    }
+
+    # Cleanup: keep only last 10 backups
+    Write-Step "2/2" "Cleaning old backups..."
+    $backups = Get-ChildItem $backupDir -Filter "phoenix_backup_*.sql" | Sort-Object LastWriteTime -Descending
+    if ($backups.Count -gt 10) {
+        $backups | Select-Object -Skip 10 | Remove-Item -Force
+        Write-Ok "Cleaned up old backups (keeping last 10)"
+    }
+
+    Write-Banner "Backup Complete" "Green"
+}
+
+function Invoke-Restore {
+    Write-Banner "Database Restore" "Yellow"
+
+    if ($Service -eq "") {
+        $backupDir = Join-Path $ProjectRoot "backups"
+        $latest = Get-ChildItem $backupDir -Filter "phoenix_backup_*.sql" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if (-not $latest) {
+            Write-Err "No backup files found in $backupDir"
+            return
+        }
+        $restoreFile = $latest.FullName
+        Write-Info "Restoring latest backup: $($latest.Name)"
+    }
+    else {
+        $restoreFile = $Service
+    }
+
+    if (-not (Test-Path $restoreFile)) {
+        Write-Err "Backup file not found: $restoreFile"
+        return
+    }
+
+    Write-Warn "This will OVERWRITE the current database. Press Ctrl+C to cancel."
+    Start-Sleep -Seconds 3
+
+    Write-Step "1/1" "Restoring database..."
+    try {
+        Get-Content $restoreFile | docker exec -i phoenix-timescaledb psql -U phoenix -d phoenix_betting
+        Write-Ok "Database restored from: $restoreFile"
+    }
+    catch {
+        Write-Err "Restore failed: $_"
+    }
+}
+
+# ============================================================
 # DISPATCH
 # ============================================================
 
@@ -693,5 +742,7 @@ switch ($Command.ToLower()) {
     "db-init" { Invoke-DbInit }
     "open"    { Invoke-Open }
     "orch"    { Invoke-OrchStatus }
+    "backup"  { Invoke-Backup }
+    "restore" { Invoke-Restore }
     default   { Invoke-Status }
 }

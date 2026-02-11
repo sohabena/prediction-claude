@@ -27,8 +27,34 @@ class SettlementEngine:
     def __init__(self, portfolio: PortfolioManager) -> None:
         self.portfolio = portfolio
 
+    @staticmethod
+    def compute_clv(placement_odds: float, closing_odds: float) -> float:
+        """
+        Compute Closing Line Value.
+
+        CLV = (closing_implied_prob / placement_implied_prob) - 1
+
+        Positive CLV means you got better odds than the closing line,
+        which is the industry gold standard for measuring betting skill.
+
+        Args:
+            placement_odds: Odds when the bet was placed.
+            closing_odds: Last odds before the match ended.
+
+        Returns:
+            CLV as a decimal (e.g., 0.05 means 5% positive CLV).
+        """
+        if placement_odds <= 1.0 or closing_odds <= 1.0:
+            return 0.0
+
+        placement_implied = 1.0 / placement_odds
+        closing_implied = 1.0 / closing_odds
+
+        return (closing_implied / placement_implied) - 1.0
+
     def settle_on_match_result(
-        self, bet: VirtualBet, winning_team: str
+        self, bet: VirtualBet, winning_team: str,
+        closing_odds: float | None = None,
     ) -> float:
         """
         Settle a bet based on the match result.
@@ -46,6 +72,7 @@ class SettlementEngine:
         )
         is_lay = bet.action in (
             BettingAction.LAY_HOME_SM, BettingAction.LAY_AWAY_SM,
+            BettingAction.LAY_HOME_LG, BettingAction.LAY_AWAY_LG,
         )
 
         team_won = bet.team == winning_team
@@ -72,6 +99,11 @@ class SettlementEngine:
         bet.profit_loss = pnl
         bet.settled_at = datetime.now(timezone.utc)
 
+        # Compute CLV if closing odds provided
+        if closing_odds is not None and closing_odds > 1.0:
+            bet.closing_odds = closing_odds
+            bet.clv = self.compute_clv(bet.odds, closing_odds)
+
         # Close position in portfolio
         if bet.id:
             self.portfolio.close_position(bet.id, pnl)
@@ -82,6 +114,7 @@ class SettlementEngine:
             outcome=bet.outcome.value,
             pnl=pnl,
             odds=bet.odds,
+            clv=getattr(bet, "clv", None),
         )
         return pnl
 

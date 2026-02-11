@@ -199,6 +199,26 @@ class ShadowTrader:
 
         return bet
 
+    def void_shadow_bet(self, match_id: str) -> Optional[ShadowBet]:
+        """
+        Void a shadow bet (tie/no result/abandoned) -- no P&L impact.
+
+        Args:
+            match_id: The match identifier.
+
+        Returns:
+            The voided ShadowBet, or None if not found.
+        """
+        bet = self._open_bets.pop(match_id, None)
+        if bet is None:
+            return None
+
+        bet.settle("void", 0.0)
+        self._settled_bets.append(bet)
+
+        logger.info("shadow_bet_voided", match_id=match_id)
+        return bet
+
     def settle_shadow_bet(self, match_id: str, won: bool) -> Optional[ShadowBet]:
         """
         Settle a shadow bet when the match completes.

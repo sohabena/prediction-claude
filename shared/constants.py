@@ -40,8 +40,11 @@ CIRCUIT_BREAKER_CONSECUTIVE = 5 # Consecutive losses to trigger halt
 # RL Agent Configuration
 # ============================================================
 
-OBSERVATION_SIZE = 66           # Feature vector dimension (data-only, no heuristics)
-ACTION_SPACE_SIZE = 7           # Number of discrete actions
+OBSERVATION_SIZE = 74           # Feature vector dimension (data-only, no heuristics)
+                                # Groups: odds(12) + momentum(16) + market(8) +
+                                #   match_stats(8) + temporal(6) + portfolio(8) +
+                                #   statistical(8) + category(8)
+ACTION_SPACE_SIZE = 9           # Number of discrete actions (HOLD + 4 BACK + 4 LAY)
 SMALL_STAKE_PERCENT = 0.01     # 1% of bankroll
 LARGE_STAKE_PERCENT = 0.03     # 3% of bankroll
 
@@ -56,6 +59,7 @@ GRADUATION_CRITERIA = {
     "max_drawdown": {"threshold": 0.15, "window_days": 30},
     "profitable_days": {"threshold": 10, "window_days": 14},
     "bet_volume": {"threshold": 100, "window_days": 30},
+    "avg_clv": {"threshold": 0.0, "window": 200},  # Average CLV must be positive
 }
 GRADUATION_REQUIRED_DAYS = 14  # All criteria met for N consecutive days
 
@@ -75,6 +79,13 @@ KEY_ADVISOR_SIGNALS = "advisor:signals"           # Current bet suggestions
 KEY_SHADOW_PERFORMANCE = "shadow:performance"     # Shadow trader post-graduation performance
 KEY_DRIFT_STATUS = "shadow:drift"                 # Drift detection status
 CHANNEL_ADVISOR_SIGNALS = "advisor_signals"       # Real-time advisor signals
+
+# ============================================================
+# Match Results
+# ============================================================
+
+CHANNEL_MATCH_RESULTS = "match_results"  # Result collector -> Orchestrator
+KEY_MATCH_RESULTS = "match:results"      # Latest match results cache
 
 # ============================================================
 # Drift Detection Thresholds (Post-Graduation)

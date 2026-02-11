@@ -24,4 +24,16 @@ If no service specified, restart everything:
 .\phoenix.ps1 restart
 ```
 
-After restarting, run `.\phoenix.ps1 status` and report results to the user.
+**Fix frontend if it failed to start:**
+After a full restart or a frontend-specific restart, check if port 3000 is listening:
+```powershell
+$f = Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue; if ($f) { Write-Host "Frontend already running" } else { Write-Host "Frontend NOT running -- starting manually" }
+```
+If the frontend is NOT running, start it as a background shell command (use `block_until_ms: 0`):
+```powershell
+Set-Location frontend; npx next dev --port 3000
+```
+Then wait ~10 seconds for it to compile.
+
+**Verify:**
+Run `.\phoenix.ps1 status` (from the project root) and confirm the restarted service(s) are healthy. Report results to the user.

@@ -66,11 +66,29 @@ class OnlineNormalizer:
             json.dump(state, f)
 
     @classmethod
-    def load(cls, path: str | Path) -> "OnlineNormalizer":
-        """Load normalizer state from JSON file."""
+    def load(cls, path: str | Path, expected_size: int | None = None) -> "OnlineNormalizer":
+        """
+        Load normalizer state from JSON file.
+
+        If ``expected_size`` is provided and differs from the saved size,
+        returns a fresh normalizer with the expected size (dimension
+        mismatch due to feature vector change).
+        """
         with open(path) as f:
             state = json.load(f)
-        normalizer = cls(state["size"])
+
+        saved_size = state["size"]
+        if expected_size is not None and saved_size != expected_size:
+            import logging
+            logging.getLogger("phoenix.normalizer").warning(
+                "Normalizer dimension mismatch: saved=%d, expected=%d. "
+                "Re-initializing fresh normalizer.",
+                saved_size,
+                expected_size,
+            )
+            return cls(expected_size)
+
+        normalizer = cls(saved_size)
         normalizer.mean = np.array(state["mean"], dtype=np.float64)
         normalizer.var = np.array(state["var"], dtype=np.float64)
         normalizer.count = state["count"]

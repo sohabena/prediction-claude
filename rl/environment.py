@@ -39,8 +39,10 @@ class CricketBettingEnv(gym.Env):
     """
     Custom Gymnasium environment for cricket betting RL.
 
-    Observation: 66-dim float vector (data-only features)
-    Action: 7 discrete actions (HOLD + 6 bet types)
+    Observation: 74-dim float vector (data-only features)
+        Groups: odds(12) + momentum(16) + market(8) + match_stats(8)
+              + temporal(6) + portfolio(8) + statistical(8) + category(8)
+    Action: 9 discrete actions (HOLD + 4 BACK + 4 LAY)
     Reward: Multi-component (P&L, patience, risk penalties, Sharpe bonus)
     """
 
@@ -51,11 +53,24 @@ class CricketBettingEnv(gym.Env):
         data: Optional[list[dict[str, Any]]] = None,
         initial_bankroll: float = 100_000.0,
         render_mode: Optional[str] = None,
+        settlement_mode: str = "real",
     ) -> None:
+        """
+        Args:
+            data: List of episodes. Each episode is a list of tick dicts.
+                  Each episode may have metadata at index 0 containing
+                  '_meta' key with 'winner', 'team_home', 'team_away'.
+            initial_bankroll: Starting bankroll.
+            render_mode: Rendering mode.
+            settlement_mode: "real" uses actual match result, "simulated"
+                           uses random outcome based on implied probability
+                           (legacy mode for unit tests / curriculum stage 1).
+        """
         super().__init__()
 
         self.render_mode = render_mode
         self.initial_bankroll = initial_bankroll
+        self.settlement_mode = settlement_mode
 
         # Spaces
         self.action_space = spaces.Discrete(ACTION_SPACE_SIZE)
@@ -70,6 +85,12 @@ class CricketBettingEnv(gym.Env):
         self._current_episode_data: list[dict[str, Any]] = []
         self._step_idx = 0
         self._episode_idx = 0
+
+        # Match result metadata for current episode
+        self._match_winner: str = ""
+        self._match_home_team: str = ""
+        self._match_away_team: str = ""
+        self._match_result_type: str = ""
 
         # Feature pipeline
         self.feature_pipeline = FeaturePipeline()
@@ -103,8 +124,38 @@ class CricketBettingEnv(gym.Env):
 
         # Select episode data
         if self._data:
-            self._current_episode_data = self._data[self._episode_idx % len(self._data)]
+            raw_episode = self._data[self._episode_idx % len(self._data)]
             self._episode_idx += 1
+
+            # Extract episode metadata (match result) if present
+            self._match_winner = ""
+            self._match_home_team = ""
+            self._match_away_team = ""
+            self._match_result_type = ""
+
+            if isinstance(raw_episode, dict):
+                # Episode is a dict with 'ticks' and 'meta' keys
+                meta = raw_episode.get("_meta", {})
+                self._match_winner = meta.get("winner", "")
+                self._match_home_team = meta.get("team_home", "")
+                self._match_away_team = meta.get("team_away", "")
+                self._match_result_type = meta.get("result_type", "win")
+                self._current_episode_data = raw_episode.get("ticks", [])
+            elif isinstance(raw_episode, list) and raw_episode:
+                # Legacy format: list of tick dicts, check first tick for _meta
+                if "_meta" in raw_episode[0]:
+                    meta = raw_episode[0]["_meta"]
+                    self._match_winner = meta.get("winner", "")
+                    self._match_home_team = meta.get("team_home", "")
+                    self._match_away_team = meta.get("team_away", "")
+                    self._match_result_type = meta.get("result_type", "win")
+                else:
+                    # Infer home/away from first tick
+                    self._match_home_team = raw_episode[0].get("team_home", "")
+                    self._match_away_team = raw_episode[0].get("team_away", "")
+                self._current_episode_data = raw_episode
+            else:
+                self._current_episode_data = raw_episode if isinstance(raw_episode, list) else []
         else:
             self._current_episode_data = []
 
@@ -196,7 +247,7 @@ class CricketBettingEnv(gym.Env):
         if action in (BettingAction.BACK_HOME_SM, BettingAction.BACK_AWAY_SM,
                        BettingAction.LAY_HOME_SM, BettingAction.LAY_AWAY_SM):
             stake_pct = SMALL_STAKE_PERCENT
-        else:
+        else:  # LG actions
             stake_pct = LARGE_STAKE_PERCENT
 
         stake = self._portfolio.current_balance * stake_pct
@@ -208,10 +259,10 @@ class CricketBettingEnv(gym.Env):
         elif action in (BettingAction.BACK_AWAY_SM, BettingAction.BACK_AWAY_LG):
             team = event.team_away
             odds = event.back_away or 0.0
-        elif action == BettingAction.LAY_HOME_SM:
+        elif action in (BettingAction.LAY_HOME_SM, BettingAction.LAY_HOME_LG):
             team = event.team_home
             odds = event.lay_home or 0.0
-        elif action == BettingAction.LAY_AWAY_SM:
+        elif action in (BettingAction.LAY_AWAY_SM, BettingAction.LAY_AWAY_LG):
             team = event.team_away
             odds = event.lay_away or 0.0
         else:
@@ -236,18 +287,49 @@ class CricketBettingEnv(gym.Env):
         )
 
     def _settle_bets(self) -> float:
-        """Settle open bets. Simplified: random outcome based on odds."""
+        """
+        Settle open bets.
+
+        settlement_mode="real": Uses actual match result (who won) from episode
+            metadata. The bet is only settled when the episode ends (match over).
+            This is the correct mode for training on historical data.
+        settlement_mode="simulated": Legacy mode using random outcome based on
+            implied probability. Used for unit tests and curriculum stage 1.
+        """
+        # In "real" mode, only settle at episode end (match completion)
+        is_episode_end = self._step_idx >= len(self._current_episode_data)
+
+        if self.settlement_mode == "real" and not is_episode_end:
+            return 0.0  # Hold bets open until match completes
+
+        # For ties/no_result/abandoned, void all bets
+        if (
+            self.settlement_mode == "real"
+            and self._match_result_type in ("tie", "no_result", "draw", "abandoned")
+        ):
+            for bet in self._open_bets:
+                bet.outcome = BetOutcome.VOID
+                bet.profit_loss = 0.0
+                bet.settled_at = datetime.now(timezone.utc)
+                self._portfolio.open_positions -= 1  # type: ignore[union-attr]
+                self._portfolio.total_exposure -= bet.stake  # type: ignore[union-attr]
+            self._open_bets.clear()
+            return 0.0
+
         total_pnl = 0.0
         settled: list[int] = []
 
         for i, bet in enumerate(self._open_bets):
-            # Simplified settlement: use implied probability from odds
-            win_prob = 1.0 / bet.odds if bet.odds > 1.0 else 0.5
+            won = self._determine_bet_outcome(bet)
 
-            if self.np_random.random() < win_prob:
+            is_back_bet = bet.action in (
+                BettingAction.BACK_HOME_SM, BettingAction.BACK_HOME_LG,
+                BettingAction.BACK_AWAY_SM, BettingAction.BACK_AWAY_LG,
+            )
+
+            if won:
                 # Win
-                if bet.action in (BettingAction.BACK_HOME_SM, BettingAction.BACK_HOME_LG,
-                                   BettingAction.BACK_AWAY_SM, BettingAction.BACK_AWAY_LG):
+                if is_back_bet:
                     pnl = bet.stake * (bet.odds - 1.0)
                 else:
                     pnl = bet.stake  # Lay win = keep stake
@@ -256,8 +338,7 @@ class CricketBettingEnv(gym.Env):
                 self._portfolio.consecutive_streak = max(1, self._portfolio.consecutive_streak + 1)  # type: ignore[union-attr]
             else:
                 # Loss
-                if bet.action in (BettingAction.BACK_HOME_SM, BettingAction.BACK_HOME_LG,
-                                   BettingAction.BACK_AWAY_SM, BettingAction.BACK_AWAY_LG):
+                if is_back_bet:
                     pnl = -bet.stake
                 else:
                     pnl = -bet.stake * (bet.odds - 1.0)  # Lay loss
@@ -278,6 +359,37 @@ class CricketBettingEnv(gym.Env):
             self._open_bets.pop(i)
 
         return total_pnl
+
+    def _determine_bet_outcome(self, bet: VirtualBet) -> bool:
+        """
+        Determine if a bet won, using real match result or simulation.
+
+        Returns True if the bet won, False if it lost.
+        """
+        if self.settlement_mode == "real" and self._match_winner:
+            # Real outcome: use actual match winner
+            is_back = bet.action in (
+                BettingAction.BACK_HOME_SM, BettingAction.BACK_HOME_LG,
+                BettingAction.BACK_AWAY_SM, BettingAction.BACK_AWAY_LG,
+            )
+            bet_on_home = bet.action in (
+                BettingAction.BACK_HOME_SM, BettingAction.BACK_HOME_LG,
+                BettingAction.LAY_HOME_SM, BettingAction.LAY_HOME_LG,
+            )
+
+            # Did home team win?
+            home_won = self._match_winner == self._match_home_team
+
+            if is_back:
+                # BACK bet wins if the backed team won
+                return (bet_on_home and home_won) or (not bet_on_home and not home_won)
+            else:
+                # LAY bet wins if the laid team LOST
+                return (bet_on_home and not home_won) or (not bet_on_home and home_won)
+        else:
+            # Simulated outcome: random based on implied probability (legacy)
+            win_prob = 1.0 / bet.odds if bet.odds > 1.0 else 0.5
+            return bool(self.np_random.random() < win_prob)
 
     def _get_observation(self) -> np.ndarray:
         """Get current observation vector."""

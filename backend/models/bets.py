@@ -28,6 +28,10 @@ class VirtualBetRecord(Base):
     outcome: Mapped[str | None] = mapped_column(String, nullable=True)
     profit_loss: Mapped[float] = mapped_column(Float, default=0.0)
 
+    # CLV (Closing Line Value)
+    closing_odds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    clv: Mapped[float | None] = mapped_column(Float, nullable=True)
+
     # RL metadata
     agent_version: Mapped[str] = mapped_column(String, default="")
     observation_hash: Mapped[str] = mapped_column(String, default="")

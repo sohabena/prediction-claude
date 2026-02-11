@@ -11,6 +11,11 @@ from typing import Optional
 
 import numpy as np
 
+from features.data_quality import validate_observation
+from features.extractors.category_features import (
+    MatchCategoryClassifier,
+    compute_category_features,
+)
 from features.extractors.market_features import compute_market_features
 from features.extractors.match_stats_features import compute_match_stats_features
 from features.extractors.momentum_features import compute_momentum_features
@@ -34,7 +39,7 @@ class FeaturePipeline:
     Input: match_id + latest OddsEvent + MatchContext + PortfolioState
     Output: np.ndarray of shape (66,)
 
-    Feature groups (66 total, all data-backed):
+    Feature groups (74 total, all data-backed):
     1. Raw odds (12) -- prices, implied probs, overround, spreads
     2. Odds momentum (16) -- velocity, acceleration, volatility
     3. Market microstructure (8) -- spread dynamics, efficiency, staleness
@@ -42,17 +47,23 @@ class FeaturePipeline:
     5. Temporal (6) -- cyclical time encoding
     6. Portfolio state (8) -- bankroll, exposure, streak, win_rate
     7. Statistical patterns (8) -- z-scores, trend strength, autocorrelation
+    8. Match category (8) -- format, tier, gender (one-hot encoded)
     """
+
+    # Maximum gap between ticks before resetting momentum accumulators
+    GAP_THRESHOLD_SECONDS = 30.0
 
     def __init__(self, lookback_seconds: int = 120) -> None:
         self.lookback_seconds = lookback_seconds
         self.normalizer = OnlineNormalizer(OBSERVATION_SIZE)
         self.store = FeatureStore()
+        self.category_classifier = MatchCategoryClassifier()
 
         # In-memory history buffer per match
         self._history: dict[str, list[OddsEvent]] = defaultdict(list)
         self._match_start_times: dict[str, datetime] = {}
         self._last_tick_times: dict[str, datetime] = {}
+        self._gap_detected: dict[str, bool] = {}  # Per-match gap flag
         self._max_history = 500  # Max events to keep per match
 
     def add_event(self, event: OddsEvent) -> None:
@@ -93,10 +104,29 @@ class FeaturePipeline:
         # Get recent history within lookback window
         history = self._get_recent_history(match_id)
 
-        # Get timing info
+        # Get timing info and detect gaps
         match_start = self._match_start_times.get(match_id)
         last_tick = self._last_tick_times.get(match_id)
         self._last_tick_times[match_id] = event.timestamp
+
+        # Gap detection: if time since last tick exceeds threshold,
+        # flag to reset momentum/velocity accumulators
+        gap_detected = False
+        if last_tick is not None:
+            gap_seconds = (event.timestamp - last_tick).total_seconds()
+            if gap_seconds > self.GAP_THRESHOLD_SECONDS:
+                gap_detected = True
+                logger.debug(
+                    "tick_gap_detected",
+                    match_id=match_id,
+                    gap_seconds=round(gap_seconds, 1),
+                )
+        self._gap_detected[match_id] = gap_detected
+
+        # If gap detected, clear history to reset momentum accumulators
+        # (keep only the latest event to restart fresh)
+        if gap_detected:
+            history = [event]
 
         # Compute all feature groups
         features: list[float] = []
@@ -105,8 +135,10 @@ class FeaturePipeline:
         odds_feats = compute_odds_features(event)
         features.extend(odds_feats)
 
-        # Group 2: Odds Momentum (16)
+        # Group 2: Odds Momentum (16) -- zeroed if gap detected
         momentum_feats = compute_momentum_features(history)
+        if gap_detected:
+            momentum_feats = [0.0] * len(momentum_feats)
         features.extend(momentum_feats)
 
         # Group 3: Market Microstructure (8)
@@ -131,6 +163,15 @@ class FeaturePipeline:
         stat_pattern_feats = compute_statistical_features(history)
         features.extend(stat_pattern_feats)
 
+        # Group 8: Match Category (8)
+        category = self.category_classifier.classify(
+            competition=event.competition,
+            team_home=event.team_home,
+            team_away=event.team_away,
+        )
+        category_feats = compute_category_features(category)
+        features.extend(category_feats)
+
         # Convert to numpy
         obs = np.array(features, dtype=np.float64)
 
@@ -144,6 +185,17 @@ class FeaturePipeline:
 
         # Normalize
         obs = self.normalizer.update_and_transform(obs)
+
+        # Validate the final observation before handing to the agent
+        is_valid, reason = validate_observation(obs)
+        if not is_valid:
+            logger.warning(
+                "invalid_observation",
+                match_id=match_id,
+                reason=reason,
+            )
+            # Return a safe zero vector rather than garbage data
+            return np.zeros(OBSERVATION_SIZE, dtype=np.float32)
 
         return obs
 
@@ -167,5 +219,5 @@ class FeaturePipeline:
         self.normalizer.save(path)
 
     def load_normalizer(self, path: str) -> None:
-        """Load normalizer state from file."""
-        self.normalizer = OnlineNormalizer.load(path)
+        """Load normalizer state from file, handling dimension changes."""
+        self.normalizer = OnlineNormalizer.load(path, expected_size=OBSERVATION_SIZE)
