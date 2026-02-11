@@ -2,6 +2,9 @@
 # PHOENIX .gitignore
 # ============================================================
 
+# --- Phoenix runtime ---
+.phoenix_pids.json
+
 # --- Python ---
 __pycache__/
 *.py[cod]
