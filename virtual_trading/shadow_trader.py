@@ -234,12 +234,20 @@ class ShadowTrader:
         if bet is None:
             return None
 
+        is_lay = "LAY" in bet.action
+
         if won:
-            pnl = bet.stake * (bet.odds - 1)
+            if is_lay:
+                pnl = bet.stake  # Lay win: keep the backer's stake
+            else:
+                pnl = bet.stake * (bet.odds - 1)  # Back win: profit = stake * (odds-1)
             bet.settle("win", pnl)
             self._total_wins += 1
         else:
-            pnl = -bet.stake
+            if is_lay:
+                pnl = -bet.stake * (bet.odds - 1)  # Lay loss: liability = stake * (odds-1)
+            else:
+                pnl = -bet.stake  # Back loss: lose stake
             bet.settle("loss", pnl)
 
         self._balance += pnl

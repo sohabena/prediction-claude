@@ -105,6 +105,13 @@ class CricketBettingEnv(gym.Env):
         self._bets_this_hour: int = 0
         self._peak_balance: float = initial_bankroll
 
+        # Action masking for curriculum (None = all actions allowed)
+        self._allowed_actions: Optional[list[int]] = None
+
+    def set_allowed_actions(self, allowed: Optional[list[int]]) -> None:
+        """Set allowed actions for curriculum stage (None = all allowed)."""
+        self._allowed_actions = allowed
+
     def reset(
         self, seed: Optional[int] = None, options: Optional[dict[str, Any]] = None
     ) -> tuple[np.ndarray, dict[str, Any]]:
@@ -179,6 +186,10 @@ class CricketBettingEnv(gym.Env):
         """
         assert self._portfolio is not None
 
+        # Apply curriculum action mask: invalid actions become HOLD
+        if self._allowed_actions is not None and action not in self._allowed_actions:
+            action = 0
+
         betting_action = BettingAction(action)
         step_info: dict[str, Any] = {}
 
@@ -194,7 +205,10 @@ class CricketBettingEnv(gym.Env):
         terminated = self._step_idx >= len(self._current_episode_data)
         truncated = False
 
-        # 3. Settle bets (simplified: settle when match ends or after N steps)
+        # 3. Compute CLV for open bets (before settlement) - intermediate reward signal
+        clv_improvement = self._compute_open_bets_clv()
+
+        # 4. Settle bets (simplified: settle when match ends or after N steps)
         settled_pnl = self._settle_bets()
 
         # Update portfolio
@@ -207,7 +221,7 @@ class CricketBettingEnv(gym.Env):
         # Track peak for drawdown
         self._peak_balance = max(self._peak_balance, self._portfolio.current_balance)
 
-        # 4. Compute reward
+        # 5. Compute reward
         current_odds_change = self._get_odds_change()
         drawdown = 1.0 - (self._portfolio.current_balance / self._peak_balance)
 
@@ -222,11 +236,13 @@ class CricketBettingEnv(gym.Env):
             "bet_settled": settled_pnl != 0,
             "episode_done": terminated,
             "episode_returns": self._episode_returns,
+            "portfolio": self._portfolio if terminated else None,
+            "clv_improvement": clv_improvement,
         }
 
         reward = self.reward_fn.compute(action, step_info)
 
-        # 5. Get observation
+        # 6. Get observation
         obs = self._get_observation()
         info = self._get_info()
         info["step_info"] = step_info
@@ -410,13 +426,51 @@ class CricketBettingEnv(gym.Env):
         return obs
 
     def _get_info(self) -> dict[str, Any]:
-        """Get auxiliary info dict."""
+        """Get auxiliary info dict. Use 'episode_idx' not 'episode' to avoid
+        conflicting with Monitor's episode dict {"r": reward, "l": length}."""
         return {
             "step": self._step_idx,
-            "episode": self._episode_idx,
+            "episode_idx": self._episode_idx,
             "balance": self._portfolio.current_balance if self._portfolio else 0.0,
             "open_bets": len(self._open_bets),
         }
+
+    def _compute_open_bets_clv(self) -> float:
+        """
+        Compute total CLV improvement for open bets (odds moved in our favor).
+        BACK: positive when current < entry. LAY: positive when current > entry.
+        """
+        if not self._open_bets or self._step_idx >= len(self._current_episode_data):
+            return 0.0
+
+        tick = self._current_episode_data[min(self._step_idx, len(self._current_episode_data) - 1)]
+        total_clv = 0.0
+
+        for bet in self._open_bets:
+            entry = bet.odds
+            if entry <= 1.0:
+                continue
+
+            is_back = bet.action in (
+                BettingAction.BACK_HOME_SM, BettingAction.BACK_HOME_LG,
+                BettingAction.BACK_AWAY_SM, BettingAction.BACK_AWAY_LG,
+            )
+            if is_back:
+                if bet.action in (BettingAction.BACK_HOME_SM, BettingAction.BACK_HOME_LG):
+                    current = tick.get("back_home") or 0.0
+                else:
+                    current = tick.get("back_away") or 0.0
+                if current > 1.0 and current < entry:
+                    total_clv += (1.0 / entry) - (1.0 / current)
+            else:
+                if bet.action in (BettingAction.LAY_HOME_SM, BettingAction.LAY_HOME_LG):
+                    current = tick.get("lay_home") or 0.0
+                else:
+                    current = tick.get("lay_away") or 0.0
+                if current > 1.0 and current > entry:
+                    total_clv += (1.0 / current) - (1.0 / entry)
+
+        return total_clv
 
     def _get_odds_change(self) -> float:
         """Get the magnitude of odds change from previous tick."""

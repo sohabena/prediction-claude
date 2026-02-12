@@ -11,7 +11,7 @@ from backend.models.base import Base
 
 
 class MatchContextRecord(Base):
-    """Time-series record of match statistics from Cricbuzz enricher."""
+    """Time-series record of match statistics derived from LotusBook data."""
 
     __tablename__ = "match_context"
 

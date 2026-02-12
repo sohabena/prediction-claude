@@ -13,7 +13,7 @@ The RL Learning Engine is the brain of PHOENIX. It replaces hand-coded betting s
 Every feature is raw data from LotusBook/Cricbuzz, a mathematical transformation, or agent portfolio state. NO cricket heuristics.
 
 ```
-Observation Vector (dim = 66):
+Observation Vector (dim = 74):
 ├── Group 1: Raw Odds (12)
 │   ├── back_home, lay_home, back_away, lay_away, back_draw, lay_draw
 │   ├── implied_prob_home, implied_prob_away, implied_prob_draw
@@ -232,7 +232,7 @@ The agent learns progressively harder tasks:
 - **Graduation:** > 52% win rate on validation set
 
 ### Stage 2: Full Action Space
-- **Environment:** Historical data, all 7 actions
+- **Environment:** Historical data, all 9 actions
 - **Goal:** Learn position sizing and LAY decisions
 - **Graduation:** > 5% ROI on validation set
 

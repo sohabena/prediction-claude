@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Optional
 
-from sqlalchemy import DateTime, String
+from sqlalchemy import DateTime, Float, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.models.base import Base
@@ -23,4 +24,10 @@ class MatchResultRecord(Base):
     margin: Mapped[str] = mapped_column(String, default="")
     team_home: Mapped[str] = mapped_column(String, default="")
     team_away: Mapped[str] = mapped_column(String, default="")
-    source: Mapped[str] = mapped_column(String, default="cricbuzz")
+    source: Mapped[str] = mapped_column(String, default="lotusbook_odds")
+
+    # Closing odds for CLV calculation (captured from last tick before completion)
+    closing_back_home: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    closing_back_away: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    closing_lay_home: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    closing_lay_away: Mapped[Optional[float]] = mapped_column(Float, nullable=True)

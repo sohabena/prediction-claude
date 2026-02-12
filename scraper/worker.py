@@ -64,6 +64,7 @@ LOTUSBOOK_EXTRACT_JS = """
             let isLive = false;
             let timeText = '';
             let scoreText = '';
+            let scheduledTime = '';
 
             if (rowDiv) {
                 const timeEl = rowDiv.querySelector('#inPlayTime, [id="inPlayTime"]');
@@ -71,15 +72,68 @@ LOTUSBOOK_EXTRACT_JS = """
                     const raw = timeEl.textContent.trim();
                     timeText = raw;
 
-                    // "LIVE" text or pulsing green dot indicates live
-                    const liveEl = timeEl.querySelector('#inPlay, [id="inPlay"]');
-                    if (liveEl) {
-                        isLive = true;
+                    // --- Section-aware detection ---
+                    // Walk up DOM to find section header ("In Play" vs "Upcoming Events")
+                    let inUpcomingSection = false;
+                    let ancestor = link.closest('.eventHeadName') || link.parentElement;
+                    while (ancestor && ancestor !== document.body) {
+                        const headerText = ancestor.textContent || '';
+                        // Check for "Upcoming" section markers
+                        if (/upcoming\\s*events?/i.test(headerText.substring(0, 200))) {
+                            // Only flag as upcoming if the header is a direct section title,
+                            // not just text deep in the tree
+                            const sectionHeaders = ancestor.querySelectorAll('h1, h2, h3, h4, h5, h6, [class*="header"], [class*="title"], [class*="heading"]');
+                            for (const hdr of sectionHeaders) {
+                                if (/upcoming/i.test(hdr.textContent)) {
+                                    inUpcomingSection = true;
+                                    break;
+                                }
+                            }
+                            // Also check direct text nodes for "Upcoming Events"
+                            if (!inUpcomingSection) {
+                                const directText = Array.from(ancestor.childNodes)
+                                    .filter(n => n.nodeType === 3)
+                                    .map(n => n.textContent.trim())
+                                    .join('');
+                                if (/upcoming/i.test(directText)) {
+                                    inUpcomingSection = true;
+                                }
+                            }
+                        }
+                        if (inUpcomingSection) break;
+                        ancestor = ancestor.parentElement;
                     }
-                    // Score pattern like "45/2" or "123/5" followed by overs
-                    if (/\\d+\\/\\d/.test(raw)) {
-                        isLive = true;
-                        scoreText = raw;
+
+                    // Date/time patterns that indicate a SCHEDULED (not live) match:
+                    // "16-02-2026 2:30 PM", "Tomorrow 11:00 AM", "Today 3:00 PM", etc.
+                    const datePattern = /\\d{1,2}[-/]\\d{1,2}[-/]\\d{2,4}/;
+                    const scheduledPattern = /tomorrow|today|\\d{1,2}[-/]\\d{1,2}[-/]\\d{2,4}/i;
+                    const hasScheduledTime = scheduledPattern.test(raw);
+
+                    if (hasScheduledTime) {
+                        // This is a scheduled/upcoming match, NOT live
+                        isLive = false;
+                        scheduledTime = raw;
+                    } else if (inUpcomingSection) {
+                        // In upcoming section but no date — still not live
+                        isLive = false;
+                        scheduledTime = raw;
+                    } else {
+                        // Not in upcoming section and no date pattern —
+                        // check for genuine live indicators
+                        const liveEl = timeEl.querySelector('#inPlay, [id="inPlay"]');
+                        if (liveEl) {
+                            const liveText = liveEl.textContent.trim().toUpperCase();
+                            // Verify it actually says "LIVE" or has live-indicator class
+                            if (liveText.includes('LIVE') || liveEl.querySelector('[class*="animate"]') || liveEl.querySelector('[class*="pulse"]') || liveEl.querySelector('[class*="blink"]')) {
+                                isLive = true;
+                            }
+                        }
+                        // Score pattern like "45/2" or "123/5" — definitive live signal
+                        if (/\\d+\\/\\d/.test(raw)) {
+                            isLive = true;
+                            scoreText = raw;
+                        }
                     }
                 }
             }
@@ -197,6 +251,7 @@ LOTUSBOOK_EXTRACT_JS = """
                 href: href,
                 time_text: timeText,
                 score_text: scoreText,
+                scheduled_time: scheduledTime,
                 back_home: back_home,
                 lay_home: lay_home,
                 back_draw: back_draw,

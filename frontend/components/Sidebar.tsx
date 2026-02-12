@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useApi } from "@/hooks/useApi";
 
 const navItems = [
   { href: "/", label: "Dashboard", icon: "📊" },
@@ -12,8 +13,18 @@ const navItems = [
   { href: "/advisor", label: "Advisor", icon: "🎯" },
 ];
 
+interface HealthResponse {
+  status: string;
+}
+
 export function Sidebar() {
   const pathname = usePathname();
+  const { data: health } = useApi<HealthResponse>("/health", 15000);
+
+  const isHealthy = health?.status === "healthy";
+  const isDegraded = health?.status === "degraded";
+  const statusColor = isHealthy ? "bg-green-500" : isDegraded ? "bg-amber-500" : "bg-red-500";
+  const statusLabel = isHealthy ? "System Healthy" : isDegraded ? "System Degraded" : health ? "System Unhealthy" : "Connecting...";
 
   return (
     <aside className="fixed left-0 top-0 h-screen w-64 bg-zinc-900 border-r border-zinc-800 flex flex-col">
@@ -26,7 +37,7 @@ export function Sidebar() {
       {/* Navigation */}
       <nav className="flex-1 p-4 space-y-1">
         {navItems.map((item) => {
-          const isActive = pathname === item.href;
+          const isActive = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
           return (
             <Link
               key={item.href}
@@ -47,8 +58,8 @@ export function Sidebar() {
       {/* Status footer */}
       <div className="p-4 border-t border-zinc-800">
         <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-          <span className="text-xs text-zinc-500">System Active</span>
+          <div className={`w-2 h-2 rounded-full ${statusColor} ${isHealthy ? "animate-pulse" : ""}`} />
+          <span className="text-xs text-zinc-500">{statusLabel}</span>
         </div>
       </div>
     </aside>

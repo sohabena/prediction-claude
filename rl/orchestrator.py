@@ -15,7 +15,10 @@ import json
 from datetime import datetime, timezone, timedelta
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
+
+if TYPE_CHECKING:
+    from shared.schemas import MatchContext, OddsEvent, PortfolioState
 
 import numpy as np
 
@@ -42,6 +45,9 @@ from shared.constants import (
 from shared.db import get_session
 from shared.logging import setup_logging
 from shared.redis_client import get_redis
+from features.feature_cache_consumer import FeatureCacheConsumer
+from rl.episode_replay_buffer import EpisodeReplayBuffer
+from virtual_trading.live_trading_loop import LiveVirtualTradingLoop
 from virtual_trading.shadow_trader import ShadowTrader
 
 logger = setup_logging("orchestrator")
@@ -89,6 +95,11 @@ class Orchestrator:
         self._running = False
         self._model_version = 0
         self._last_nightly_date: Optional[str] = None
+        self._live_trading_task: Optional[asyncio.Task] = None
+        self._live_trading_loop: Optional[LiveVirtualTradingLoop] = None
+        self._feature_cache_task: Optional[asyncio.Task] = None
+        self._feature_cache_consumer: Optional[FeatureCacheConsumer] = None
+        self._episode_replay_buffer: Optional[EpisodeReplayBuffer] = None
         self._stats: dict[str, Any] = {
             "started_at": datetime.now(timezone.utc).isoformat(),
             "state_transitions": [],
@@ -110,6 +121,13 @@ class Orchestrator:
         await self._restore_state()
         await self._shadow_trader.restore_state()
 
+        # Start feature cache consumer (runs for advisor fast path in all states)
+        await self._start_feature_cache_consumer()
+
+        # Start live trading if we restored to ONLINE_TRAINING or VIRTUAL_TRADING
+        if self._state in {OrchestratorState.ONLINE_TRAINING, OrchestratorState.VIRTUAL_TRADING}:
+            await self._start_live_trading()
+
         # Publish initial state
         await self._publish_state()
 
@@ -129,10 +147,51 @@ class Orchestrator:
         """Gracefully stop the orchestrator."""
         logger.info("orchestrator_stopping")
         self._running = False
+        await self._stop_live_trading()
+        await self._stop_feature_cache_consumer()
         await self._publish_state()
+
+    async def _check_external_state_change(self) -> bool:
+        """Check if an external actor (e.g. API /demote) changed our state in Redis.
+
+        Returns True if we detected and applied an external state change.
+        """
+        try:
+            redis = await get_redis()
+            state_data = await redis.get_json(KEY_ORCHESTRATOR_STATE)
+            if not state_data:
+                return False
+            redis_state_str = state_data.get("state", "")
+            if redis_state_str not in [s.value for s in OrchestratorState]:
+                return False
+            redis_state = OrchestratorState(redis_state_str)
+            if redis_state != self._state:
+                old = self._state
+                self._state = redis_state
+                self._model_version = state_data.get("model_version", self._model_version)
+                logger.info(
+                    "external_state_change_detected",
+                    from_state=old,
+                    to_state=redis_state,
+                )
+                # Handle side-effects of the transition
+                _live_states = {OrchestratorState.ONLINE_TRAINING, OrchestratorState.VIRTUAL_TRADING}
+                if old in _live_states and redis_state not in _live_states:
+                    await self._stop_live_trading()
+                if redis_state in _live_states and old not in _live_states:
+                    await self._start_live_trading()
+                return True
+        except Exception as e:
+            logger.debug("external_state_check_failed", error=str(e))
+        return False
 
     async def _tick(self) -> None:
         """Single iteration of the main loop."""
+        # Check for external state changes (e.g. manual demotion via API)
+        if await self._check_external_state_change():
+            await self._publish_state()
+            return  # Skip normal tick processing, re-enter with new state next cycle
+
         now = datetime.now(timezone.utc)
 
         if self._state == OrchestratorState.ACCUMULATING:
@@ -186,6 +245,10 @@ class Orchestrator:
         self._stats["accumulation"] = stats
         await self._publish_state()
 
+        # Always use config for min_required (override any stale restored value)
+        stats["min_required"] = self.settings.rl.min_matches_to_train
+        stats["ready_to_train"] = (stats["qualifying_matches"] or 0) >= stats["min_required"]
+
         if stats["ready_to_train"]:
             await self._transition_to(OrchestratorState.OFFLINE_TRAINING)
 
@@ -204,7 +267,7 @@ class Orchestrator:
             self._stats["matches_trained_on"] = len(episodes)
 
             # Run training in a thread pool to avoid blocking the event loop
-            await asyncio.get_event_loop().run_in_executor(
+            await asyncio.get_running_loop().run_in_executor(
                 None, self._run_offline_training, episodes
             )
 
@@ -302,28 +365,33 @@ class Orchestrator:
                 from sqlalchemy import text
 
                 # Get recent virtual trading performance
+                # ROI = total P&L / total stake (not avg P&L per bet)
+                # avg_clv = mean of non-null CLV values (Closing Line Value)
                 result = await session.execute(
                     text("""
                         SELECT
                             COUNT(*) FILTER (WHERE outcome = 'win') * 1.0 /
                                 NULLIF(COUNT(*), 0) as win_rate,
                             COALESCE(SUM(profit_loss), 0) /
-                                NULLIF(COUNT(*), 0) as avg_roi,
+                                NULLIF(SUM(stake), 0) as roi,
                             COUNT(*) as total_bets,
                             COUNT(DISTINCT DATE(placed_at)) FILTER (
                                 WHERE profit_loss > 0
-                            ) as profitable_days
+                            ) as profitable_days,
+                            AVG(clv) FILTER (WHERE clv IS NOT NULL) as avg_clv
                         FROM virtual_bets
                         WHERE placed_at > NOW() - INTERVAL '30 days'
+                          AND settled_at IS NOT NULL
                     """)
                 )
                 row = result.fetchone()
 
-                if row and row[3] is not None:
+                if row and row[2] is not None:
                     win_rate = float(row[0] or 0)
                     roi = float(row[1] or 0)
                     total_bets = int(row[2] or 0)
                     profitable_days = int(row[3] or 0)
+                    avg_clv = float(row[4] or 0)
 
                     # Compute Sharpe ratio from daily returns
                     daily_result = await session.execute(
@@ -333,6 +401,7 @@ class Orchestrator:
                                 SUM(profit_loss) as daily_pnl
                             FROM virtual_bets
                             WHERE placed_at > NOW() - INTERVAL '30 days'
+                              AND settled_at IS NOT NULL
                             GROUP BY DATE(placed_at)
                             ORDER BY day
                         """)
@@ -360,6 +429,7 @@ class Orchestrator:
                         max_drawdown=max_drawdown,
                         profitable_days=profitable_days,
                         total_bets=total_bets,
+                        avg_clv=avg_clv,
                     )
 
                     # Store graduation status in Redis
@@ -395,7 +465,7 @@ class Orchestrator:
 
             # Run incremental training in thread pool
             retrain_steps = self.settings.rl.nightly_retrain_steps
-            await asyncio.get_event_loop().run_in_executor(
+            await asyncio.get_running_loop().run_in_executor(
                 None, self._run_incremental_training, episodes, retrain_steps
             )
 
@@ -410,14 +480,16 @@ class Orchestrator:
         self, episodes: list[list[dict[str, Any]]], steps: int
     ) -> None:
         """Synchronous incremental retraining (runs in thread pool)."""
+        if not self._trainer:
+            return
+        self._trainer._data = episodes
         model_path = self.settings.rl.model_path
-        if Path(model_path).exists() and self._trainer:
+        if Path(model_path).exists():
             self._trainer.load_and_continue(
                 model_path=model_path,
                 total_timesteps=steps,
             )
-        elif self._trainer:
-            self._trainer._data = episodes
+        else:
             self._trainer.train_offline(
                 total_timesteps=steps,
                 checkpoint_dir="models/checkpoints",
@@ -431,17 +503,17 @@ class Orchestrator:
         logger.info("evaluation_starting")
 
         try:
-            metrics = await asyncio.get_event_loop().run_in_executor(
+            metrics = await asyncio.get_running_loop().run_in_executor(
                 None, self._trainer.evaluate, None, 50
             )
             self._stats["eval_runs"] += 1
             self._stats["last_eval"] = metrics
 
-            # Record curriculum episode metrics
+            # Record curriculum episode metrics with proper win_rate and roi
             if metrics:
                 self._curriculum.record_episode({
-                    "win_rate": metrics.get("mean_reward", 0),
-                    "roi": metrics.get("mean_reward", 0),
+                    "win_rate": metrics.get("win_rate", 0),
+                    "roi": metrics.get("roi", 0),
                 })
 
             logger.info("evaluation_completed", **metrics)
@@ -592,17 +664,55 @@ class Orchestrator:
             )
 
     async def _generate_signal(self, match: dict[str, Any]) -> Optional[dict[str, Any]]:
-        """Generate a bet signal for a single match."""
+        """Generate a bet signal for a single match using real observation from latest odds."""
         if self._trainer is None or self._trainer._agent is None:
             return None
 
         try:
-            # Get latest observation for this match via the feature pipeline
             from features.pipeline import FeaturePipeline
-            pipeline = FeaturePipeline()
+            from features.store import FeatureStore
 
-            # Get action and confidence from the agent
-            obs = np.zeros(self.settings.rl.observation_size, dtype=np.float32)
+            match_id = match.get("match_id", "")
+            if not match_id:
+                return None
+
+            # 1. Try feature cache first (fast path if populated by live consumer)
+            store = FeatureStore()
+            obs = await store.get(match_id)
+            event = None
+
+            # 2. If no cache, fetch latest odds from DB and compute observation
+            if obs is None:
+                from features.context_resolver import get_match_context
+
+                event = await self._fetch_latest_odds(match_id, match)
+                if event is None:
+                    logger.debug("no_odds_for_signal", match_id=match_id)
+                    return None
+
+                context = await get_match_context(match_id) or await self._fetch_latest_context(match_id)
+                pipeline = FeaturePipeline()
+                portfolio = self._build_portfolio_state()
+
+                obs = pipeline.compute(
+                    match_id=match_id,
+                    event=event,
+                    context=context,
+                    portfolio=portfolio,
+                )
+
+            # Ensure correct shape
+            from shared.constants import OBSERVATION_SIZE
+            if obs.shape[0] != OBSERVATION_SIZE:
+                logger.warning(
+                    "observation_shape_mismatch",
+                    match_id=match_id,
+                    got=obs.shape[0],
+                    expected=OBSERVATION_SIZE,
+                )
+                return None
+
+            # 3. Get action and confidence from the agent
             action, _ = self._trainer._agent.predict(obs, deterministic=True)
             probs = self._trainer._agent.get_action_distribution(obs)
 
@@ -619,13 +729,23 @@ class Orchestrator:
             if action == 0 or confidence < 0.3:
                 return None
 
+            # Include odds in signal for shadow trader (from event if we fetched it)
+            odds = 2.0
+            if event:
+                action_name = action_names[action] if action < len(action_names) else ""
+                if "HOME" in action_name:
+                    odds = event.back_home or event.lay_home or 2.0
+                else:
+                    odds = event.back_away or event.lay_away or 2.0
+
             return {
-                "match_id": match.get("match_id", ""),
+                "match_id": match_id,
                 "team_home": match.get("team_home", ""),
                 "team_away": match.get("team_away", ""),
                 "competition": match.get("competition", ""),
                 "recommended_action": action_names[action] if action < len(action_names) else "UNKNOWN",
                 "confidence": round(confidence, 4),
+                "odds": float(odds),
                 "action_probabilities": {
                     name: round(float(p), 4) for name, p in zip(action_names, probs)
                 },
@@ -635,6 +755,127 @@ class Orchestrator:
         except Exception as e:
             logger.error("signal_generation_error", match_id=match.get("match_id"), error=str(e))
             return None
+
+    async def _fetch_latest_odds(
+        self, match_id: str, match: dict[str, Any]
+    ) -> Optional[OddsEvent]:
+        """Fetch latest odds for a match from TimescaleDB."""
+        from shared.schemas import OddsEvent
+
+        try:
+            async with get_session() as session:
+                from sqlalchemy import text
+
+                result = await session.execute(
+                    text("""
+                        SELECT time, match_id, team_home, team_away, competition,
+                               back_home, lay_home, back_draw, lay_draw, back_away, lay_away, is_live
+                        FROM odds_ticks
+                        WHERE match_id = :match_id
+                        ORDER BY time DESC
+                        LIMIT 1
+                    """),
+                    {"match_id": match_id},
+                )
+                row = result.fetchone()
+
+            if not row:
+                return None
+
+            return OddsEvent(
+                match_id=row[1],
+                timestamp=row[0],
+                team_home=row[2] or match.get("team_home", ""),
+                team_away=row[3] or match.get("team_away", ""),
+                competition=row[4] or match.get("competition", ""),
+                back_home=float(row[5]) if row[5] is not None else None,
+                lay_home=float(row[6]) if row[6] is not None else None,
+                back_draw=float(row[7]) if row[7] is not None else None,
+                lay_draw=float(row[8]) if row[8] is not None else None,
+                back_away=float(row[9]) if row[9] is not None else None,
+                lay_away=float(row[10]) if row[10] is not None else None,
+                is_live=bool(row[11]) if row[11] is not None else True,
+            )
+        except Exception as e:
+            logger.warning("fetch_odds_failed", match_id=match_id, error=str(e))
+            return None
+
+    async def _fetch_latest_context(self, match_id: str) -> Optional["MatchContext"]:
+        """Fetch latest match context from DB (fallback when Redis cache empty)."""
+        try:
+            from shared.schemas import MatchContext
+
+            async with get_session() as session:
+                from sqlalchemy import text
+
+                result = await session.execute(
+                    text("""
+                        SELECT time, match_id, is_live, score, wickets, overs,
+                               run_rate, req_run_rate, innings, balls_remaining,
+                               COALESCE(batting_team, ''), COALESCE(bowling_team, ''),
+                               COALESCE(status, 'scheduled'), COALESCE(match_format, 'T20')
+                        FROM match_context
+                        WHERE match_id = :match_id
+                        ORDER BY time DESC
+                        LIMIT 1
+                    """),
+                    {"match_id": match_id},
+                )
+                row = result.fetchone()
+
+            if not row:
+                return None
+
+            fmt = (row[13] or "T20").upper()
+            if fmt == "ODI":
+                max_overs, max_balls = 50.0, 300
+            elif fmt == "TEST":
+                max_overs, max_balls = 90.0, 540
+            else:
+                max_overs, max_balls = 20.0, 120
+
+            return MatchContext(
+                match_id=row[1],
+                timestamp=row[0],
+                is_live=bool(row[2]),
+                score=int(row[3] or 0),
+                wickets=int(row[4] or 0),
+                overs=float(row[5] or 0),
+                run_rate=float(row[6] or 0),
+                required_run_rate=float(row[7] or 0),
+                innings=int(row[8] or 1),
+                balls_remaining=int(row[9] or 0),
+                batting_team=row[10] or "",
+                bowling_team=row[11] or "",
+                status=row[12] or "scheduled",
+                match_format=fmt,
+                max_overs=max_overs,
+                max_balls=max_balls,
+            )
+        except Exception as e:
+            logger.debug("fetch_context_failed", match_id=match_id, error=str(e))
+            return None
+
+    def _build_portfolio_state(self) -> PortfolioState:
+        """Build portfolio state from shadow trader for feature pipeline."""
+        from shared.schemas import PortfolioState
+
+        st = self._shadow_trader
+        open_positions = len(st._open_bets)
+        total_exposure = sum(b.stake for b in st._open_bets.values())
+
+        return PortfolioState(
+            initial_balance=st._initial_balance,
+            current_balance=st._balance,
+            open_positions=open_positions,
+            total_exposure=total_exposure,
+            session_pnl=st._total_pnl,
+            daily_pnl=0.0,
+            total_bets=st._total_bets,
+            total_wins=st._total_wins,
+            consecutive_streak=0,
+            time_since_last_bet=0.0,
+        )
 
     # ================================================================
     # State Management
@@ -658,6 +899,17 @@ class Orchestrator:
 
         await self._publish_state()
 
+        # Start/stop live virtual trading loop.
+        # Run during ONLINE_TRAINING (so users can watch the agent learn)
+        # and VIRTUAL_TRADING (the formal evaluation phase).
+        _live_states = {OrchestratorState.ONLINE_TRAINING, OrchestratorState.VIRTUAL_TRADING}
+        was_live = old_state in _live_states
+        will_be_live = new_state in _live_states
+        if was_live and not will_be_live:
+            await self._stop_live_trading()
+        if will_be_live and not was_live:
+            await self._start_live_trading()
+
         # If graduated, also update agent state
         if new_state == OrchestratorState.GRADUATED:
             redis = await get_redis()
@@ -666,6 +918,118 @@ class Orchestrator:
                 "graduated_at": datetime.now(timezone.utc).isoformat(),
                 "model_version": self._model_version,
             })
+
+    async def _start_live_trading(self) -> None:
+        """Start the live virtual trading loop (runs agent on match_events, persists bets)."""
+        await self._stop_live_trading()
+        if self._trainer is None or self._trainer._agent is None:
+            model_path = Path(self.settings.rl.model_path)
+            if model_path.exists():
+                self._trainer = Trainer()
+                env = self._trainer.create_env()
+                if self.settings.rl.algorithm == "dqn":
+                    from rl.agent_dqn import PhoenixDQNAgent
+                    self._trainer._agent = PhoenixDQNAgent.load(model_path, env)
+                else:
+                    from rl.agent import PhoenixAgent
+                    self._trainer._agent = PhoenixAgent.load(model_path, env)
+            if self._trainer is None or self._trainer._agent is None:
+                logger.warning("live_trading_skipped_no_agent")
+                return
+
+        # Replay buffer for online learning from settled matches
+        def _on_replay_train_ready(episodes: list) -> None:
+            asyncio.get_running_loop().create_task(self._run_live_retrain(episodes))
+
+        self._episode_replay_buffer = EpisodeReplayBuffer(
+            max_episodes=50,
+            train_threshold=self.settings.rl.live_retrain_threshold,
+            min_ticks_per_episode=10,
+            on_train_ready=_on_replay_train_ready,
+        )
+
+        self._live_trading_loop = LiveVirtualTradingLoop(
+            agent=self._trainer._agent,
+            initial_balance=float(self.settings.rl.starting_bankroll),
+            agent_version=str(self._model_version),
+            on_match_settled=self._on_live_match_settled,
+            get_agent=lambda: self._trainer._agent if self._trainer else None,
+        )
+        self._live_trading_task = asyncio.create_task(self._live_trading_loop.start())
+        logger.info("live_trading_started")
+
+    async def _on_live_match_settled(self, match_id: str, result_meta: dict[str, Any]) -> None:
+        """Load episode for settled match and add to replay buffer (online learning)."""
+        if not self._episode_replay_buffer:
+            return
+        try:
+            episode = await self._data_loader.load_episode_for_settled_match(
+                match_id=match_id,
+                result_meta=result_meta,
+                min_ticks=10,
+                run_quality_gate=False,
+            )
+            if episode:
+                self._episode_replay_buffer.add(episode, match_id=match_id)
+                logger.debug("episode_added_to_replay", match_id=match_id, ticks=len(episode))
+        except Exception as e:
+            logger.warning("episode_load_for_replay_failed", match_id=match_id, error=str(e))
+
+    async def _run_live_retrain(self, episodes: list[list[dict[str, Any]]]) -> None:
+        """Incremental training from live settled episodes. Reloads agent into live loop."""
+        if not self._trainer or not episodes:
+            return
+        logger.info("live_retrain_starting", episode_count=len(episodes))
+        try:
+            steps = self.settings.rl.live_retrain_steps
+            await asyncio.get_running_loop().run_in_executor(
+                None, self._run_incremental_training, episodes, steps
+            )
+            self._stats["training_runs"] += 1
+            self._model_version += 1
+            logger.info("live_retrain_completed", version=self._model_version)
+        except Exception as e:
+            logger.error("live_retrain_failed", error=str(e))
+
+    async def _stop_live_trading(self) -> None:
+        """Stop the live virtual trading loop."""
+        had_loop = self._live_trading_loop is not None or self._live_trading_task is not None
+        if self._live_trading_loop:
+            await self._live_trading_loop.stop()
+            self._live_trading_loop = None
+        if self._live_trading_task:
+            self._live_trading_task.cancel()
+            try:
+                await self._live_trading_task
+            except asyncio.CancelledError:
+                pass
+            self._live_trading_task = None
+        if had_loop:
+            logger.info("live_trading_stopped")
+
+    async def _start_feature_cache_consumer(self) -> None:
+        """Start the feature cache consumer (populates cache from match_events)."""
+        await self._stop_feature_cache_consumer()
+        self._feature_cache_consumer = FeatureCacheConsumer(
+            initial_balance=float(self.settings.rl.starting_bankroll),
+        )
+        self._feature_cache_task = asyncio.create_task(
+            self._feature_cache_consumer.start()
+        )
+        logger.info("feature_cache_consumer_started")
+
+    async def _stop_feature_cache_consumer(self) -> None:
+        """Stop the feature cache consumer."""
+        if self._feature_cache_consumer:
+            await self._feature_cache_consumer.stop()
+            self._feature_cache_consumer = None
+        if self._feature_cache_task:
+            self._feature_cache_task.cancel()
+            try:
+                await self._feature_cache_task
+            except asyncio.CancelledError:
+                pass
+            self._feature_cache_task = None
 
     async def _publish_state(self) -> None:
         """Publish current orchestrator state to Redis."""
@@ -677,7 +1041,14 @@ class Orchestrator:
                 "curriculum_stage": self._curriculum.current_stage.name,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             })
-            await redis.set_json(KEY_ORCHESTRATOR_STATS, self._stats)
+            # Ensure min_required in stats always matches config before persisting
+            stats_to_save = dict(self._stats)
+            if stats_to_save.get("accumulation"):
+                stats_to_save["accumulation"] = dict(stats_to_save["accumulation"])
+                stats_to_save["accumulation"]["min_required"] = self.settings.rl.min_matches_to_train
+                qual = stats_to_save["accumulation"].get("qualifying_matches", 0)
+                stats_to_save["accumulation"]["ready_to_train"] = qual >= self.settings.rl.min_matches_to_train
+            await redis.set_json(KEY_ORCHESTRATOR_STATS, stats_to_save)
         except Exception as e:
             logger.error("state_publish_error", error=str(e))
 
@@ -706,11 +1077,23 @@ class Orchestrator:
                         model_path = Path(self.settings.rl.model_path)
                         if model_path.exists():
                             self._trainer = Trainer()
-                            logger.info("trainer_restored")
+                            env = self._trainer.create_env()
+                            if self.settings.rl.algorithm == "dqn":
+                                from rl.agent_dqn import PhoenixDQNAgent
+                                self._trainer._agent = PhoenixDQNAgent.load(model_path, env)
+                            else:
+                                from rl.agent import PhoenixAgent
+                                self._trainer._agent = PhoenixAgent.load(model_path, env)
+                            logger.info("trainer_and_agent_restored", model_path=str(model_path))
 
             stats_data = await redis.get_json(KEY_ORCHESTRATOR_STATS)
             if stats_data:
                 self._stats.update(stats_data)
+                # Override accumulation.min_required with config (Redis may be stale)
+                if self._stats.get("accumulation"):
+                    self._stats["accumulation"]["min_required"] = self.settings.rl.min_matches_to_train
+                    qual = self._stats["accumulation"].get("qualifying_matches", 0)
+                    self._stats["accumulation"]["ready_to_train"] = qual >= self.settings.rl.min_matches_to_train
 
         except Exception as e:
             logger.warning("state_restore_failed", error=str(e))
@@ -722,7 +1105,7 @@ async def run_orchestrator() -> None:
 
     orchestrator = Orchestrator()
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     def _shutdown() -> None:
         asyncio.ensure_future(orchestrator.stop())

@@ -25,7 +25,9 @@ const actionColorMap: Record<string, string> = {
   BACK_AWAY_SM: "bg-blue-600",
   BACK_AWAY_LG: "bg-blue-500",
   LAY_HOME_SM: "bg-amber-600",
-  LAY_AWAY_SM: "bg-amber-500",
+  LAY_HOME_LG: "bg-amber-500",
+  LAY_AWAY_SM: "bg-orange-600",
+  LAY_AWAY_LG: "bg-orange-500",
   HOLD: "bg-zinc-600",
 };
 
@@ -35,7 +37,9 @@ const actionLabelMap: Record<string, string> = {
   BACK_AWAY_SM: "Back Away (Small)",
   BACK_AWAY_LG: "Back Away (Large)",
   LAY_HOME_SM: "Lay Home (Small)",
+  LAY_HOME_LG: "Lay Home (Large)",
   LAY_AWAY_SM: "Lay Away (Small)",
+  LAY_AWAY_LG: "Lay Away (Large)",
   HOLD: "Hold",
 };
 

@@ -197,6 +197,24 @@ class TickValidator:
                 TickIssue("warn", "NEGATIVE_SCORE", f"score={score}")
             )
 
+        # --- 8. Volume validation ---
+        volume_fields = ("volume_back_home", "volume_lay_home", "volume_back_away", "volume_lay_away")
+        has_any_volume = False
+        for vol_key in volume_fields:
+            vol = tick.get(vol_key)
+            if vol is not None:
+                has_any_volume = True
+                if vol < 0:
+                    issues.append(
+                        TickIssue("warn", "NEGATIVE_VOLUME", f"{vol_key}={vol}")
+                    )
+
+        # Warn if no volume data (important for market depth signals)
+        if not has_any_volume and (back_home is not None or back_away is not None):
+            issues.append(
+                TickIssue("warn", "NO_VOLUME_DATA", "Tick has odds but no volume data")
+            )
+
         # Update state
         self._prev_ticks[match_id] = tick
 

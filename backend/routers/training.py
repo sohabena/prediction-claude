@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
+import os
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Query
@@ -14,6 +17,43 @@ from shared.logging import setup_logging
 
 router = APIRouter()
 logger = setup_logging("router_training")
+
+# Progress file: try PHOENIX_PROJECT_ROOT env, then __file__, then CWD
+def _progress_paths() -> list[Path]:
+    roots: list[Path] = []
+    if env_root := os.environ.get("PHOENIX_PROJECT_ROOT"):
+        roots.append(Path(env_root))
+    roots.append(Path(__file__).resolve().parent.parent.parent)
+    roots.append(Path.cwd())
+    return [r / "logs" / "training_progress.json" for r in roots]
+
+
+def _find_progress_file() -> Path | None:
+    for p in _progress_paths():
+        if p.exists():
+            return p
+    return None
+
+
+@router.get("/steps")
+async def get_training_progress() -> dict[str, Any]:
+    """
+    Get current offline training progress (steps, % complete).
+    Written by TrainingProgressCallback during training.
+    """
+    try:
+        path = _find_progress_file()
+        if path:
+            return json.loads(path.read_text())
+    except Exception as e:
+        logger.warning("training_progress_read_error", error=str(e))
+    return {
+        "current_step": 0,
+        "total_steps": 0,
+        "pct_complete": 0,
+        "status": "idle",
+        "updated_at": None,
+    }
 
 
 @router.get("/metrics")
@@ -64,10 +104,24 @@ async def get_training_metrics(
 
 @router.get("/summary")
 async def get_training_summary() -> dict[str, Any]:
-    """Get a summary of the latest training state."""
+    """Get a summary of the latest training state.
+    Includes live progress from training_progress.json when available.
+    """
+    result: dict[str, Any] = {}
+    # Progress from file - ensure key exists for frontend
+    try:
+        path = _find_progress_file()
+        if path:
+            result["progress"] = json.loads(path.read_text())
+        else:
+            result["progress"] = None
+    except Exception as e:
+        logger.warning("training_progress_read_error", error=str(e))
+        result["progress"] = None
+
     try:
         async with get_session() as session:
-            result = await session.execute(
+            db_result = await session.execute(
                 text("""
                     SELECT
                         MAX(total_timesteps) as total_steps,
@@ -79,27 +133,27 @@ async def get_training_summary() -> dict[str, Any]:
                     FROM training_metrics
                 """)
             )
-            row = result.fetchone()
+            row = db_result.fetchone()
             if row:
-                return {
+                result.update({
                     "total_timesteps": row[0] or 0,
                     "total_episodes": row[1] or 0,
                     "recent_win_rate": float(row[2] or 0),
                     "recent_roi": float(row[3] or 0),
                     "recent_sharpe": float(row[4] or 0),
                     "latest_version": row[5] or "none",
-                }
+                })
+                return result
     except Exception as e:
         logger.error("training_summary_error", error=str(e))
 
-    return {
-        "total_timesteps": 0,
-        "total_episodes": 0,
-        "recent_win_rate": 0.0,
-        "recent_roi": 0.0,
-        "recent_sharpe": 0.0,
-        "latest_version": "none",
-    }
+    result.setdefault("total_timesteps", 0)
+    result.setdefault("total_episodes", 0)
+    result.setdefault("recent_win_rate", 0.0)
+    result.setdefault("recent_roi", 0.0)
+    result.setdefault("recent_sharpe", 0.0)
+    result.setdefault("latest_version", "none")
+    return result
 
 
 @router.get("/data-quality")
@@ -116,56 +170,50 @@ async def get_data_quality(
         gate = EpisodeQualityGate()
         reports: list[dict[str, Any]] = []
 
-        # Load recent approved match episodes
         async with get_session() as session:
+            # Single query: get all ticks for the most recent N matches
             result = await session.execute(
                 text("""
-                    SELECT DISTINCT match_id
-                    FROM odds_ticks
-                    ORDER BY match_id DESC
-                    LIMIT :limit
+                    WITH recent_matches AS (
+                        SELECT DISTINCT match_id
+                        FROM odds_ticks
+                        ORDER BY match_id DESC
+                        LIMIT :limit
+                    )
+                    SELECT t.time, t.match_id, t.back_home, t.lay_home,
+                           t.back_away, t.lay_away, t.back_draw, t.lay_draw,
+                           t.implied_prob_home, t.implied_prob_away,
+                           t.overround, t.is_live
+                    FROM odds_ticks t
+                    INNER JOIN recent_matches rm ON rm.match_id = t.match_id
+                    ORDER BY t.match_id, t.time ASC
                 """),
                 {"limit": limit},
             )
-            match_ids = [row[0] for row in result.fetchall()]
+            rows = result.fetchall()
 
-        # For each match, load ticks and evaluate quality
-        for mid in match_ids:
-            async with get_session() as session:
-                result = await session.execute(
-                    text("""
-                        SELECT time, match_id, back_home, lay_home,
-                               back_away, lay_away, back_draw, lay_draw,
-                               implied_prob_home, implied_prob_away,
-                               overround, is_live
-                        FROM odds_ticks
-                        WHERE match_id = :mid
-                        ORDER BY time ASC
-                    """),
-                    {"mid": mid},
-                )
-                rows = result.fetchall()
-                if not rows:
-                    continue
+        # Group ticks by match_id in Python
+        episodes_by_match: dict[str, list[dict[str, Any]]] = {}
+        for r in rows:
+            mid = r[1]
+            tick = {
+                "timestamp": r[0],
+                "match_id": mid,
+                "back_home": r[2],
+                "lay_home": r[3],
+                "back_away": r[4],
+                "lay_away": r[5],
+                "back_draw": r[6],
+                "lay_draw": r[7],
+                "implied_prob_home": r[8],
+                "implied_prob_away": r[9],
+                "overround": r[10],
+                "is_live": r[11],
+            }
+            episodes_by_match.setdefault(mid, []).append(tick)
 
-                episode = [
-                    {
-                        "timestamp": r[0],
-                        "match_id": r[1],
-                        "back_home": r[2],
-                        "lay_home": r[3],
-                        "back_away": r[4],
-                        "lay_away": r[5],
-                        "back_draw": r[6],
-                        "lay_draw": r[7],
-                        "implied_prob_home": r[8],
-                        "implied_prob_away": r[9],
-                        "overround": r[10],
-                        "is_live": r[11],
-                    }
-                    for r in rows
-                ]
-
+        for episode in episodes_by_match.values():
+            if episode:
                 report = gate.evaluate(episode)
                 reports.append(asdict(report))
 

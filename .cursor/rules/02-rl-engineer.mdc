@@ -68,13 +68,13 @@ class CricketBettingEnv(gym.Env):
     def __init__(self, config=None):
         super().__init__()
         
-        self.observation_size = config.get('obs_size', 66)
+        self.observation_size = config.get('obs_size', 74)
         
-        # Action space: 7 discrete actions
-        self.action_space = spaces.Discrete(7)
+        # Action space: 9 discrete actions
+        self.action_space = spaces.Discrete(9)
         # 0=HOLD, 1=BACK_HOME_SM, 2=BACK_HOME_LG,
         # 3=BACK_AWAY_SM, 4=BACK_AWAY_LG,
-        # 5=LAY_HOME_SM, 6=LAY_AWAY_SM
+        # 5=LAY_HOME_SM, 6=LAY_AWAY_SM, 7=LAY_HOME_LG, 8=LAY_AWAY_LG
         
         # Observation space: continuous feature vector
         self.observation_space = spaces.Box(
@@ -101,7 +101,7 @@ class CricketBettingEnv(gym.Env):
         return observation, reward, terminated, truncated, info
 ```
 
-### State Space Design (66 features -- DATA-ONLY)
+### State Space Design (74 features -- DATA-ONLY)
 
 **PHILOSOPHY:** Every feature is either raw data from the scraper/enricher, a mathematical transformation of that data, or the agent's own portfolio state. NO cricket heuristics, NO domain opinions. The agent discovers all patterns itself.
 
@@ -171,6 +171,8 @@ class BettingAction:
     BACK_AWAY_LG = 4    # Back away, 3% bankroll
     LAY_HOME_SM = 5     # Lay home, 1% bankroll
     LAY_AWAY_SM = 6     # Lay away, 1% bankroll
+    LAY_HOME_LG = 7     # Lay home, 3% bankroll
+    LAY_AWAY_LG = 8     # Lay away, 3% bankroll
 ```
 
 **Design Rationale:**
@@ -293,7 +295,7 @@ mean_reward, std_reward = evaluate_policy(model, eval_env, n_eval_episodes=50)
 - Goal: Learn when odds are mispriced (> 52% win rate)
 
 ### Stage 2: Full Actions
-- All 7 actions enabled
+- All 9 actions enabled (HOLD + 4 BACK + 4 LAY)
 - Historical data
 - Goal: Learn sizing and LAY (> 5% ROI)
 

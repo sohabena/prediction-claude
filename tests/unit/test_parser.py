@@ -44,14 +44,29 @@ class TestLotusBookParser:
         events = self.parser.parse_dom_data(raw)
         assert len(events) == 0
 
-    def test_parse_invalid_odds_skipped(self) -> None:
-        """Entries with out-of-range odds are skipped."""
+    def test_parse_invalid_odds_filtered_to_none(self) -> None:
+        """Out-of-range odds are filtered to None; event kept if other side valid."""
         raw = [
             {
                 "team_home": "India",
                 "team_away": "Australia",
-                "back_home": 0.5,  # Invalid: below 1.01
+                "back_home": 0.5,  # Invalid: below 1.01 -> parsed as None
                 "back_away": 2.10,
+            }
+        ]
+        events = self.parser.parse_dom_data(raw)
+        assert len(events) == 1
+        assert events[0].back_home is None  # Filtered out
+        assert events[0].back_away == 2.10  # Valid side kept
+
+    def test_parse_all_odds_invalid_skipped(self) -> None:
+        """Entries with ALL odds invalid are skipped (no valid back price)."""
+        raw = [
+            {
+                "team_home": "India",
+                "team_away": "Australia",
+                "back_home": 0.5,   # Invalid
+                "back_away": 0.3,   # Invalid
             }
         ]
         events = self.parser.parse_dom_data(raw)

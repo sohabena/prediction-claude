@@ -1,6 +1,6 @@
 """
-Feature pipeline: computes the 66-dim observation vector from raw data.
-Orchestrates all 7 feature extractors and applies normalization.
+Feature pipeline: computes the 74-dim observation vector from raw data.
+Orchestrates all 8 feature extractors and applies normalization.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ class FeaturePipeline:
     Computes RL observation vector from raw data. DATA-ONLY approach.
 
     Input: match_id + latest OddsEvent + MatchContext + PortfolioState
-    Output: np.ndarray of shape (66,)
+    Output: np.ndarray of shape (74,)
 
     Feature groups (74 total, all data-backed):
     1. Raw odds (12) -- prices, implied probs, overround, spreads
@@ -87,16 +87,16 @@ class FeaturePipeline:
         portfolio: Optional[PortfolioState] = None,
     ) -> np.ndarray:
         """
-        Compute the full 66-feature observation vector.
+        Compute the full 74-feature observation vector.
 
         Args:
             match_id: Unique match identifier.
             event: Latest odds event.
-            context: Optional match context from Cricbuzz.
+            context: Optional match context from LotusBook.
             portfolio: Optional portfolio state.
 
         Returns:
-            Normalized float32 array of shape (66,).
+            Normalized float32 array of shape (74,).
         """
         # Add event to history
         self.add_event(event)
@@ -197,7 +197,8 @@ class FeaturePipeline:
             # Return a safe zero vector rather than garbage data
             return np.zeros(OBSERVATION_SIZE, dtype=np.float32)
 
-        return obs
+        # Ensure float32 to match Gymnasium observation space dtype
+        return obs.astype(np.float32)
 
     def _get_recent_history(self, match_id: str) -> list[OddsEvent]:
         """Get events within the lookback window."""

@@ -96,16 +96,21 @@ This document identifies potential gaps, risks, and areas for improvement in the
 - Track team-level exposure (don't over-bet on India across matches)
 - Implement correlation-aware position sizing
 
-### 3.2 Bookmaker Detection (HIGH)
+### 3.2 Bookmaker Detection (HIGH) — UPDATED
 **Gap:** Anti-detection measures are implemented but not battle-tested.
 
 **Impact:** Account could be limited or banned after going live.
 
-**Mitigation:**
-- Win rate capping at 58% (already implemented)
+**Mitigation (Multi-Account Strategy):**
+- **Win rate cap REMOVED** — agent optimizes for maximum win rate
+- Bets distributed across multiple accounts (1 recommendation per account)
+- Accounts see a mix of wins and losses but net positive overall
 - Random delays 5-15s before bet placement
-- Stake noise +/-20%
-- Vary session behavior patterns
+- **Human-like stake rounding** — stakes rounded to multiples of 50/100/200/500/1000/2000/5000
+- Stake noise +/-20% to avoid robotic consistency
+- **Per-match budget of ₹1,00,000** with payout-aware headroom (1.5×)
+- **Unlimited bets per match** — real users place many hedging bets
+- 15s minimum cooldown between bets (bot pattern avoidance, not opportunity limiting)
 - Test detection avoidance with a throwaway account first
 
 ### 3.3 Flash Crash Protection (LOW)

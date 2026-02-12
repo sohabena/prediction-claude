@@ -28,7 +28,7 @@ import re
 from dataclasses import dataclass
 from enum import StrEnum
 
-from scraper.match_filter import (
+from shared.constants import (
     FRANCHISE_TEAMS,
     INTERNATIONAL_TEAMS,
 )

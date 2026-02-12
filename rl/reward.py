@@ -27,6 +27,8 @@ class RewardFunction:
     4. Risk Breach Penalty (exposure > 50%)
     5. Drawdown Penalty (quadratic, > 10%)
     6. Sharpe Bonus (episodic, at end of match)
+    7. (Removed — win rate uncapped; multi-account distribution handles detection)
+    8. CLV Bonus (intermediate: odds moved in our favor before settlement)
     """
 
     def __init__(
@@ -40,6 +42,7 @@ class RewardFunction:
         drawdown_threshold: float = 0.10,
         drawdown_penalty_scale: float = 50.0,
         sharpe_bonus_scale: float = 0.5,
+        clv_bonus_scale: float = 0.5,
     ) -> None:
         self.pnl_scale = pnl_scale
         self.patience_reward = patience_reward
@@ -50,6 +53,7 @@ class RewardFunction:
         self.drawdown_threshold = drawdown_threshold
         self.drawdown_penalty_scale = drawdown_penalty_scale
         self.sharpe_bonus_scale = sharpe_bonus_scale
+        self.clv_bonus_scale = clv_bonus_scale
 
     def compute(self, action: int, step_info: dict[str, Any]) -> float:
         """
@@ -78,9 +82,13 @@ class RewardFunction:
                 reward += (pnl / bankroll) * self.pnl_scale
 
         # Component 2: Patience Reward
+        # Only reward patience when odds are stable AND there's no clear opportunity
+        # (avoid over-holding when there's high CLV potential)
         if action == BettingAction.HOLD:
             odds_change = abs(step_info.get("odds_change", 0.0))
-            if odds_change < 0.01:
+            clv_potential = abs(step_info.get("clv_improvement", 0.0))
+            # Don't reward holding if there's significant odds movement (potential opportunity)
+            if odds_change < 0.01 and clv_potential < 0.02:
                 reward += self.patience_reward
 
         # Component 3: Overtrading Penalty
@@ -105,5 +113,10 @@ class RewardFunction:
                 returns_arr = np.array(returns)
                 sharpe = float(np.mean(returns_arr) / (np.std(returns_arr) + 1e-8))
                 reward += max(0.0, sharpe) * self.sharpe_bonus_scale
+
+        # Component 8: CLV bonus (intermediate reward when odds move in our favor)
+        clv = step_info.get("clv_improvement", 0.0)
+        if clv > 0:
+            reward += clv * self.clv_bonus_scale
 
         return reward

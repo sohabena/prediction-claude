@@ -80,8 +80,11 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                             "channel": message["channel"],
                             "data": data,
                         })
-                    except (json.JSONDecodeError, Exception):
-                        pass
+                    except json.JSONDecodeError:
+                        logger.debug("ws_json_decode_error", channel=message.get("channel"))
+                    except Exception as e:
+                        logger.debug("ws_forward_error", error=str(e))
+                        break
 
         async def listen_client() -> None:
             """Listen for client messages (keep-alive, commands)."""

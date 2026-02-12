@@ -70,7 +70,7 @@ export function GraduationProgress({
           >
             <div className="flex items-center justify-between">
               <span className="text-sm text-zinc-400 capitalize">
-                {criterion.name.replace("_", " ")}
+                {criterion.name.replaceAll("_", " ")}
               </span>
               <span
                 className={
@@ -82,10 +82,14 @@ export function GraduationProgress({
             </div>
             <div className="mt-1">
               <span className="text-xl font-bold">
-                {criterion.value.toFixed(3)}
+                {criterion.name.includes("rate") || criterion.name.includes("roi") || criterion.name.includes("drawdown")
+                  ? `${(criterion.value * 100).toFixed(1)}%`
+                  : criterion.value.toFixed(2)}
               </span>
               <span className="text-xs text-zinc-500 ml-2">
-                / {criterion.threshold}
+                / {criterion.name.includes("rate") || criterion.name.includes("roi") || criterion.name.includes("drawdown")
+                  ? `${(criterion.threshold * 100).toFixed(1)}%`
+                  : criterion.threshold}
               </span>
             </div>
           </div>

@@ -49,7 +49,7 @@ class PhoenixDQNAgent:
         train_freq: int = 4,
         gradient_steps: int = 1,
         target_update_interval: int = 1000,
-        tensorboard_log: str = "./logs/dqn_cricket/",
+        tensorboard_log: Optional[str] = None,
         device: str = "auto",
     ) -> None:
         self.model = DQN(

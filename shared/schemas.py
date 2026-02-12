@@ -82,18 +82,56 @@ class OddsEvent(BaseModel):
     back_away: Optional[float] = Field(None, gt=1.0, description="Back price for away team")
     lay_away: Optional[float] = Field(None, gt=1.0, description="Lay price for away team")
 
+    # Volume (liquidity)
+    volume_back_home: Optional[float] = None
+    volume_lay_home: Optional[float] = None
+    volume_back_away: Optional[float] = None
+    volume_lay_away: Optional[float] = None
+
     # State
     is_live: bool = False
     scheduled_time: Optional[datetime] = None
+    score_text: str = ""  # Raw score string from scraper (e.g. "45/2 (8.3)")
 
     # Metadata
     source: str = "lotusbook"
     scrape_method: str = "dom"
     scrape_latency_ms: int = 0
 
+    @classmethod
+    def from_redis_data(cls, data: dict) -> "OddsEvent | None":
+        """Parse OddsEvent from Redis pub/sub message data."""
+        from datetime import timezone
+        try:
+            ts = data.get("timestamp")
+            if isinstance(ts, str):
+                try:
+                    ts = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                except ValueError:
+                    ts = datetime.now(timezone.utc)
+            elif ts is None:
+                ts = datetime.now(timezone.utc)
+
+            return cls(
+                match_id=data.get("match_id", "unknown"),
+                timestamp=ts,
+                team_home=data.get("team_home", ""),
+                team_away=data.get("team_away", ""),
+                competition=data.get("competition", ""),
+                back_home=float(data["back_home"]) if data.get("back_home") else None,
+                lay_home=float(data["lay_home"]) if data.get("lay_home") else None,
+                back_draw=float(data["back_draw"]) if data.get("back_draw") else None,
+                lay_draw=float(data["lay_draw"]) if data.get("lay_draw") else None,
+                back_away=float(data["back_away"]) if data.get("back_away") else None,
+                lay_away=float(data["lay_away"]) if data.get("lay_away") else None,
+                is_live=data.get("is_live", True),
+            )
+        except Exception:
+            return None
+
 
 class MatchContext(BaseModel):
-    """Cricket match context from Cricbuzz enricher (raw stats only, no heuristics)."""
+    """Cricket match context derived from LotusBook data (raw stats only, no heuristics)."""
 
     match_id: str
     timestamp: datetime
@@ -212,7 +250,13 @@ class MatchResult(BaseModel):
     margin: str = ""  # e.g. "5 wickets", "23 runs"
     team_home: str = ""
     team_away: str = ""
-    source: str = "cricbuzz"
+    source: str = "lotusbook_odds"
+
+    # Closing odds for CLV calculation (captured from last tick before completion)
+    closing_back_home: Optional[float] = None
+    closing_back_away: Optional[float] = None
+    closing_lay_home: Optional[float] = None
+    closing_lay_away: Optional[float] = None
 
 
 class HealthStatus(BaseModel):

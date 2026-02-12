@@ -13,20 +13,33 @@ Stage 1: Collection       Stage 2: Normalization    Stage 3: Storage
 ┌─────────────────┐      ┌──────────────────┐      ┌─────────────┐
 │ LotusBook Site  │ ───► │ LotusBookParser  │ ───► │ TimescaleDB │
 │ (Playwright)    │      │ (normalize data) │      │ (odds_ticks)│
+│                 │      │                  │      │             │
+│ Odds + Volume + │      │                  │      │ match_context│
+│ Score + Live    │      │                  │      │             │
 └─────────────────┘      └──────────────────┘      └─────────────┘
-                                 │
-┌─────────────────┐              │                  ┌─────────────┐
-│ Cricbuzz API    │ ─────────────┤                  │    Redis    │
-│ (REST scraping) │              │                  │ (pub/sub)   │
-└─────────────────┘              │                  └─────────────┘
-                                 ▼
-Stage 4: Enrichment       Stage 5: Features         Stage 6: Consumption
-┌──────────────────┐     ┌──────────────────┐      ┌─────────────┐
-│ DataEnricher     │ ──► │ FeaturePipeline  │ ───► │ RL Agent    │
-│ (merge odds +    │     │ (compute obs     │      │ (Gymnasium  │
-│  cricket stats)  │     │  vector)         │      │  env)       │
-└──────────────────┘     └──────────────────┘      └─────────────┘
+                                 │                        ▲
+                                 │                        │
+                                 ▼                  ┌─────────────┐
+                          ┌──────────────────┐      │    Redis    │
+                          │ LiveMatchTracker │ ───► │ (pub/sub +  │
+                          │ (derive context  │      │  cache)     │
+                          │  from score_text)│      └─────────────┘
+                          └──────────────────┘            │
+                                                          ▼
+                          Stage 4: Features         Stage 5: Consumption
+                          ┌──────────────────┐      ┌─────────────┐
+                          │ FeaturePipeline  │ ───► │ RL Agent    │
+                          │ (compute obs     │      │ (Gymnasium  │
+                          │  vector, 74-dim) │      │  env)       │
+                          └──────────────────┘      └─────────────┘
 ```
+
+**Single data source:** All data (odds, volume, score, match context) comes from
+LotusBook alone. The `LiveMatchTracker` derives match context (run rate, required
+run rate, innings, balls remaining) from the score_text that LotusBook displays.
+This eliminates the 7-10 second latency gap that existed with the previous
+Cricbuzz enricher approach. CricbuzzEnricher remains as an optional fallback
+but is not required.
 
 ---
 
@@ -105,9 +118,16 @@ class OddsEvent:
     back_away: Optional[float]
     lay_away: Optional[float]
     
+    # Volume (liquidity at each price)
+    volume_back_home: Optional[float]
+    volume_lay_home: Optional[float]
+    volume_back_away: Optional[float]
+    volume_lay_away: Optional[float]
+    
     # Match state
     is_live: bool
     scheduled_time: Optional[datetime]
+    score_text: str            # Raw score string, e.g. "45/2 (8.3)"
     
     # Metadata
     scrape_method: str         # "websocket" or "dom"
@@ -171,16 +191,29 @@ CREATE TABLE odds_ticks (
     back_away   DOUBLE PRECISION,
     lay_away    DOUBLE PRECISION,
     
+    -- Volume (market liquidity)
+    volume_back_home  DOUBLE PRECISION,
+    volume_lay_home   DOUBLE PRECISION,
+    volume_back_away  DOUBLE PRECISION,
+    volume_lay_away   DOUBLE PRECISION,
+    
     -- Derived
     implied_prob_home  DOUBLE PRECISION,
     implied_prob_away  DOUBLE PRECISION,
     overround          DOUBLE PRECISION,
     
+    -- Live match context (parsed from score_text)
+    score       INTEGER,
+    wickets     INTEGER,
+    overs       DOUBLE PRECISION,
+    innings     INTEGER,
+    
     -- Match state
     is_live     BOOLEAN DEFAULT FALSE,
     
     -- Metadata
-    source      TEXT DEFAULT 'lotusbook',
+    source              TEXT DEFAULT 'lotusbook',
+    scrape_latency_ms   INTEGER,
     
     UNIQUE (time, match_id)
 );
@@ -279,7 +312,7 @@ SELECT add_compression_policy('odds_ticks', INTERVAL '7 days');
 ```
 # Pub/Sub Channels
 match_events        → Real-time odds from scraper
-match_context       → Cricket stats from enricher
+match_context       → Cricket stats from LiveMatchTracker (derived from LotusBook)
 rl_actions          → Agent decisions
 virtual_outcomes    → Bet settlements
 training_progress   → Training metrics for dashboard
@@ -295,42 +328,47 @@ graduation:history          → Last 30 days of snapshots
 
 ---
 
-## Stage 4: Enrichment
+## Stage 4: Context Derivation (LiveMatchTracker)
 
-### Cricket Stats Enricher
+### Unified Single-Source Architecture
+
+All match context is now derived inline from LotusBook data — no external API needed.
 
 ```python
-class CricbuzzEnricher:
+class LiveMatchTracker:
     """
-    Enriches odds data with live cricket match context.
+    Derives MatchContext from LotusBook OddsEvent data every tick.
     
-    Data source: Cricbuzz (public cricket scores)
-    Poll interval: 10 seconds
+    Replaces CricbuzzEnricher — zero latency gap between odds and context.
     
-    Provides:
-    - Live score, wickets, overs
-    - Run rate, required run rate
-    - Match phase (powerplay/middle/death)
-    - Recent events (wickets, boundaries)
+    Per-tick derivation:
+    - score, wickets, overs  → parsed from score_text (e.g. "45/2 (8.3)")
+    - run_rate               → calculated: score / overs
+    - required_run_rate      → 2nd innings: (target - score) / overs_remaining
+    - innings                → detected via score reset (156/5 → 5/0)
+    - balls_remaining        → max_balls - overs_to_balls(overs)
+    - match_format           → inferred from competition name via MatchCategoryClassifier
     """
 ```
 
-### Match ID Mapping
+### Why Not Cricbuzz?
 
-Challenge: LotusBook and Cricbuzz use different match identifiers.
+| Issue | Impact |
+|-------|--------|
+| 10-second poll interval vs 3s LotusBook | 7s latency gap during high-volatility events |
+| Undocumented API | Can break without notice |
+| Fuzzy match ID mapping | Fails for lesser-known teams |
+| Separate HTTP requests | Extra network dependency |
 
-Solution:
-```python
-class MatchMapper:
-    """
-    Maps LotusBook match IDs to Cricbuzz match IDs.
-    
-    Strategy:
-    1. Fuzzy match team names (e.g., "India" ↔ "IND")
-    2. Match scheduled time (±30 minutes)
-    3. Cache mapping for duration of match
-    """
-```
+LotusBook already displays live scores on its cricket page. The `LiveMatchTracker`
+parses this data inline with each scraper tick, delivering match context with the
+same freshness as odds data.
+
+### CricbuzzEnricher (Optional Fallback)
+
+`scraper/enricher.py` remains in the codebase as an optional fallback for cases
+where LotusBook's score_text is unavailable or incomplete. It is **not started
+by default** — the LiveMatchTracker handles all context derivation.
 
 ---
 
@@ -344,9 +382,9 @@ class FeaturePipeline:
     Computes RL observation vector from raw data. DATA-ONLY approach.
     
     Input: match_id + latest OddsEvent + MatchContext
-    Output: np.ndarray of shape (66,)
+    Output: np.ndarray of shape (74,)
     
-    Feature groups (66 total, all data-backed):
+    Feature groups (74 total, all data-backed):
     1. Raw odds (12) -- prices, implied probs, overround, spreads
     2. Odds momentum (16) -- velocity, acceleration, volatility (math on prices)
     3. Market microstructure (8) -- spread dynamics, efficiency, staleness
@@ -415,6 +453,44 @@ The frontend receives data via:
 
 ## Data Quality Monitoring
 
+### Ingestion Quality Gates (3-tier)
+
+Applied in `ScraperManager._on_events()` before DB storage:
+
+| Gate | Rule | Action |
+|------|------|--------|
+| Gate 1 | Odds > 500 (no real market) | Reject tick |
+| Gate 2 | Both teams < 1.02 (impossible market) | Reject tick |
+| Gate 3 | TickValidator checks (spread inversion, range, jumps, duplicates) | Reject on error, log on warning |
+
+### Episode Quality Gate (pre-training)
+
+Applied via `EpisodeQualityGate` before RL training consumes a match:
+
+| Check | Weight | Threshold |
+|-------|--------|-----------|
+| Completeness (both back prices) | 40% | >= 40% |
+| Odds jumps (> 50% change) | 20% | < 20% of ticks |
+| Duplicate timestamps | 15% | < 30% |
+| Missing odds | 15% | < 50% |
+| Overround violations | 5% | < 10% |
+| Context violations | 5% | < 10% |
+
+Episodes with composite score < 0.50 are rejected from training.
+
+### Manual Data Validation
+
+Endpoint: `GET /api/matches/{match_id}/validate`
+
+Returns detailed quality metrics + recommendation (approve/review/reject):
+- Quality score, completeness, odds jumps, duplicates
+- Live vs pre-match tick counts, duration
+- Odds range summary, missing lay prices
+- Volume and score data coverage
+
+The approve endpoint (`PATCH /api/matches/{id}/approve`) runs validation
+automatically and blocks if quality < 0.50 (override with `?skip_validation=true`).
+
 ### Metrics to Track
 
 | Metric | Threshold | Alert |
@@ -425,12 +501,14 @@ The frontend receives data via:
 | Feature completeness | 100% required fields | Missing critical field |
 | Odds range validity | 1.01 - 1000.0 | Out of range |
 | Enrichment match rate | > 80% | Low match rate |
+| Volume data coverage | > 50% of ticks | Volume missing |
+| Score context coverage | > 0% of live ticks | Score parsing failed |
 
 ### Data Lineage
 
 Every piece of data is traceable:
 ```
-OddsEvent → fingerprint → TimescaleDB (with scrape metadata)
+OddsEvent → fingerprint → TimescaleDB (with scrape metadata + volume + context)
                 ↓
          FeatureVector → observation_hash → RL action → virtual_bet
                                                             ↓

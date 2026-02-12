@@ -18,10 +18,12 @@ CHANNEL_TRAINING_PROGRESS = "training_progress"  # RL Trainer -> Dashboard
 # ============================================================
 
 KEY_ACTIVE_MATCHES = "active_matches"          # JSON list of live matches
+KEY_WATCHED_MATCH_ID = "demo:watched_match_id"  # User-selected match for watch mode
 KEY_AGENT_STATE = "agent:state"                # Current agent mode
 KEY_AGENT_VERSION = "agent:version"            # Current model version
 KEY_GRADUATION_STATUS = "graduation:status"    # Current graduation progress
 KEY_FEATURE_CACHE = "feature_cache:{match_id}" # Cached feature vector per match
+KEY_MATCH_CONTEXT = "match_context:{match_id}" # Latest match context per match (TTL 60s)
 
 # ============================================================
 # Risk Management Limits
@@ -105,3 +107,120 @@ VALID_ODDS_MIN = 1.01
 VALID_ODDS_MAX = 1000.0
 MAX_DATA_AGE_SECONDS = 5       # Reject stale data
 SCRAPER_TARGET_LATENCY_MS = 500  # p95 target
+
+# ============================================================
+# Anti-Detection (Bookmaker Avoidance)
+# ============================================================
+
+BET_DELAY_MIN_SECONDS = 5      # Min random delay before bet placement
+BET_DELAY_MAX_SECONDS = 15     # Max random delay before bet placement
+STAKE_NOISE_PERCENT = 0.20     # +/-20% random noise on stake (avoids robotic pattern)
+MAX_BETS_PER_MATCH = 20        # Reasonable limit per match (prevents runaway betting)
+MIN_BET_INTERVAL_SECONDS = 15  # Baseline cooldown (shortened during high-volatility events)
+STAKE_ROUND_BUCKETS = [50, 100, 200, 500, 1000, 2000, 5000]  # Human-like round amounts
+PER_MATCH_BUDGET = 100_000     # Default budget per match (1,00,000)
+PAYOUT_HEADROOM_FACTOR = 1.5   # Allow up to 150% of budget if potential payouts justify it
+
+# ============================================================
+# Team Name Databases (shared across scraper + feature extractors)
+# ============================================================
+
+# ICC Full Member national teams + common aliases
+INTERNATIONAL_TEAMS: set[str] = {
+    # Full Members (12)
+    "india", "ind", "team india",
+    "australia", "aus",
+    "england", "eng",
+    "pakistan", "pak",
+    "south africa", "sa", "rsa", "proteas",
+    "new zealand", "nz", "black caps", "blackcaps",
+    "west indies", "wi", "windies",
+    "sri lanka", "sl",
+    "bangladesh", "ban", "bd",
+    "afghanistan", "afg",
+    "ireland", "ire",
+    "zimbabwe", "zim",
+    # Associate Members (commonly seen on betting sites)
+    "nepal", "nep",
+    "usa", "united states",
+    "netherlands", "ned",
+    "scotland", "sco",
+    "namibia", "nam",
+    "oman", "oma",
+    "uae", "united arab emirates",
+    "canada", "can",
+    "hong kong", "hk",
+    "papua new guinea", "png",
+    "jersey", "jer",
+    "uganda", "uga",
+    "kenya", "ken",
+    "bermuda",
+}
+
+# Major franchise team names (IPL, BBL, PSL, CPL, Hundred, SA20, etc.)
+FRANCHISE_TEAMS: dict[str, set[str]] = {
+    "IPL": {
+        "mumbai indians", "mi",
+        "chennai super kings", "csk",
+        "royal challengers", "rcb", "royal challengers bengaluru",
+        "kolkata knight riders", "kkr",
+        "sunrisers hyderabad", "srh",
+        "rajasthan royals", "rr",
+        "delhi capitals", "dc",
+        "punjab kings", "pbks",
+        "lucknow super giants", "lsg",
+        "gujarat titans", "gt",
+    },
+    "BBL": {
+        "sydney sixers", "sixers",
+        "sydney thunder", "thunder",
+        "melbourne stars", "stars",
+        "melbourne renegades", "renegades",
+        "brisbane heat", "heat",
+        "perth scorchers", "scorchers",
+        "hobart hurricanes", "hurricanes",
+        "adelaide strikers", "strikers",
+    },
+    "PSL": {
+        "karachi kings",
+        "lahore qalandars", "qalandars",
+        "islamabad united",
+        "peshawar zalmi", "zalmi",
+        "quetta gladiators", "gladiators",
+        "multan sultans", "sultans",
+    },
+    "CPL": {
+        "trinbago knight riders", "tkr",
+        "guyana amazon warriors", "amazon warriors",
+        "jamaica tallawahs", "tallawahs",
+        "barbados royals", "royals",
+        "st kitts and nevis patriots", "patriots",
+        "st lucia kings",
+    },
+    "Hundred": {
+        "oval invincibles", "invincibles",
+        "trent rockets", "rockets",
+        "southern brave", "brave",
+        "birmingham phoenix", "phoenix",
+        "manchester originals", "originals",
+        "london spirit", "spirit",
+        "northern superchargers", "superchargers",
+        "welsh fire", "fire",
+    },
+    "SA20": {
+        "sunrisers eastern cape",
+        "mi cape town",
+        "joburg super kings",
+        "paarl royals",
+        "durban super giants",
+        "pretoria capitals",
+    },
+    "MLC": {
+        "los angeles knight riders", "la knight riders",
+        "mi new york",
+        "san francisco unicorns",
+        "seattle orcas",
+        "texas super kings",
+        "washington freedom",
+    },
+}

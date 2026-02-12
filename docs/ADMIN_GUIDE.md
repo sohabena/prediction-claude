@@ -64,6 +64,17 @@ All management is done through `phoenix.ps1`:
 | GET | `/api/advisor/shadow/performance` | Shadow trading metrics |
 | GET | `/api/advisor/shadow/drift` | Drift detection status |
 | POST | `/api/advisor/demote` | Manually demote agent |
+| GET | `/api/matches/training-status` | List all matches with training status |
+| GET | `/api/matches/{id}/validate` | Run data quality validation on a match |
+| PATCH | `/api/matches/{id}/approve` | Approve match for training (runs validation first) |
+| PATCH | `/api/matches/{id}/reject` | Reject match from training |
+| DELETE | `/api/matches/{id}` | Delete rejected match and all its data |
+| POST | `/api/matches/{id}/result` | **NEW:** Submit manual match result (fallback when Cricbuzz fails) |
+| GET | `/api/matches/{id}/closing_odds` | **NEW:** Get closing odds for CLV calculation |
+| PATCH | `/api/matches/{id}/approve-scrape` | Approve match for scraping |
+| PATCH | `/api/matches/{id}/reject-scrape` | Reject match from scraping |
+| GET | `/api/training/data-quality` | Episode quality gate report for all matches |
+| GET | `/api/training/steps` | Current training progress |
 
 ---
 
@@ -78,10 +89,24 @@ All configuration is in `shared/config.py` with environment variable overrides.
 | DB Password | `POSTGRES_PASSWORD` | - | Set in `.env` |
 | Scraper URL | `SCRAPER_BETTING_SITE_URL` | lotusbook.site/cricket | Target site |
 | Poll Interval | `SCRAPER_POLL_INTERVAL` | 3 seconds | Scraping frequency |
+| Auto-approve Matches | `SCRAPER_AUTO_APPROVE_MATCHES` | false | If false, all matches require manual approval on /matches |
 | RL Algorithm | `RL_ALGORITHM` | ppo | ppo or dqn |
 | Training Steps | `RL_TOTAL_TIMESTEPS` | 500,000 | Initial training steps |
-| Min Matches | `RL_MIN_MATCHES_TO_TRAIN` | 30 | Required before training |
+| Min Matches | `RL_MIN_MATCHES_TO_TRAIN` | 10 | Required before training |
 | Starting Bankroll | `RL_STARTING_BANKROLL` | 100,000 | Virtual bankroll |
+
+### Betting & Anti-Detection Constants (`shared/constants.py`)
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `PER_MATCH_BUDGET` | 1,00,000 | Default budget per match |
+| `PAYOUT_HEADROOM_FACTOR` | 1.5 | Budget extends by 1.5× potential payouts |
+| `MAX_BETS_PER_MATCH` | 0 (unlimited) | No hard cap — multi-account distribution |
+| `MIN_BET_INTERVAL_SECONDS` | 15 | Baseline cooldown between bets on same match |
+| `STAKE_NOISE_PERCENT` | 0.20 | +/-20% random noise on stakes |
+| `STAKE_ROUND_BUCKETS` | [50..5000] | Human-like stake rounding amounts |
+| `BET_DELAY_MIN_SECONDS` | 5 | Min random delay before bet placement |
+| `BET_DELAY_MAX_SECONDS` | 15 | Max random delay before bet placement |
 
 ### Graduation Criteria
 
@@ -115,12 +140,26 @@ After a match completes, the `MatchResultCollector` (running alongside the scrap
 1. Detects matches with no new odds ticks for 30+ minutes
 2. Queries Cricbuzz API for the verified result
 3. Falls back to match_context inference if Cricbuzz unavailable
-4. Stores the result in the `match_results` table
-5. Publishes to the `match_results` Redis channel
+4. **NEW:** Manual fallback via `POST /api/matches/{id}/result` endpoint
+5. **NEW:** Captures closing odds (last tick before completion) for CLV calculation
+6. Stores the result in the `match_results` table (with closing odds fields)
+7. Publishes to the `match_results` Redis channel
+
+### Manual Result Submission
+
+If Cricbuzz API fails, use the dashboard UI or API directly:
+
+```powershell
+# Via API
+curl -X POST "http://localhost:8001/api/matches/lb_12345/result?winner=India&loser=Namibia&result_type=win&margin=8%20wickets"
+```
+
+Or use the **📝 Result** button on approved matches in the /matches page.
 
 Results are used by:
 - **RL Environment:** Real-outcome training (replaces simulated random settlement)
 - **Shadow Trader:** Verified settlement instead of odds-movement heuristic
+- **Settlement Engine:** CLV calculation using closing odds
 - **Backtesting:** Historical replay with true outcomes
 
 ---
@@ -161,9 +200,9 @@ Backups are stored in the `backups/` directory (auto-cleaned to last 10).
 
 | Problem | Solution |
 |---------|----------|
-| Backend won't start (port 8000 in use) | Kill stale process: `Get-NetTCPConnection -LocalPort 8000 | Stop-Process` |
+| Backend won't start (port 8001 in use) | Kill stale process: `Get-NetTCPConnection -LocalPort 8001 | Stop-Process` |
 | Scraper failing | Check LotusBook is accessible. Run `.\phoenix.ps1 logs -Service scraper` |
-| Agent stuck in ACCUMULATING | Check scraper is running and collecting matches. Need 30+ with 50+ ticks |
+| Agent stuck in ACCUMULATING | Check scraper is running and collecting matches. Need 10+ with 50+ ticks |
 | Agent demoted after graduation | Performance drift detected. Check shadow trading metrics on Advisor page |
 | No match results being collected | Check `.\phoenix.ps1 logs -Service scraper` for result_collector errors |
 | Database connection issues | Verify `POSTGRES_PASSWORD` in `.env` matches Docker Compose |

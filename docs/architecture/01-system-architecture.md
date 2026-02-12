@@ -72,24 +72,34 @@ Target: `https://lotusbook.site/cricket`
 3. Session management: Login handling, cookie persistence
 4. Anti-detection: Random delays, human-like mouse movement, viewport randomization
 
-### Cricbuzz Enricher
+### Match Context (from Scraper)
 
-Supplements odds data with cricket context:
+Match context is now extracted inline from the scraper's score_text parsing:
 - Live score, wickets, overs
 - Run rate, required run rate
-- Batting/bowling stats
+- Innings, batting/bowling teams
 - Match phase detection (powerplay/middle/death)
+
+### Match Result Collector
+
+Collects final match outcomes for RL settlement:
+- Primary: Cricbuzz API query
+- Fallback 1: Inference from match_context data
+- Fallback 2: Manual submission via API/UI
+- **Closing Odds Capture:** Stores last tick odds for CLV calculation
 
 ### Data Flow
 
 ```
 LotusBook ──► ScraperWorker ──► Redis (match_events) ──► TimescaleDB
-                                         │
-Cricbuzz  ──► CricbuzzEnricher ──────────┘
+                  │                      │
+             score_text ──► MatchContext ┘
                                          │
                                     FeaturePipeline
                                          │
                                     RL Environment
+                                         │
+MatchResultCollector ──► match_results + closing_odds ──► Settlement
 ```
 
 ---
@@ -161,7 +171,7 @@ The Feature Engine transforms raw odds and match data into the observation space
 - Volume imbalance signals
 - Market suspension events
 
-**4. Match Context Features (from Cricbuzz)**
+**4. Match Context Features (from Scraper)**
 - Match phase (powerplay=0, middle=1, death=2)
 - Wickets fallen / balls remaining ratio
 - Run rate vs required run rate
@@ -249,7 +259,7 @@ Observation (50-80 features)
     ▼
 MLP Policy Network (256 → 256 → 128)
     │
-    ├──► Action (Discrete: 7 actions)
+    ├──► Action (Discrete: 9 actions)
     │
     └──► Value Estimate (critic head)
 ```
@@ -459,7 +469,7 @@ The RL agent must meet ALL criteria over a rolling window before going live:
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌─────────┐ │
 │  │ Scraper  │  │ Feature  │  │ RL Agent │  │ Backend │ │
 │  │ Manager  │→ │ Pipeline │→ │ Trainer  │→ │   API   │ │
-│  │          │  │          │  │          │  │  :8000  │ │
+│  │          │  │          │  │          │  │  :8001  │ │
 │  └──────────┘  └──────────┘  └──────────┘  └─────────┘ │
 │                                                          │
 │  ┌──────────┐  ┌──────────┐                             │
@@ -658,7 +668,7 @@ COPY --from=builder /install /usr/local
 COPY shared/ /app/shared/
 COPY backend/ /app/backend/
 WORKDIR /app
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8001"]
 ```
 
 ### 7. Graceful Shutdown
@@ -825,6 +835,7 @@ phoenix/
 │   ├── __init__.py
 │   ├── manager.py
 │   ├── worker.py
+│   ├── result_collector.py    # Match results + closing odds
 │   └── parsers/
 │       └── lotusbook_parser.py
 │
@@ -848,7 +859,9 @@ phoenix/
 │   ├── __init__.py
 │   ├── engine.py
 │   ├── portfolio.py
-│   └── settlement.py
+│   ├── settlement.py          # CLV calculation with closing odds
+│   ├── live_trading_loop.py   # Live match virtual betting
+│   └── shadow_trader.py       # Post-graduation drift detection
 │
 ├── backend/                   # Microservice: API gateway
 │   ├── __init__.py
@@ -864,6 +877,9 @@ phoenix/
 │   ├── Dockerfile
 │   ├── app/
 │   ├── components/
+│   │   ├── HealthStatus.tsx   # NEW: API/Redis/DB status
+│   │   ├── ManualResultModal.tsx  # NEW: Fallback result input
+│   │   └── ...
 │   └── hooks/
 │
 ├── tests/                     # All tests

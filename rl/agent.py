@@ -39,7 +39,7 @@ class PhoenixAgent:
         ent_coef: float = 0.01,
         vf_coef: float = 0.5,
         max_grad_norm: float = 0.5,
-        tensorboard_log: str = "./logs/ppo_cricket/",
+        tensorboard_log: Optional[str] = None,
         device: str = "auto",
     ) -> None:
         self.model = PPO(

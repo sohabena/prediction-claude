@@ -106,11 +106,11 @@ except Exception as e:
 
 # --- Step 4: Start Backend API ---
 Write-Host ""
-Write-Host "[4/7] Starting Backend API (port 8000)..." -ForegroundColor Yellow
+Write-Host "[4/7] Starting Backend API (port 8001)..." -ForegroundColor Yellow
 
 $backendJob = Start-Job -ScriptBlock {
     Set-Location $using:ProjectRoot
-    python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+    python -m uvicorn backend.main:app --host 0.0.0.0 --port 8001
 }
 Start-Sleep -Seconds 3
 Write-Host "  Backend API: Started (PID: $($backendJob.Id))" -ForegroundColor Green
@@ -158,9 +158,9 @@ Write-Host "========================================" -ForegroundColor Green
 Write-Host "  PHOENIX - All Services Running" -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Green
 Write-Host ""
-Write-Host "  Backend API:     http://localhost:8000" -ForegroundColor White
-Write-Host "  API Health:      http://localhost:8000/api/health" -ForegroundColor White
-Write-Host "  API Docs:        http://localhost:8000/docs" -ForegroundColor White
+Write-Host "  Backend API:     http://localhost:8001" -ForegroundColor White
+Write-Host "  API Health:      http://localhost:8001/api/health" -ForegroundColor White
+Write-Host "  API Docs:        http://localhost:8001/docs" -ForegroundColor White
 Write-Host ""
 Write-Host "  Redis:           localhost:6379" -ForegroundColor White
 Write-Host "  TimescaleDB:     localhost:5432" -ForegroundColor White

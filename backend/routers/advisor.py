@@ -13,6 +13,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
+from shared.config import get_settings
 from shared.constants import (
     KEY_ADVISOR_SIGNALS,
     KEY_AGENT_STATE,
@@ -80,11 +81,19 @@ async def get_orchestrator_state() -> dict[str, Any]:
 async def get_orchestrator_stats() -> dict[str, Any]:
     """
     Get orchestrator statistics: data accumulation, training runs, etc.
+    Always overrides min_required from config so UI shows correct threshold.
     """
     try:
         redis = await get_redis()
         data = await redis.get_json(KEY_ORCHESTRATOR_STATS)
         if data:
+            # Always use config for min_required (Redis may have stale 30 from old installs)
+            min_required = get_settings().rl.min_matches_to_train
+            if data.get("accumulation"):
+                data["accumulation"] = dict(data["accumulation"])
+                data["accumulation"]["min_required"] = min_required
+                qual = data["accumulation"].get("qualifying_matches", 0)
+                data["accumulation"]["ready_to_train"] = qual >= min_required
             return data
     except Exception as e:
         logger.error("orchestrator_stats_error", error=str(e))

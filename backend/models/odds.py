@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, String
+from sqlalchemy import Boolean, DateTime, Float, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.models.base import Base
@@ -29,13 +29,26 @@ class OddsTick(Base):
     back_away: Mapped[float | None] = mapped_column(Float, nullable=True)
     lay_away: Mapped[float | None] = mapped_column(Float, nullable=True)
 
+    # Volume (liquidity available at each price)
+    volume_back_home: Mapped[float | None] = mapped_column(Float, nullable=True)
+    volume_lay_home: Mapped[float | None] = mapped_column(Float, nullable=True)
+    volume_back_away: Mapped[float | None] = mapped_column(Float, nullable=True)
+    volume_lay_away: Mapped[float | None] = mapped_column(Float, nullable=True)
+
     # Derived
     implied_prob_home: Mapped[float | None] = mapped_column(Float, nullable=True)
     implied_prob_away: Mapped[float | None] = mapped_column(Float, nullable=True)
     overround: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # Live match context (from scraper score_text parsing)
+    score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    wickets: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    overs: Mapped[float | None] = mapped_column(Float, nullable=True)
+    innings: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # State
     is_live: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Metadata
     source: Mapped[str] = mapped_column(String, default="lotusbook")
+    scrape_latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)

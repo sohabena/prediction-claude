@@ -1,6 +1,6 @@
 """
 Group 4: Raw Match Statistics Features (8 features)
-Direct from Cricbuzz. NO derived heuristics like 'match phase' or 'team strength'.
+Direct from LotusBook match context. NO derived heuristics like 'match phase' or 'team strength'.
 """
 
 from __future__ import annotations

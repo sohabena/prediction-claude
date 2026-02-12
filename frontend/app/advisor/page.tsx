@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useApi } from "@/hooks/useApi";
+import { API_BASE } from "@/lib/api";
 import { StatCard } from "@/components/StatCard";
 import { SignalCard } from "@/components/SignalCard";
 
@@ -126,7 +127,7 @@ export default function AdvisorPage() {
     setDemoting(true);
     setDemoteMsg(null);
     try {
-      const res = await fetch("http://localhost:8000/api/advisor/demote", {
+      const res = await fetch(`${API_BASE}/advisor/demote`, {
         method: "POST",
       });
       const data = await res.json();

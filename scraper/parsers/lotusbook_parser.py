@@ -84,8 +84,13 @@ class LotusBookParser:
                     lay_draw=self._parse_odds(raw.get("lay_draw")),
                     back_away=self._parse_odds(raw.get("back_away")),
                     lay_away=self._parse_odds(raw.get("lay_away")),
+                    volume_back_home=self._parse_volume(raw.get("volume_back_home")),
+                    volume_lay_home=self._parse_volume(raw.get("volume_lay_home")),
+                    volume_back_away=self._parse_volume(raw.get("volume_back_away")),
+                    volume_lay_away=self._parse_volume(raw.get("volume_lay_away")),
                     is_live=bool(raw.get("is_live", False)),
                     scheduled_time=self._parse_time(raw.get("scheduled_time")),
+                    score_text=raw.get("score_text", ""),
                     source="lotusbook",
                     scrape_method="dom",
                     scrape_latency_ms=raw.get("scrape_latency_ms", 0),
@@ -263,5 +268,17 @@ class LotusBookParser:
             return value
         try:
             return datetime.fromisoformat(str(value))
+        except (ValueError, TypeError):
+            return None
+
+    def _parse_volume(self, value: Any) -> float | None:
+        """Parse a volume value, handling strings, floats, None."""
+        if value is None:
+            return None
+        try:
+            vol = float(str(value).strip().replace(",", "").replace("₹", "").replace("$", ""))
+            if vol >= 0:
+                return vol
+            return None
         except (ValueError, TypeError):
             return None

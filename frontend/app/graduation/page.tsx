@@ -7,6 +7,7 @@ interface GraduationStatusResponse {
   ready: boolean;
   consecutive_days: number;
   required_days: number;
+  progress_pct?: number;
   criteria: Array<{
     name: string;
     value: number;

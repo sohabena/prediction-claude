@@ -4,6 +4,8 @@ Curriculum learning: progressive difficulty stages for RL training.
 
 from __future__ import annotations
 
+import copy
+import random
 from enum import IntEnum
 from typing import Any
 
@@ -16,9 +18,12 @@ class CurriculumStage(IntEnum):
     """Training stages in order of difficulty."""
 
     PATTERN_RECOGNITION = 1  # Simplified: only BACK/HOLD, historical data
-    FULL_ACTIONS = 2         # All 7 actions, historical data
+    FULL_ACTIONS = 2         # All 9 actions, historical data
     LIVE_SIMULATION = 3      # Live odds with virtual execution + slippage
     ADVERSARIAL = 4          # Live market with noise injection
+
+# Noise std for adversarial stage (2% multiplicative noise on odds)
+ADVERSARIAL_NOISE_STD = 0.02
 
 
 # Graduation criteria per stage
@@ -56,7 +61,7 @@ class CurriculumManager:
     - Goal: Learn when odds are mispriced (> 52% win rate)
 
     Stage 2: Full Actions
-    - All 7 actions enabled
+    - All 9 actions enabled (HOLD + 4 BACK + 4 LAY)
     - Historical data
     - Goal: Learn sizing and LAY (> 5% ROI)
 
@@ -102,15 +107,36 @@ class CurriculumManager:
             return all_data
 
         elif self.current_stage == CurriculumStage.ADVERSARIAL:
-            return all_data
+            # Inject multiplicative noise on odds for robustness
+            std = noise_std if noise_std > 0 else ADVERSARIAL_NOISE_STD
+            return self._apply_odds_noise(all_data, std)
 
         return all_data
+
+    def _apply_odds_noise(
+        self, data: list[Any], noise_std: float
+    ) -> list[list[dict[str, Any]]]:
+        """Apply multiplicative Gaussian noise to odds in episode ticks."""
+        result: list[list[dict[str, Any]]] = []
+        odds_keys = ("back_home", "lay_home", "back_draw", "lay_draw", "back_away", "lay_away")
+        for episode in data:
+            noisy_ep: list[dict[str, Any]] = []
+            for tick in episode:
+                t = copy.deepcopy(tick)
+                for key in odds_keys:
+                    val = t.get(key)
+                    if val is not None and isinstance(val, (int, float)) and val > 1.0:
+                        noise = 1.0 + random.gauss(0, noise_std)
+                        t[key] = max(1.01, float(val) * noise)
+                noisy_ep.append(t)
+            result.append(noisy_ep)
+        return result
 
     def get_allowed_actions(self) -> list[int]:
         """Get actions allowed at the current curriculum stage."""
         if self.current_stage == CurriculumStage.PATTERN_RECOGNITION:
             return [0, 1]  # HOLD, BACK_HOME_SM only
-        return list(range(7))  # All actions
+        return list(range(9))  # All 9 actions (HOLD + 4 BACK + 4 LAY)
 
     def record_episode(self, metrics: dict[str, float]) -> None:
         """Record episode metrics for stage graduation tracking."""

@@ -177,10 +177,13 @@ class TestFeaturePipeline:
         assert not np.any(np.isnan(obs))
         assert not np.any(np.isinf(obs))
 
-    def test_output_66_features(
+    def test_output_observation_size(
         self,
         sample_odds_event: OddsEvent,
     ) -> None:
+        """Feature pipeline output must match OBSERVATION_SIZE (74)."""
+        from shared.constants import OBSERVATION_SIZE
+
         pipeline = FeaturePipeline()
         obs = pipeline.compute("test_match", sample_odds_event)
-        assert obs.shape == (66,)
+        assert obs.shape == (OBSERVATION_SIZE,)

@@ -60,7 +60,7 @@ class GraduationEvaluator:
             "win_rate": win_rate,
             "roi": roi,
             "sharpe_ratio": sharpe_ratio,
-            "max_drawdown": 1.0 - max_drawdown,  # Invert: lower drawdown is better
+            "max_drawdown": max_drawdown,
             "profitable_days": float(profitable_days),
             "bet_volume": float(total_bets),
             "avg_clv": avg_clv,

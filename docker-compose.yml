@@ -60,7 +60,9 @@ services:
       dockerfile: Dockerfile.backend
     container_name: phoenix-backend
     ports:
-      - "${API_PORT:-8000}:8000"
+      - "${API_PORT:-8001}:8001"
+    volumes:
+      - ./logs:/app/logs
     environment:
       - POSTGRES_HOST=timescaledb
       - POSTGRES_PORT=5432
@@ -69,8 +71,9 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-phoenix_secure_2026}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - API_PORT=8000
+      - API_PORT=8001
       - API_CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000}
+      - RL_MIN_MATCHES_TO_TRAIN=${RL_MIN_MATCHES_TO_TRAIN:-10}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - LOG_FORMAT=json
     depends_on:
@@ -79,7 +82,7 @@ services:
       timescaledb:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/api/health')"]
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8001/api/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -161,7 +164,7 @@ services:
       - RL_MODEL_PATH=/app/models/best_model.zip
       - RL_STARTING_BANKROLL=${RL_STARTING_BANKROLL:-100000}
       - RL_GRADUATION_ENABLED=${RL_GRADUATION_ENABLED:-true}
-      - RL_MIN_MATCHES_TO_TRAIN=${RL_MIN_MATCHES_TO_TRAIN:-30}
+      - RL_MIN_MATCHES_TO_TRAIN=${RL_MIN_MATCHES_TO_TRAIN:-10}
       - RL_NIGHTLY_RETRAIN_STEPS=${RL_NIGHTLY_RETRAIN_STEPS:-50000}
       - RL_AUTO_ADVANCE_CURRICULUM=true
       - SCRAPER_INTERNATIONAL_ONLY=true
@@ -192,8 +195,8 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:${API_PORT:-8000}
-      - NEXT_PUBLIC_WS_URL=ws://localhost:${API_PORT:-8000}/ws
+      - NEXT_PUBLIC_API_URL=http://localhost:${API_PORT:-8001}
+      - NEXT_PUBLIC_WS_URL=ws://localhost:${API_PORT:-8001}/ws
     depends_on:
       - backend
     restart: unless-stopped

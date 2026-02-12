@@ -37,6 +37,41 @@ HYPERTABLE_STATEMENTS = [
     "SELECT create_hypertable('graduation_snapshots', 'time', if_not_exists => TRUE)",
 ]
 
+# Add id column to virtual_bets if missing (for API compatibility)
+ADD_VIRTUAL_BETS_ID = """
+    DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'virtual_bets' AND column_name = 'id'
+        ) THEN
+            ALTER TABLE virtual_bets ADD COLUMN id BIGSERIAL;
+        END IF;
+    END $$;
+"""
+
+MIGRATION_STATEMENTS = [
+    # Add columns introduced in forensic fix (safe: IF NOT EXISTS)
+    """DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name='match_training_status' AND column_name='match_start_time')
+        THEN ALTER TABLE match_training_status ADD COLUMN match_start_time TIMESTAMPTZ;
+        END IF;
+    END $$;""",
+    """DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name='match_training_status' AND column_name='quality_score')
+        THEN ALTER TABLE match_training_status ADD COLUMN quality_score FLOAT DEFAULT 0.0;
+        END IF;
+    END $$;""",
+    """DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name='match_training_status' AND column_name='completeness')
+        THEN ALTER TABLE match_training_status ADD COLUMN completeness FLOAT DEFAULT 0.0;
+        END IF;
+    END $$;""",
+]
+
 INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_odds_match_time ON odds_ticks (match_id, time DESC)",
     "CREATE INDEX IF NOT EXISTS idx_odds_live ON odds_ticks (is_live, time DESC)",
@@ -65,6 +100,8 @@ async def init_database() -> None:
     # Run each statement in its own transaction so one failure doesn't cascade
     all_statements = (
         [(s, "hypertable") for s in HYPERTABLE_STATEMENTS]
+        + [(ADD_VIRTUAL_BETS_ID, "virtual_bets_id")]
+        + [(s, "migration") for s in MIGRATION_STATEMENTS]
         + [(s, "index") for s in INDEX_STATEMENTS]
         + [(s, "retention") for s in RETENTION_STATEMENTS]
     )

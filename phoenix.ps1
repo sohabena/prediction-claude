@@ -184,10 +184,20 @@ function Invoke-Start {
     if (-not (Test-Path $logsDir)) { New-Item -ItemType Directory -Path $logsDir -Force | Out-Null }
 
     # --- Backend API ---
-    Write-Step "4/8" "Starting Backend API (port 8000)..."
+    Write-Step "4/8" "Starting Backend API (port 8001)..."
+    # Kill any process listening on 8001 (including zombie uvicorn reload children)
+    Get-NetTCPConnection -LocalPort 8001 -State Listen -ErrorAction SilentlyContinue | ForEach-Object {
+        Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue
+        $null = cmd /c "taskkill /PID $($_.OwningProcess) /T /F 2>nul"
+    }
+    Start-Sleep -Seconds 2
     $env:PYTHONPATH = $ProjectRoot
     $env:POSTGRES_PASSWORD = "phoenix_secure_2026"
-    $backendProc = Start-Process -FilePath "python" -ArgumentList "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload" -WorkingDirectory $ProjectRoot -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logsDir "backend.out") -RedirectStandardError (Join-Path $logsDir "backend.err")
+    $env:PHOENIX_PROJECT_ROOT = $ProjectRoot
+    Get-ChildItem -Path $ProjectRoot -Filter "__pycache__" -Recurse -Directory -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    # NOTE: No --reload flag. Reload spawns child processes that become zombies on Windows
+    # when the parent is killed. For dev, restart manually: .\phoenix.ps1 restart -Service backend
+    $backendProc = Start-Process -FilePath "python" -ArgumentList "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8001" -WorkingDirectory $ProjectRoot -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logsDir "backend.out") -RedirectStandardError (Join-Path $logsDir "backend.err")
     Start-Sleep -Seconds 3
     Write-Ok "Backend API started (PID $($backendProc.Id))"
 
@@ -204,8 +214,23 @@ function Invoke-Start {
 
     # --- Frontend ---
     Write-Step "7/8" "Starting Frontend Dashboard (port 3000)..."
+    # Free port 3000 if in use (stale processes from previous runs)
+    $port3000 = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($port3000) {
+        try {
+            Stop-Process -Id $port3000.OwningProcess -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 2
+            Write-Ok "Freed port 3000 (was PID $($port3000.OwningProcess))"
+        } catch { }
+    }
+    $env:PORT = "3000"
     $frontendPath = Join-Path $ProjectRoot "frontend"
-    $frontendProc = Start-Process -FilePath "npm" -ArgumentList "run", "dev" -WorkingDirectory $frontendPath -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logsDir "frontend.out") -RedirectStandardError (Join-Path $logsDir "frontend.err")
+    $nextPath = Join-Path $frontendPath "node_modules\next\dist\bin\next"
+    if (Test-Path $nextPath) {
+        $frontendProc = Start-Process -FilePath "node" -ArgumentList $nextPath, "dev" -WorkingDirectory $frontendPath -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logsDir "frontend.out") -RedirectStandardError (Join-Path $logsDir "frontend.err")
+    } else {
+        $frontendProc = Start-Process -FilePath "npm" -ArgumentList "run", "dev" -WorkingDirectory $frontendPath -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logsDir "frontend.out") -RedirectStandardError (Join-Path $logsDir "frontend.err")
+    }
     Write-Ok "Frontend started (PID $($frontendProc.Id))"
 
     # --- Dev / Monitor ---
@@ -235,8 +260,8 @@ function Invoke-Start {
     Write-Banner "All Services Running" "Green"
     Write-Info "Dashboard:       http://localhost:3000"
     Write-Info "Advisor:         http://localhost:3000/advisor"
-    Write-Info "API Health:      http://localhost:8000/api/health"
-    Write-Info "API Docs:        http://localhost:8000/docs"
+    Write-Info "API Health:      http://localhost:8001/api/health"
+    Write-Info "API Docs:        http://localhost:8001/docs"
     Write-Info ""
     Write-Info "Redis:           localhost:6379"
     Write-Info "TimescaleDB:     localhost:5432"
@@ -338,7 +363,7 @@ function Invoke-Status {
     Write-Host ""
     Write-Host "  Application:" -ForegroundColor White
 
-    if (Test-Port 8000) { Write-Ok "Backend API:     Running (port 8000)" }
+    if (Test-Port 8001) { Write-Ok "Backend API:     Running (port 8001)" }
     else                { Write-Err "Backend API:     DOWN" }
 
     if (Test-Port 3000) { Write-Ok "Frontend:        Running (port 3000)" }
@@ -375,7 +400,7 @@ function Invoke-Status {
     Write-Host ""
     Write-Host "  API Health:" -ForegroundColor White
     try {
-        $health = Invoke-RestMethod -Uri "http://localhost:8000/api/health" -TimeoutSec 5 -ErrorAction Stop
+        $health = Invoke-RestMethod -Uri "http://localhost:8001/api/health" -TimeoutSec 5 -ErrorAction Stop
         Write-Info "Status:   $($health.status)"
         Write-Info "Redis:    $($health.redis)"
         Write-Info "Database: $($health.database)"
@@ -388,7 +413,7 @@ function Invoke-Status {
     Write-Host ""
     Write-Host "  Orchestrator:" -ForegroundColor White
     try {
-        $orch = Invoke-RestMethod -Uri "http://localhost:8000/api/advisor/state" -TimeoutSec 5 -ErrorAction Stop
+        $orch = Invoke-RestMethod -Uri "http://localhost:8001/api/advisor/state" -TimeoutSec 5 -ErrorAction Stop
         Write-Info "State:           $($orch.state)"
         Write-Info "Model Version:   v$($orch.model_version)"
         Write-Info "Curriculum:      $($orch.curriculum_stage)"
@@ -406,7 +431,7 @@ function Invoke-Status {
     Write-Info "Graduation: http://localhost:3000/graduation"
     Write-Info "Matches:    http://localhost:3000/matches"
     Write-Info "Advisor:    http://localhost:3000/advisor"
-    Write-Info "API Docs:   http://localhost:8000/docs"
+    Write-Info "API Docs:   http://localhost:8001/docs"
     Write-Host ""
 }
 
@@ -491,6 +516,13 @@ function Invoke-Restart {
             catch { }
             Start-Sleep -Seconds 2
         }
+        if ($Service -eq "backend") {
+            Get-NetTCPConnection -LocalPort 8001 -State Listen -ErrorAction SilentlyContinue | ForEach-Object {
+                Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue
+                $null = cmd /c "taskkill /PID $($_.OwningProcess) /T /F 2>nul"
+            }
+            Start-Sleep -Seconds 2
+        }
 
         # Restart as process
         $logsDir = Join-Path $ProjectRoot "logs"
@@ -501,7 +533,9 @@ function Invoke-Restart {
         $newProc = $null
         switch ($Service.ToLower()) {
             "backend" {
-                $newProc = Start-Process -FilePath "python" -ArgumentList "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload" -WorkingDirectory $ProjectRoot -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logsDir "backend.out") -RedirectStandardError (Join-Path $logsDir "backend.err")
+                $env:PHOENIX_PROJECT_ROOT = $ProjectRoot
+                Get-ChildItem -Path $ProjectRoot -Filter "__pycache__" -Recurse -Directory -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+                $newProc = Start-Process -FilePath "python" -ArgumentList "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8001" -WorkingDirectory $ProjectRoot -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logsDir "backend.out") -RedirectStandardError (Join-Path $logsDir "backend.err")
             }
             "scraper" {
                 $env:SCRAPER_HEADLESS = "true"
@@ -511,7 +545,17 @@ function Invoke-Restart {
                 $newProc = Start-Process -FilePath "python" -ArgumentList "-m", "rl.orchestrator" -WorkingDirectory $ProjectRoot -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logsDir "orchestrator.out") -RedirectStandardError (Join-Path $logsDir "orchestrator.err")
             }
             "frontend" {
-                $newProc = Start-Process -FilePath "npm" -ArgumentList "run", "dev" -WorkingDirectory $frontendPath -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logsDir "frontend.out") -RedirectStandardError (Join-Path $logsDir "frontend.err")
+                $port3000 = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+                if ($port3000) {
+                    try { Stop-Process -Id $port3000.OwningProcess -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 2 } catch { }
+                }
+                $env:PORT = "3000"
+                $nextPath = Join-Path $frontendPath "node_modules\next\dist\bin\next"
+                if (Test-Path $nextPath) {
+                    $newProc = Start-Process -FilePath "node" -ArgumentList $nextPath, "dev" -WorkingDirectory $frontendPath -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logsDir "frontend.out") -RedirectStandardError (Join-Path $logsDir "frontend.err")
+                } else {
+                    $newProc = Start-Process -FilePath "npm" -ArgumentList "run", "dev" -WorkingDirectory $frontendPath -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logsDir "frontend.out") -RedirectStandardError (Join-Path $logsDir "frontend.err")
+                }
             }
             default {
                 Write-Err "Unknown service: $Service"
@@ -581,8 +625,8 @@ function Invoke-Open {
         "graduation"  = "http://localhost:3000/graduation"
         "matches"     = "http://localhost:3000/matches"
         "advisor"     = "http://localhost:3000/advisor"
-        "api"         = "http://localhost:8000/docs"
-        "health"      = "http://localhost:8000/api/health"
+        "api"         = "http://localhost:8001/docs"
+        "health"      = "http://localhost:8001/api/health"
         "pgadmin"     = "http://localhost:5050"
         "redis"       = "http://localhost:8081"
         "prometheus"  = "http://localhost:9090"
@@ -612,7 +656,7 @@ function Invoke-OrchStatus {
     Write-Banner "Orchestrator Status"
 
     try {
-        $state = Invoke-RestMethod -Uri "http://localhost:8000/api/advisor/state" -TimeoutSec 5 -ErrorAction Stop
+        $state = Invoke-RestMethod -Uri "http://localhost:8001/api/advisor/state" -TimeoutSec 5 -ErrorAction Stop
         Write-Info "State:           $($state.state)"
         Write-Info "Model Version:   v$($state.model_version)"
         Write-Info "Curriculum:      $($state.curriculum_stage)"
@@ -625,7 +669,7 @@ function Invoke-OrchStatus {
     Write-Host ""
 
     try {
-        $stats = Invoke-RestMethod -Uri "http://localhost:8000/api/advisor/stats" -TimeoutSec 5 -ErrorAction Stop
+        $stats = Invoke-RestMethod -Uri "http://localhost:8001/api/advisor/stats" -TimeoutSec 5 -ErrorAction Stop
         Write-Info "Training Runs:   $($stats.training_runs)"
         Write-Info "Eval Runs:       $($stats.eval_runs)"
         Write-Info "Matches Trained: $($stats.matches_trained_on)"
@@ -646,7 +690,7 @@ function Invoke-OrchStatus {
     Write-Host ""
 
     try {
-        $grad = Invoke-RestMethod -Uri "http://localhost:8000/api/graduation/status" -TimeoutSec 5 -ErrorAction Stop
+        $grad = Invoke-RestMethod -Uri "http://localhost:8001/api/graduation/status" -TimeoutSec 5 -ErrorAction Stop
         Write-Host "  Graduation:" -ForegroundColor White
         Write-Info "Ready:           $($grad.ready)"
         Write-Info "Consecutive:     $($grad.consecutive_days) / $($grad.required_days) days"

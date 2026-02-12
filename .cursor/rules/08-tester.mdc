@@ -142,7 +142,7 @@ Features feed the RL agent. Bad features = bad decisions.
 def test_feature_output_shape():
     """Feature pipeline returns correct shape."""
     features = pipeline.compute(match_id, event)
-    assert features.shape == (66,)
+    assert features.shape == (74,)
     assert features.dtype == np.float32
 
 def test_feature_no_nan():

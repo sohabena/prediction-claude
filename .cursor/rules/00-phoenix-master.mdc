@@ -15,7 +15,7 @@ Build an automated cricket betting system that learns to make consistent profits
 ```
 1. SCRAPE live odds from LotusBook (Playwright, every 3-5 seconds)
 2. ENRICH with raw match statistics (Cricbuzz: score, wickets, overs, run rate)
-3. ENGINEER 66 data-backed features (odds momentum, volatility, microstructure, raw stats, portfolio)
+3. ENGINEER 74 data-backed features (odds momentum, volatility, microstructure, raw stats, portfolio)
 4. TRAIN an RL agent (PPO via Stable-Baselines3) on a custom Gymnasium environment
 5. VIRTUAL BET until the agent proves: >55% win rate, >8% ROI, >1.5 Sharpe over 14 days
 6. GRADUATE to live execution only after human approval
@@ -26,7 +26,7 @@ Build an automated cricket betting system that learns to make consistent profits
 ## Architecture (6 Layers)
 
 - **Layer 1 - Data:** LotusBook scraper + Cricbuzz enricher -> Redis pub/sub -> TimescaleDB
-- **Layer 2 - Features:** 66-feature observation vector (odds, momentum, raw stats, portfolio state)
+- **Layer 2 - Features:** 74-feature observation vector (odds, momentum, raw stats, portfolio state)
 - **Layer 3 - RL Engine:** Gymnasium env + PPO agent + reward shaping + curriculum learning
 - **Layer 4 - Execution:** Virtual bet engine + risk manager + [live executor post-graduation]
 - **Layer 5 - API:** FastAPI backend + WebSocket streaming
@@ -94,8 +94,8 @@ docs/architecture/   # Architecture documentation
 - **Reward function tests are critical** -- winning bets give positive reward, losing gives negative, HOLD is near-zero.
 
 ### RL-Specific Standards
-- **Observation vector must be fixed-size (66 floats)**, no NaN, normalized via `OnlineNormalizer`.
-- **All 66 features are data-backed only:** raw odds, mathematical momentum/volatility, raw match stats, temporal, portfolio state, statistical patterns. NO cricket heuristics (no "match phase", no "team strength", no "venue factor", no "dew factor").
+- **Observation vector must be fixed-size (74 floats)**, no NaN, normalized via `OnlineNormalizer`.
+- **All 74 features are data-backed only:** raw odds, mathematical momentum/volatility, raw match stats, temporal, portfolio state, statistical patterns. NO cricket heuristics (no "match phase", no "team strength", no "venue factor", no "dew factor").
 - **HOLD should be ~90% of actions** -- the agent learns patience.
 - **Reward function has 6 components:** P&L, patience, overtrading penalty, risk penalty, drawdown penalty, Sharpe bonus. NO domain-specific shaping (no "death over penalty", no "phase-based" adjustments).
 - **Curriculum learning:** 4 stages (pattern recognition -> full actions -> live simulation -> adversarial).
@@ -148,5 +148,10 @@ docs/architecture/   # Architecture documentation
 | 07 | `07-devops.mdc` | The Sentinel | Docker, infra, monitoring |
 | 08 | `08-tester.mdc` | The Guardian | Testing, QA |
 | 09 | `09-ui-designer.mdc` | The Visionary | UI/UX, design system |
+| 10 | `10-cricket-analyst.mdc` | The Strategist | Cricket match analysis |
+| 11 | `11-uat-tester.mdc` | The Auditor | Browser-based UAT, acceptance testing |
 
 When working on a specific file, the matching persona rule (via globs) provides deep domain context. This master rule provides the overarching standards that apply everywhere.
+
+## Invoking The Auditor (UAT)
+To run a full User Acceptance Test, say: **"run UAT"**, **"acceptance test"**, or **"test the UI"**. The agent will execute all 9 browser-based tests and report pass/fail for each.

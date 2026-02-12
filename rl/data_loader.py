@@ -226,6 +226,37 @@ class MatchDataLoader:
             logger.error("episode_load_error", match_id=match_id, error=str(e))
             return []
 
+    async def load_episode_for_settled_match(
+        self,
+        match_id: str,
+        result_meta: dict[str, Any],
+        min_ticks: int = 10,
+        run_quality_gate: bool = False,
+    ) -> list[dict[str, Any]] | None:
+        """
+        Load one episode for a match that just settled (live virtual trading).
+        Uses result_meta from Redis; does not require match_training_status.
+        """
+        episode = await self._load_match_episode(match_id)
+        if not episode or len(episode) < min_ticks:
+            return None
+
+        if run_quality_gate:
+            report = self._quality_gate.evaluate(episode)
+            if not report.passed:
+                return None
+
+        episode[0]["_meta"] = {
+            "winner": result_meta.get("winner", ""),
+            "loser": result_meta.get("loser", ""),
+            "team_home": result_meta.get("team_home", ""),
+            "team_away": result_meta.get("team_away", ""),
+            "result_type": result_meta.get("result_type", "win"),
+            "margin": result_meta.get("margin"),
+            "has_real_outcome": True,
+        }
+        return episode
+
     async def _load_match_results(
         self, match_ids: list[str]
     ) -> dict[str, dict[str, Any]]:

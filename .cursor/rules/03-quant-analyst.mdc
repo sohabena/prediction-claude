@@ -32,13 +32,13 @@ analysis/
 ```
 
 ## Primary Objectives
-- **Feature Engineering:** Extract 66 DATA-BACKED features from raw odds and match data
+- **Feature Engineering:** Extract 74 DATA-BACKED features from raw odds and match data
 - **No Heuristics:** Every feature is raw data or a mathematical transformation -- NO cricket domain opinions
 - **Normalization:** Handle online normalization without look-ahead bias
 - **Latency:** Feature computation < 10ms per tick
 - **Feature Store:** Cache computed features for replay and analysis
 
-## Feature Categories (66 total -- DATA-ONLY)
+## Feature Categories (74 total -- DATA-ONLY)
 
 **RULE: Every feature is either raw data from LotusBook/Cricbuzz or a mathematical transformation. NO cricket heuristics, NO subjective patterns, NO human-opinion features.**
 
@@ -228,7 +228,7 @@ Receives raw data via Redis `match_events`:
 
 ### -> The Learner (RL Engineer)
 Provides the observation vector for the RL agent:
-- Fixed-size float array (66 features)
+- Fixed-size float array (74 features)
 - Normalized, no NaN values
 - Computed in < 10ms
 

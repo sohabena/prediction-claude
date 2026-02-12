@@ -12,7 +12,7 @@ from typing import AsyncGenerator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.routers import advisor, agent, graduation, health, matches, training, websocket_router
+from backend.routers import advisor, agent, demo, graduation, health, matches, training, websocket_router
 from shared.config import get_settings
 from shared.db import close_database
 from shared.logging import setup_logging
@@ -38,6 +38,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Shutdown
     logger.info("backend_shutting_down")
+    try:
+        redis = await get_redis()
+        await redis.close()
+    except Exception:
+        pass
     await close_database()
 
 
@@ -64,6 +69,7 @@ app.include_router(training.router, prefix="/api/training", tags=["Training"])
 app.include_router(agent.router, prefix="/api/agent", tags=["Agent"])
 app.include_router(graduation.router, prefix="/api/graduation", tags=["Graduation"])
 app.include_router(advisor.router, prefix="/api/advisor", tags=["Advisor"])
+app.include_router(demo.router, prefix="/api/demo", tags=["Demo"])
 app.include_router(websocket_router.router, tags=["WebSocket"])
 
 
