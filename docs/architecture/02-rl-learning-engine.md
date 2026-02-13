@@ -12,69 +12,67 @@ The RL Learning Engine is the brain of PHOENIX. It replaces hand-coded betting s
 
 Every feature is raw data from LotusBook/Cricbuzz, a mathematical transformation, or agent portfolio state. NO cricket heuristics.
 
+Expert cricket-trading observation space — every feature is something a professional bettor actually looks at on their screen. No noise, no redundancy.
+
 ```
-Observation Vector (dim = 74):
-├── Group 1: Raw Odds (12)
-│   ├── back_home, lay_home, back_away, lay_away, back_draw, lay_draw
-│   ├── implied_prob_home, implied_prob_away, implied_prob_draw
-│   ├── overround, spread_home, spread_away
+Observation Vector (dim = 48):
+├── Group 1: Core Odds (7)
+│   ├── back_home, lay_home, back_away, lay_away
+│   ├── margin (overround proxy)
+│   ├── spread_home, spread_away
 │
-├── Group 2: Odds Momentum (16) -- math on price series
-│   ├── odds_velocity_5s_home, odds_velocity_5s_away
-│   ├── odds_velocity_30s_home, odds_velocity_30s_away
-│   ├── odds_velocity_60s_home, odds_velocity_60s_away
-│   ├── odds_acceleration_home, odds_acceleration_away
-│   ├── volatility_30s_home, volatility_30s_away
-│   ├── ema_crossover_home, ema_crossover_away
-│   ├── momentum_score_home, momentum_score_away
-│   ├── max_swing_60s_home, max_swing_60s_away
+├── Group 2: Momentum (6) -- math on price series (zeroed on tick gap)
+│   ├── odds_velocity_home, odds_velocity_away
+│   ├── volatility_home, volatility_away
+│   ├── trend_home, trend_away
 │
-├── Group 3: Market Microstructure (8) -- derived from odds
-│   ├── spread_width_home, spread_width_away
-│   ├── spread_velocity_home, spread_velocity_away
-│   ├── market_efficiency_score
-│   ├── relative_price_level (where current odds sit in recent range)
-│   ├── time_since_last_change_home, time_since_last_change_away
+├── Group 3: Market Quality (5) -- spread dynamics
+│   ├── spread_dynamics_home, spread_dynamics_away
+│   ├── market_efficiency
+│   ├── staleness_home, staleness_away
 │
-├── Group 4: Raw Match Statistics (8) -- direct from Cricbuzz
+├── Group 4: Match State (7) -- derived from LotusBook score_text
 │   ├── is_live (0 or 1)
-│   ├── overs_normalized (0.0 to 1.0)
-│   ├── wickets_normalized (0.0 to 1.0)
+│   ├── overs_normalized
+│   ├── wickets_normalized
 │   ├── score_normalized
 │   ├── run_rate_normalized
 │   ├── required_run_rate_normalized
-│   ├── innings (1 or 2, normalized)
-│   ├── balls_remaining_normalized
+│   ├── innings_normalized
 │
-├── Group 5: Temporal (6) -- cyclical time encoding
-│   ├── hour_sin, hour_cos
-│   ├── day_sin, day_cos
-│   ├── minutes_since_match_start (normalized)
-│   ├── seconds_since_last_tick (normalized)
-│
-├── Group 6: Portfolio State (8) -- agent's own state
+├── Group 5: Portfolio (5) -- agent's own state
 │   ├── bankroll_pct (current / initial)
-│   ├── session_pnl_pct
-│   ├── open_positions_normalized
 │   ├── exposure_pct
-│   ├── recent_win_rate (last 20 bets)
+│   ├── open_positions_normalized
+│   ├── win_rate
 │   ├── consecutive_streak (signed, normalized)
-│   ├── daily_pnl_pct
-│   ├── time_since_last_bet (normalized)
 │
-├── Group 7: Statistical Patterns (8) -- pure mathematical analysis
-│   ├── mean_reversion_zscore_home, mean_reversion_zscore_away
-│   ├── trend_strength_home, trend_strength_away
-│   ├── volatility_percentile_home, volatility_percentile_away
-│   ├── odds_autocorrelation_home, odds_autocorrelation_away
-
-REMOVED (from old 72-feature design):
-  - match_phase (heuristic -- agent learns from raw overs/wickets)
-  - team_strength, venue_factor, toss_info, match_importance (subjective)
-  - comeback_probability, blowout_probability (human-opinion-based)
-  - similar_odds_win_rate, seasonality (requires labelled outcomes)
-  - support/resistance proximity (TA-style heuristic)
+├── Group 6: Position / Hedge Awareness (4)
+│   ├── net_exposure_home_pct
+│   ├── net_exposure_away_pct
+│   ├── hedge_potential_home
+│   ├── hedge_potential_away
+│
+├── Group 7: Volume / Liquidity (4)
+│   ├── volume_depth_home, volume_depth_away
+│   ├── volume_imbalance_home, volume_imbalance_away
+│
+├── Group 8: Bookmaker Behavior (4)
+│   ├── pricing_pattern features the agent learns to read
+│
+├── Group 9: Match Format (4) -- one-hot encoding
+│   ├── is_t20i, is_odi, is_test, is_franchise
+│
+├── Group 10: Timing (2)
+│   ├── match_elapsed_pct (fraction of typical match duration)
+│   ├── tick_freshness (seconds since last tick, normalized)
 ```
+
+**Key design principles:**
+- ALL match context derived from LotusBook inline (no Cricbuzz dependency)
+- Gap detection resets momentum accumulators to prevent stale signals
+- Online z-score normalization adapts to changing data distributions
+- NaN/Inf/extreme value validation before feeding to agent
 
 ### Action Space
 
@@ -87,64 +85,34 @@ class BettingAction(IntEnum):
     BACK_AWAY_LG = 4   # Back away team, large stake (3% bankroll)
     LAY_HOME_SM = 5    # Lay home team, small stake (1% bankroll)
     LAY_AWAY_SM = 6    # Lay away team, small stake (1% bankroll)
+    LAY_HOME_LG = 7    # Lay home team, large stake (3% bankroll)
+    LAY_AWAY_LG = 8    # Lay away team, large stake (3% bankroll)
 ```
 
 **Design Rationale:**
 - HOLD is the default action (most ticks should not trigger bets)
 - Separate small/large stakes for position sizing decisions
-- LAY only small stakes (higher risk, lower frequency)
-- Draw market excluded initially (lower liquidity on LotusBook)
+- Full LAY SM + LG for both teams (enables hedging strategies)
+- Hard bet budget per episode (max 10 bets) forces selectivity
+- Draw market excluded (lower liquidity on LotusBook)
 
 ### Reward Function Design
 
-```python
-def compute_reward(self, action, step_info):
-    """
-    Multi-component reward function tuned for profitable betting.
-    
-    Key insight: We want the agent to learn PATIENCE (mostly HOLD)
-    and PRECISION (bet only when edge exists).
-    """
-    reward = 0.0
-    
-    # === Component 1: Bet Outcome (dominant signal) ===
-    if action != HOLD and step_info.get('bet_settled'):
-        pnl = step_info['profit_loss']
-        bankroll = step_info['bankroll']
-        # Normalize P&L by bankroll for scale invariance
-        reward += (pnl / bankroll) * 10.0
-    
-    # === Component 2: Patience Reward ===
-    # Small positive reward for correctly NOT betting
-    if action == HOLD:
-        # Only reward if odds movement was unfavorable
-        if abs(step_info['odds_change']) < 0.01:
-            reward += 0.001  # Tiny reward for patience
-    
-    # === Component 3: Overtrading Penalty ===
-    if step_info['bets_last_hour'] > 15:
-        reward -= 0.01 * (step_info['bets_last_hour'] - 15)
-    
-    # === Component 4: Risk Management ===
-    # Penalize exceeding risk limits
-    if step_info['exposure_pct'] > 0.5:
-        reward -= 0.1 * (step_info['exposure_pct'] - 0.5)
-    
-    # === Component 5: Drawdown Penalty (non-linear) ===
-    drawdown = step_info['current_drawdown']
-    if drawdown > 0.10:
-        reward -= (drawdown - 0.10) ** 2 * 50  # Quadratic penalty
-    
-    # === Component 6: Sharpe Bonus (episodic) ===
-    # Applied at end of episode (match)
-    if step_info.get('episode_done'):
-        returns = step_info['episode_returns']
-        if len(returns) >= 5:
-            sharpe = np.mean(returns) / (np.std(returns) + 1e-8)
-            reward += max(0, sharpe) * 0.5
-    
-    return reward
-```
+Capital-safety-first trading reward (see `rl/reward.py`). Core idea: **bet both sides to lock in profit from odds movement; only go directional when highly confident.**
+
+| # | Component | Scale | Trigger | Description |
+|---|-----------|-------|---------|-------------|
+| 1 | **Hedge Bonus** | 15.0 | Bet reduces exposure & locks profit | BIG reward — #1 thing we want to teach |
+| 2 | **Transaction Cost** | -0.02 | Any bet placed | Flat penalty (bookmaker spread is real cost) |
+| 3 | **Mark-to-Market** | 1.0 | Every step with open bets | Continuous unrealized P&L delta as odds move |
+| 4 | **Settlement P&L** | 10.0 | Bet settles at episode end | Realized outcome — dominant signal |
+| 5 | **Capital Safety** | -0.01 | Naked exposure > 3% of bankroll | Penalize large one-sided unhedged positions |
+| 6 | **Patience** | +0.01 | HOLD when no edge (low odds change + low CLV) | Meaningful reward for disciplined inaction |
+| 7 | **Overtrading** | -0.1 | > 3 bets/hour | Penalty per excess bet |
+| 8 | **Exposure Cap** | -0.1 | Total exposure > 50% | Linear penalty on excess |
+| 9 | **Drawdown** | -50.0 | Drawdown > 10% | Quadratic penalty |
+| 10 | **Sharpe Bonus** | 0.5 | Episode end, ≥ 5 returns | Reward risk-adjusted consistency |
+| 11 | **CLV Bonus** | 2.0 | Any step with positive CLV | Reward for beating the closing line |
 
 ---
 
@@ -152,38 +120,47 @@ def compute_reward(self, action, step_info):
 
 ### PPO Configuration
 
-```python
-from stable_baselines3 import PPO
-
-model = PPO(
-    policy="MlpPolicy",
-    env=cricket_env,
+```mermaid
+graph TB
+    subgraph "PPO Model Configuration"
+        A[Policy: MlpPolicy]
+        B[Environment: CricketEnv]
+    end
     
-    # Network architecture
-    policy_kwargs={
-        "net_arch": {
-            "pi": [256, 256, 128],   # Policy network
-            "vf": [256, 256, 128],   # Value network
-        },
-        "activation_fn": torch.nn.ReLU,
-    },
+    subgraph "Network Architecture"
+        C[Policy Network<br/>256 → 256 → 128]
+        D[Value Network<br/>256 → 256 → 128]
+        E[Activation: ReLU]
+    end
     
-    # PPO hyperparameters
-    learning_rate=3e-4,
-    n_steps=2048,          # Steps per rollout
-    batch_size=64,
-    n_epochs=10,           # PPO epochs per update
-    gamma=0.99,            # Discount factor
-    gae_lambda=0.95,       # GAE lambda
-    clip_range=0.2,        # PPO clipping
-    ent_coef=0.01,         # Entropy bonus (exploration)
-    vf_coef=0.5,           # Value function coefficient
-    max_grad_norm=0.5,     # Gradient clipping
+    subgraph "Hyperparameters"
+        F[Learning Rate: 3e-4]
+        G[Steps per Rollout: 2048]
+        H[Batch Size: 64]
+        I[PPO Epochs: 10]
+        J[Gamma: 0.99]
+        K[GAE Lambda: 0.95]
+        L[Clip Range: 0.2]
+        M[Entropy Coef: 0.01]
+        N[Value Coef: 0.5]
+        O[Max Grad Norm: 0.5]
+    end
     
-    # Training
-    verbose=1,
-    tensorboard_log="./logs/ppo_cricket/",
-)
+    A --> C
+    A --> D
+    C --> E
+    D --> E
+    
+    B --> F
+    F --> G
+    G --> H
+    H --> I
+    I --> J
+    J --> K
+    K --> L
+    L --> M
+    M --> N
+    N --> O
 ```
 
 ### Why PPO Over Other Algorithms
@@ -197,54 +174,87 @@ model = PPO(
 
 ### Training Pipeline
 
-```
-Phase 1: Offline Pre-Training (Historical Data)
-├── Load recorded odds sequences from TimescaleDB
-├── Create replay environment (deterministic)
-├── Train PPO for 500K+ timesteps
-├── Evaluate on held-out matches
-└── Save best model checkpoint
-
-Phase 2: Online Fine-Tuning (Live Market)
-├── Agent observes live odds in real-time
-├── Places virtual bets against current market
-├── Continues PPO training with live data
-├── Model checkpoint every 1000 steps
-└── Rollback if performance degrades
-
-Phase 3: Evaluation & Graduation
-├── Run agent on live data (virtual bets only)
-├── Track rolling metrics (win rate, ROI, Sharpe)
-├── Compare against baseline strategies
-├── Graduate when all thresholds met
-└── Human review and approval
+```mermaid
+flowchart TD
+    subgraph "Phase 1: Offline Pre-Training"
+        A[Load recorded odds<br/>from TimescaleDB]
+        B[Create replay<br/>environment]
+        C[Train PPO<br/>500K+ timesteps]
+        D[Evaluate on<br/>held-out matches]
+        E[Save best<br/>checkpoint]
+        
+        A --> B --> C --> D --> E
+    end
+    
+    subgraph "Phase 2: Online Fine-Tuning"
+        F[Observe live odds<br/>in real-time]
+        G[Place virtual bets<br/>against market]
+        H[Continue PPO training<br/>with live data]
+        I[Checkpoint every<br/>1000 steps]
+        J[Rollback if<br/>performance degrades]
+        
+        F --> G --> H --> I --> J
+    end
+    
+    subgraph "Phase 3: Evaluation & Graduation"
+        K[Run agent on live data<br/>virtual bets only]
+        L[Track rolling metrics<br/>win rate, ROI, Sharpe]
+        M[Compare against<br/>baseline strategies]
+        N[Graduate when<br/>thresholds met]
+        O[Human review<br/>and approval]
+        
+        K --> L --> M --> N --> O
+    end
+    
+    E --> F
+    J --> K
 ```
 
 ---
 
-## 3. Curriculum Learning
+### Curriculum Learning Stages
 
-The agent learns progressively harder tasks:
-
-### Stage 1: Basic Pattern Recognition
-- **Environment:** Historical data only, simplified actions (BACK/HOLD)
-- **Goal:** Learn when odds are mispriced
-- **Graduation:** > 52% win rate on validation set
-
-### Stage 2: Full Action Space
-- **Environment:** Historical data, all 9 actions
-- **Goal:** Learn position sizing and LAY decisions
-- **Graduation:** > 5% ROI on validation set
-
-### Stage 3: Live Market Simulation
-- **Environment:** Live odds feed, virtual execution with slippage
-- **Goal:** Handle real-world market dynamics
-- **Graduation:** > 55% win rate, > 8% ROI over 200+ bets
-
-### Stage 4: Adversarial Testing
-- **Environment:** Live market with adversarial noise injection
-- **Goal:** Robustness to regime changes, outlier events
-- **Graduation:** Maintains positive ROI under adversarial conditions
+```mermaid
+flowchart LR
+    subgraph "Stage 1: Basic Pattern Recognition"
+        A[Historical data only]
+        B[Simplified actions<br/>BACK/HOLD]
+        C[Goal: Learn mispriced odds]
+        D[Graduation: >52% win rate]
+        
+        A --> B --> C --> D
+    end
+    
+    subgraph "Stage 2: Full Action Space"
+        E[Historical data]
+        F[All 9 actions]
+        G[Goal: Position sizing & LAY]
+        H[Graduation: >5% ROI]
+        
+        E --> F --> G --> H
+    end
+    
+    subgraph "Stage 3: Live Market Simulation"
+        I[Live odds feed]
+        J[Virtual execution<br/>with slippage]
+        K[Goal: Handle market dynamics]
+        L[Graduation: >55% win rate<br/>>8% ROI over 200+ bets]
+        
+        I --> J --> K --> L
+    end
+    
+    subgraph "Stage 4: Adversarial Testing"
+        M[Live market +<br/>adversarial noise]
+        N[Goal: Robustness to regime changes]
+        O[Graduation: Positive ROI under<br/>adversarial conditions]
+        
+        M --> N --> O
+    end
+    
+    D --> E
+    H --> I
+    L --> M
+```
 
 ---
 
@@ -271,19 +281,36 @@ class Experience:
 
 ---
 
-## 5. Model Persistence & Versioning
+### Model Persistence Structure
 
-```
-models/
-├── checkpoints/
-│   ├── ppo_cricket_v1_500k.zip
-│   ├── ppo_cricket_v1_1M.zip
-│   └── ppo_cricket_v2_best.zip
-├── best_model.zip             # Currently deployed model
-├── training_log.json          # Training history
-└── eval_results/
-    ├── v1_eval_200bets.json
-    └── v2_eval_200bets.json
+```mermaid
+graph TD
+    subgraph "models/"
+        A[checkpoints/]
+        B[best_model.zip]
+        C[training_log.json]
+        D[eval_results/]
+    end
+    
+    subgraph "checkpoints/"
+        E[ppo_cricket_v1_500k.zip]
+        F[ppo_cricket_v1_1M.zip]
+        G[ppo_cricket_v2_best.zip]
+    end
+    
+    subgraph "eval_results/"
+        H[v1_eval_200bets.json]
+        I[v2_eval_200bets.json]
+    end
+    
+    A --> E
+    A --> F
+    A --> G
+    D --> H
+    D --> I
+    
+    B --> A
+    C --> A
 ```
 
 ### Version Management
@@ -335,6 +362,7 @@ class GraduationEvaluator:
         'max_drawdown': {'threshold': 0.15, 'window_days': 30},
         'profitable_days': {'threshold': 10, 'window_days': 14},
         'bet_volume': {'threshold': 100, 'window_days': 30},
+        'avg_clv': {'threshold': 0.0, 'window': 200},  # Must be positive
     }
     
     def evaluate(self) -> GraduationResult:

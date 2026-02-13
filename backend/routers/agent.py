@@ -164,7 +164,7 @@ async def settle_pending_bets() -> dict[str, Any]:
                            r.winner, r.result_type, r.team_home, r.team_away
                     FROM virtual_bets v
                     INNER JOIN match_results r ON r.match_id = v.match_id
-                    WHERE v.outcome = 'pending'
+                    WHERE v.settled_at IS NULL
                 """)
             )
             rows = result.fetchall()

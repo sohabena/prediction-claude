@@ -72,67 +72,97 @@ LOTUSBOOK_EXTRACT_JS = """
                     const raw = timeEl.textContent.trim();
                     timeText = raw;
 
-                    // --- Section-aware detection ---
-                    // Walk up DOM to find section header ("In Play" vs "Upcoming Events")
-                    let inUpcomingSection = false;
-                    let ancestor = link.closest('.eventHeadName') || link.parentElement;
-                    while (ancestor && ancestor !== document.body) {
-                        const headerText = ancestor.textContent || '';
-                        // Check for "Upcoming" section markers
-                        if (/upcoming\\s*events?/i.test(headerText.substring(0, 200))) {
-                            // Only flag as upcoming if the header is a direct section title,
-                            // not just text deep in the tree
-                            const sectionHeaders = ancestor.querySelectorAll('h1, h2, h3, h4, h5, h6, [class*="header"], [class*="title"], [class*="heading"]');
-                            for (const hdr of sectionHeaders) {
-                                if (/upcoming/i.test(hdr.textContent)) {
-                                    inUpcomingSection = true;
-                                    break;
-                                }
-                            }
-                            // Also check direct text nodes for "Upcoming Events"
-                            if (!inUpcomingSection) {
-                                const directText = Array.from(ancestor.childNodes)
-                                    .filter(n => n.nodeType === 3)
-                                    .map(n => n.textContent.trim())
-                                    .join('');
-                                if (/upcoming/i.test(directText)) {
-                                    inUpcomingSection = true;
-                                }
-                            }
+                    // === PRIORITY 1: Definitive LIVE indicators ===
+                    // These ALWAYS win, even if the text also contains a date.
+                    // On LotusBook, #inPlayTime textContent can include both
+                    // a date AND a nested #inPlay "LIVE" badge, so we must
+                    // check live signals BEFORE scheduled patterns.
+
+                    // Check for #inPlay LIVE badge element
+                    let hasLiveBadge = false;
+                    const liveEl = timeEl.querySelector('#inPlay, [id="inPlay"]');
+                    if (liveEl) {
+                        const liveText = liveEl.textContent.trim().toUpperCase();
+                        if (liveText.includes('LIVE') || liveEl.querySelector('[class*="animate"]') || liveEl.querySelector('[class*="pulse"]') || liveEl.querySelector('[class*="blink"]')) {
+                            hasLiveBadge = true;
                         }
-                        if (inUpcomingSection) break;
-                        ancestor = ancestor.parentElement;
                     }
 
-                    // Date/time patterns that indicate a SCHEDULED (not live) match:
-                    // "16-02-2026 2:30 PM", "Tomorrow 11:00 AM", "Today 3:00 PM", etc.
-                    const datePattern = /\\d{1,2}[-/]\\d{1,2}[-/]\\d{2,4}/;
-                    const scheduledPattern = /tomorrow|today|\\d{1,2}[-/]\\d{1,2}[-/]\\d{2,4}/i;
-                    const hasScheduledTime = scheduledPattern.test(raw);
+                    // Score pattern like "45/2" or "123/5" — definitive live signal
+                    const hasScorePattern = /\\d+\\/\\d/.test(raw);
+                    if (hasScorePattern) {
+                        scoreText = raw;
+                    }
 
-                    if (hasScheduledTime) {
-                        // This is a scheduled/upcoming match, NOT live
-                        isLive = false;
-                        scheduledTime = raw;
-                    } else if (inUpcomingSection) {
-                        // In upcoming section but no date — still not live
-                        isLive = false;
-                        scheduledTime = raw;
+                    if (hasLiveBadge || hasScorePattern) {
+                        // Definitive live signal found — mark live regardless of date text
+                        isLive = true;
                     } else {
-                        // Not in upcoming section and no date pattern —
-                        // check for genuine live indicators
-                        const liveEl = timeEl.querySelector('#inPlay, [id="inPlay"]');
-                        if (liveEl) {
-                            const liveText = liveEl.textContent.trim().toUpperCase();
-                            // Verify it actually says "LIVE" or has live-indicator class
-                            if (liveText.includes('LIVE') || liveEl.querySelector('[class*="animate"]') || liveEl.querySelector('[class*="pulse"]') || liveEl.querySelector('[class*="blink"]')) {
-                                isLive = true;
+                        // === PRIORITY 2: Section-aware detection (fallback) ===
+                        // No live signal found — check if scheduled/upcoming.
+
+                        // Walk up DOM to find section header ("In Play" vs "Upcoming Events")
+                        let inUpcomingSection = false;
+                        let ancestor = link.closest('.eventHeadName') || link.parentElement;
+                        while (ancestor && ancestor !== document.body) {
+                            const headerText = ancestor.textContent || '';
+                            if (/upcoming\\s*events?/i.test(headerText.substring(0, 200))) {
+                                const sectionHeaders = ancestor.querySelectorAll('h1, h2, h3, h4, h5, h6, [class*="header"], [class*="title"], [class*="heading"]');
+                                for (const hdr of sectionHeaders) {
+                                    if (/upcoming/i.test(hdr.textContent)) {
+                                        inUpcomingSection = true;
+                                        break;
+                                    }
+                                }
+                                if (!inUpcomingSection) {
+                                    const directText = Array.from(ancestor.childNodes)
+                                        .filter(n => n.nodeType === 3)
+                                        .map(n => n.textContent.trim())
+                                        .join('');
+                                    if (/upcoming/i.test(directText)) {
+                                        inUpcomingSection = true;
+                                    }
+                                }
                             }
+                            if (inUpcomingSection) break;
+                            ancestor = ancestor.parentElement;
                         }
-                        // Score pattern like "45/2" or "123/5" — definitive live signal
-                        if (/\\d+\\/\\d/.test(raw)) {
+
+                        // Date/time patterns for SCHEDULED matches
+                        const scheduledPattern = /tomorrow|\\d{1,2}[-/]\\d{1,2}[-/]\\d{2,4}/i;
+                        const hasScheduledTime = scheduledPattern.test(raw);
+
+                        if (inUpcomingSection || hasScheduledTime) {
+                            isLive = false;
+                            scheduledTime = raw;
+                        }
+                    }
+                }
+            }
+
+            // --- Enhanced score extraction ---
+            // Search multiple DOM locations for score data if not found above.
+            // LotusBook can show scores in various elements near the match row.
+            if (!scoreText && rowDiv) {
+                // Strategy 1: Look for score-related elements in the match row area
+                const searchAreas = [
+                    rowDiv,
+                    rowDiv.parentElement,
+                    link,
+                ];
+                const scorePattern = /(\\d{1,3})\\/(\\d{1,2})(?:\\s*\\(?([\\d.]+)\\)?)?/;
+                for (const area of searchAreas) {
+                    if (!area || scoreText) break;
+                    // Check all text-containing elements for score patterns
+                    const allEls = area.querySelectorAll(
+                        'span, div, p, [class*="score"], [class*="Score"], [class*="run"], [class*="inning"]'
+                    );
+                    for (const el of allEls) {
+                        const t = el.textContent.trim();
+                        if (scorePattern.test(t) && t.length < 50) {
+                            scoreText = t;
                             isLive = true;
-                            scoreText = raw;
+                            break;
                         }
                     }
                 }
@@ -178,7 +208,27 @@ LOTUSBOOK_EXTRACT_JS = """
                 );
 
                 // Parse a cell: first span/div with a decimal number is the odds,
-                // second is the volume
+                // second is the volume. Volume may have currency/abbreviation
+                // suffixes like '₹1.2L', '50K', '1,200', '$500'.
+                function parseVolume(txt) {
+                    if (!txt) return null;
+                    const cleaned = txt.replace(/[₹$,\\s]/g, '').trim();
+                    if (!cleaned || cleaned === '-') return null;
+                    // Handle abbreviations: K=1000, L/Lac=100000, Cr=10000000
+                    const abbrevMatch = cleaned.match(/^([\\d.]+)\\s*(K|L|Lac|Cr|M)?$/i);
+                    if (abbrevMatch) {
+                        let val = parseFloat(abbrevMatch[1]);
+                        const suffix = (abbrevMatch[2] || '').toUpperCase();
+                        if (suffix === 'K') val *= 1000;
+                        else if (suffix === 'L' || suffix === 'LAC') val *= 100000;
+                        else if (suffix === 'CR') val *= 10000000;
+                        else if (suffix === 'M') val *= 1000000;
+                        return val;
+                    }
+                    const num = parseFloat(cleaned);
+                    return isNaN(num) ? null : num;
+                }
+
                 function parseCell(cell) {
                     if (!cell) return { odds: null, volume: null };
                     const spans = cell.querySelectorAll('span');
@@ -192,7 +242,7 @@ LOTUSBOOK_EXTRACT_JS = """
                             if (odds === null) {
                                 odds = num;
                             } else if (volume === null) {
-                                volume = num;
+                                volume = parseVolume(txt);
                             }
                         }
                     }
@@ -201,6 +251,16 @@ LOTUSBOOK_EXTRACT_JS = """
                         const fullText = cell.textContent.trim();
                         const match = fullText.match(/^([\\d.]+)/);
                         if (match) odds = parseFloat(match[1]);
+                    }
+                    // If still no volume, try finding it in a deeper child
+                    if (volume === null) {
+                        const volEls = cell.querySelectorAll(
+                            '[class*="vol"], [class*="Vol"], [class*="amount"], [class*="size"]'
+                        );
+                        for (const ve of volEls) {
+                            volume = parseVolume(ve.textContent.trim());
+                            if (volume !== null) break;
+                        }
                     }
                     return { odds, volume };
                 }

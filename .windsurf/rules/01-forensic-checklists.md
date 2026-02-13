@@ -1,6 +1,7 @@
 ---
 description: Forensic analysis checklists. Applied to every file. Defines mandatory verification steps for every type of change — functional, technical, and UI — to prevent recurring bugs.
 globs: ["**/*"]
+trigger: model_decision
 ---
 # PHOENIX — Forensic Analysis & Code Quality Rules
 
@@ -38,7 +39,7 @@ Run this mentally before writing any code:
 - [ ] `active_matches` Redis key includes `updated_at` timestamp
 
 ### RL / Training Changes
-- [ ] Observation vector is exactly 74 floats, dtype=float32
+- [ ] Observation vector is exactly 48 floats, dtype=float32
 - [ ] No NaN in observations (replace with 0.0 or safe default)
 - [ ] Model saved to `models/best_model.zip` after training
 - [ ] Reward components all have correct sign (win=positive, loss=negative)
@@ -152,3 +153,36 @@ We use Pydantic v2. Common migration traps:
 - [ ] If API changed: verify endpoint returns expected JSON
 - [ ] If frontend changed: verify page renders (HTTP 200) and no TypeScript errors
 - [ ] If DB model changed: verify migration runs without error on existing DB
+
+## CHECKLIST 7: Iterative Bug Hunt (Full Codebase Sweep)
+
+Use when the user requests a comprehensive forensic review or "bug hunt until clean". See `05-review-bug-hunting.md` Part 6 for the full methodology.
+
+### Process
+- [ ] Run a fresh pass applying all 7 techniques from `05-review-bug-hunting.md` Part 3
+- [ ] Vary your angle each pass (defaults, contracts, boundaries, state, errors, consistency, silent failures)
+- [ ] Log every bug with file, line, root cause, and minimal fix
+- [ ] Fix all bugs found in the pass
+- [ ] Run full test suite — **all tests must pass** before starting next pass
+- [ ] Repeat until **2 consecutive passes find 0 bugs**
+
+### What Counts as a Bug
+- Wrong defaults (e.g., `is_live=True` when safe default is `False`)
+- Missing persistence (model not saved after training)
+- Double operations (redundant commit inside auto-committing context manager)
+- Enum/constant mismatches (swapped indices, hardcoded strings vs constants)
+- Stale docs contradicting code (wrong dimension counts, wrong group names)
+
+### Exit Criteria
+- **2 consecutive clean passes** (0 bugs found per pass)
+- **All tests pass** after every fix round
+- **No known unfixed bugs** in the backlog
+
+### Tracking
+Use the `todo_list` tool to track pass status:
+```
+Pass #1: [completed] — found N bugs (brief summary)
+Pass #2: [completed] — found N bugs (brief summary)
+Pass #3: [completed] — CLEAN (1st consecutive)
+Pass #4: [completed] — CLEAN (2nd consecutive) ✅ DONE
+```

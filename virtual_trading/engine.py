@@ -118,6 +118,27 @@ class VirtualBetEngine:
         if base_odds is None or base_odds <= 1.0:
             return None
 
+        # Minimum odds guard for LAY bets: laying at < 1.10 is terrible EV
+        # (risk huge liability for tiny profit — e.g. lay at 1.02 = risk 98x profit)
+        is_lay = betting_action in (
+            BettingAction.LAY_HOME_SM, BettingAction.LAY_AWAY_SM,
+            BettingAction.LAY_HOME_LG, BettingAction.LAY_AWAY_LG,
+        )
+        if is_lay and base_odds < 1.10:
+            logger.debug("bet_rejected_low_lay_odds", odds=base_odds,
+                         match_id=event.match_id)
+            return None
+
+        # Maximum odds guard for BACK bets: backing at > 50 is extreme longshot
+        is_back = betting_action in (
+            BettingAction.BACK_HOME_SM, BettingAction.BACK_AWAY_SM,
+            BettingAction.BACK_HOME_LG, BettingAction.BACK_AWAY_LG,
+        )
+        if is_back and base_odds > 50.0:
+            logger.debug("bet_rejected_high_back_odds", odds=base_odds,
+                         match_id=event.match_id)
+            return None
+
         # Apply slippage
         slippage = random.gauss(0, self.slippage_pct)
         adjusted_odds = base_odds * (1.0 + slippage)

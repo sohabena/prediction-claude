@@ -33,6 +33,7 @@ from shared.constants import (
     KEY_ADVISOR_SIGNALS,
     KEY_AGENT_STATE,
     KEY_AGENT_VERSION,
+    KEY_ACTIVE_MATCHES,
     KEY_GRADUATION_STATUS,
     KEY_ORCHESTRATOR_STATE,
     KEY_ORCHESTRATOR_STATS,
@@ -367,17 +368,23 @@ class Orchestrator:
                 # Get recent virtual trading performance
                 # ROI = total P&L / total stake (not avg P&L per bet)
                 # avg_clv = mean of non-null CLV values (Closing Line Value)
+                # profitable_days = days where NET P&L > 0 (not just any winning bet)
                 result = await session.execute(
                     text("""
+                        WITH daily AS (
+                            SELECT DATE(placed_at) as day, SUM(profit_loss) as day_pnl
+                            FROM virtual_bets
+                            WHERE placed_at > NOW() - INTERVAL '30 days'
+                              AND settled_at IS NOT NULL
+                            GROUP BY DATE(placed_at)
+                        )
                         SELECT
                             COUNT(*) FILTER (WHERE outcome = 'win') * 1.0 /
                                 NULLIF(COUNT(*), 0) as win_rate,
                             COALESCE(SUM(profit_loss), 0) /
                                 NULLIF(SUM(stake), 0) as roi,
                             COUNT(*) as total_bets,
-                            COUNT(DISTINCT DATE(placed_at)) FILTER (
-                                WHERE profit_loss > 0
-                            ) as profitable_days,
+                            (SELECT COUNT(*) FROM daily WHERE day_pnl > 0) as profitable_days,
                             AVG(clv) FILTER (WHERE clv IS NOT NULL) as avg_clv
                         FROM virtual_bets
                         WHERE placed_at > NOW() - INTERVAL '30 days'
@@ -407,7 +414,12 @@ class Orchestrator:
                         """)
                     )
                     daily_rows = daily_result.fetchall()
-                    daily_returns = [float(r[1]) for r in daily_rows if r[1] is not None]
+                    # Normalize daily P&L by initial bankroll to get returns
+                    initial_bankroll = float(self.settings.rl.starting_bankroll)
+                    daily_returns = [
+                        float(r[1]) / initial_bankroll
+                        for r in daily_rows if r[1] is not None
+                    ]
 
                     if len(daily_returns) >= 5:
                         mean_ret = np.mean(daily_returns)
@@ -528,7 +540,7 @@ class Orchestrator:
 
         try:
             redis = await get_redis()
-            active_matches_raw = await redis.get_json("active_matches")
+            active_matches_raw = await redis.get_json(KEY_ACTIVE_MATCHES)
             if not active_matches_raw:
                 return
 
@@ -794,7 +806,7 @@ class Orchestrator:
                 lay_draw=float(row[8]) if row[8] is not None else None,
                 back_away=float(row[9]) if row[9] is not None else None,
                 lay_away=float(row[10]) if row[10] is not None else None,
-                is_live=bool(row[11]) if row[11] is not None else True,
+                is_live=bool(row[11]) if row[11] is not None else False,
             )
         except Exception as e:
             logger.warning("fetch_odds_failed", match_id=match_id, error=str(e))

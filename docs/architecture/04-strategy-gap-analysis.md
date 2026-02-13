@@ -72,15 +72,15 @@ This document identifies potential gaps, risks, and areas for improvement in the
 - Track performance per tournament/format and retrain if metrics degrade
 - Include temporal features so agent can learn time-of-year patterns
 
-### 2.4 Simplified Settlement (LOW)
-**Gap:** Current settlement in training uses random outcome based on implied probability, not actual match results.
+### 2.4 Settlement Modes (LOW — largely addressed)
+**Gap:** ~~Current settlement in training uses random outcome based on implied probability.~~ **RESOLVED:** Default settlement mode is now `"real"` — uses actual match results from episode metadata. The legacy `"simulated"` mode (random based on implied probability) is retained only for unit tests and curriculum stage 1.
 
-**Impact:** Training signal may not accurately reflect real-world dynamics.
+**Remaining risk:** If match result metadata is missing from training episodes, settlement falls back to simulated mode silently.
 
 **Mitigation:**
-- Phase 2 (Online Fine-Tuning) uses actual match outcomes
-- Settlement engine supports multiple methods (match result, CLV, odds-based)
-- Regularly compare virtual trading P&L with what would have happened live
+- `EpisodeQualityGate` rejects episodes without match result metadata
+- `MatchResultCollector` captures results from LotusBook odds inference, Cricbuzz API, or manual submission
+- CLV calculation uses closing odds captured from last tick before match completion
 
 ---
 
@@ -109,7 +109,7 @@ This document identifies potential gaps, risks, and areas for improvement in the
 - **Human-like stake rounding** — stakes rounded to multiples of 50/100/200/500/1000/2000/5000
 - Stake noise +/-20% to avoid robotic consistency
 - **Per-match budget of ₹1,00,000** with payout-aware headroom (1.5×)
-- **Unlimited bets per match** — real users place many hedging bets
+- **Max 20 bets per match** (`MAX_BETS_PER_MATCH = 20`) — reasonable limit to prevent runaway betting
 - 15s minimum cooldown between bets (bot pattern avoidance, not opportunity limiting)
 - Test detection avoidance with a throwaway account first
 

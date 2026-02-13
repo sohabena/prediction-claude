@@ -236,10 +236,6 @@ class ScraperManager:
             if not event.is_live:
                 continue
 
-            # Publish to Redis for live consumers
-            event_data = event.model_dump(mode="json")
-            await redis.publish_event(CHANNEL_MATCH_EVENTS, event_data)
-
             # ── Ingestion Quality Gate ──────────────────────────────
 
             # Gate 1: Skip extreme odds (>500 = no real market)
@@ -287,6 +283,10 @@ class ScraperManager:
                         errors=[i.message for i in err_issues],
                     )
                     continue  # Skip storing this tick
+
+            # Publish to Redis for live consumers (AFTER quality gates)
+            event_data = event.model_dump(mode="json")
+            await redis.publish_event(CHANNEL_MATCH_EVENTS, event_data)
 
             # Store to DB
             self._quality_stats["stored"] += 1
@@ -512,13 +512,19 @@ class ScraperManager:
                         self._scrape_approved_ids.add(event.match_id)
                     return
 
+                # Auto-approve both scraping AND training for high-tier matches.
+                # This eliminates the manual approval bottleneck — ICC,
+                # international, and major franchise matches go straight
+                # to training-ready once scraped.
+                training_status = "approved" if should_auto else "pending"
+
                 record = MatchTrainingStatus(
                     match_id=event.match_id,
                     team_home=event.team_home,
                     team_away=event.team_away,
                     competition=event.competition,
                     scrape_status=scrape_status,
-                    training_status="pending",
+                    training_status=training_status,
                     auto_approved=should_auto,
                 )
                 session.add(record)

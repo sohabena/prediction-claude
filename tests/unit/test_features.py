@@ -10,8 +10,6 @@ from features.extractors.match_stats_features import compute_match_stats_feature
 from features.extractors.momentum_features import compute_momentum_features
 from features.extractors.odds_features import compute_odds_features
 from features.extractors.portfolio_features import compute_portfolio_features
-from features.extractors.statistical_features import compute_statistical_features
-from features.extractors.temporal_features import compute_temporal_features
 from features.normalizer import OnlineNormalizer
 from features.pipeline import FeaturePipeline
 from shared.constants import OBSERVATION_SIZE
@@ -23,22 +21,16 @@ class TestOddsFeatures:
 
     def test_output_size(self, sample_odds_event: OddsEvent) -> None:
         features = compute_odds_features(sample_odds_event)
-        assert len(features) == 12
-
-    def test_implied_probabilities(self, sample_odds_event: OddsEvent) -> None:
-        features = compute_odds_features(sample_odds_event)
-        ip_home = features[6]
-        assert 0 < ip_home < 1
-        assert abs(ip_home - 1.0 / 1.85) < 0.001
+        assert len(features) == 7
 
     def test_overround_positive(self, sample_odds_event: OddsEvent) -> None:
         features = compute_odds_features(sample_odds_event)
-        overround = features[9]
+        overround = features[4]
         assert overround > 0  # Bookmaker margin
 
     def test_spread_positive(self, sample_odds_event: OddsEvent) -> None:
         features = compute_odds_features(sample_odds_event)
-        spread_home = features[10]
+        spread_home = features[5]
         assert spread_home > 0  # lay > back
 
 
@@ -47,11 +39,11 @@ class TestMomentumFeatures:
 
     def test_output_size(self, sample_odds_history: list[OddsEvent]) -> None:
         features = compute_momentum_features(sample_odds_history)
-        assert len(features) == 16
+        assert len(features) == 6
 
     def test_empty_history(self) -> None:
         features = compute_momentum_features([])
-        assert len(features) == 16
+        assert len(features) == 6
         assert all(f == 0.0 for f in features)
 
     def test_no_nan(self, sample_odds_history: list[OddsEvent]) -> None:
@@ -66,7 +58,7 @@ class TestMarketFeatures:
         self, sample_odds_event: OddsEvent, sample_odds_history: list[OddsEvent]
     ) -> None:
         features = compute_market_features(sample_odds_event, sample_odds_history)
-        assert len(features) == 8
+        assert len(features) == 5
 
 
 class TestMatchStatsFeatures:
@@ -74,11 +66,11 @@ class TestMatchStatsFeatures:
 
     def test_output_size(self, sample_match_context: MatchContext) -> None:
         features = compute_match_stats_features(sample_match_context)
-        assert len(features) == 8
+        assert len(features) == 7
 
     def test_none_context(self) -> None:
         features = compute_match_stats_features(None)
-        assert len(features) == 8
+        assert len(features) == 7
         assert all(f == 0.0 for f in features)
 
     def test_normalization_ranges(self, sample_match_context: MatchContext) -> None:
@@ -87,45 +79,17 @@ class TestMatchStatsFeatures:
             assert 0.0 <= f <= 1.0
 
 
-class TestTemporalFeatures:
-    """Tests for Group 5: Temporal features."""
-
-    def test_output_size(self) -> None:
-        from datetime import datetime, timezone
-        features = compute_temporal_features(datetime.now(timezone.utc))
-        assert len(features) == 6
-
-    def test_cyclical_range(self) -> None:
-        from datetime import datetime, timezone
-        features = compute_temporal_features(datetime.now(timezone.utc))
-        for f in features[:4]:  # sin/cos values
-            assert -1.0 <= f <= 1.0
-
-
 class TestPortfolioFeatures:
-    """Tests for Group 6: Portfolio State features."""
+    """Tests for Group 5: Portfolio State features."""
 
     def test_output_size(self, sample_portfolio: PortfolioState) -> None:
         features = compute_portfolio_features(sample_portfolio)
-        assert len(features) == 8
+        assert len(features) == 5
 
     def test_none_portfolio(self) -> None:
         features = compute_portfolio_features(None)
-        assert len(features) == 8
+        assert len(features) == 5
         assert features[0] == 1.0  # bankroll_pct default
-
-
-class TestStatisticalFeatures:
-    """Tests for Group 7: Statistical Pattern features."""
-
-    def test_output_size(self, sample_odds_history: list[OddsEvent]) -> None:
-        features = compute_statistical_features(sample_odds_history)
-        assert len(features) == 8
-
-    def test_short_history(self) -> None:
-        features = compute_statistical_features([])
-        assert len(features) == 8
-        assert all(f == 0.0 for f in features)
 
 
 class TestOnlineNormalizer:
@@ -181,7 +145,7 @@ class TestFeaturePipeline:
         self,
         sample_odds_event: OddsEvent,
     ) -> None:
-        """Feature pipeline output must match OBSERVATION_SIZE (74)."""
+        """Feature pipeline output must match OBSERVATION_SIZE (48)."""
         from shared.constants import OBSERVATION_SIZE
 
         pipeline = FeaturePipeline()

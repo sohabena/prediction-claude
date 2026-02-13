@@ -1,6 +1,20 @@
 """
-Feature pipeline: computes the 74-dim observation vector from raw data.
-Orchestrates all 8 feature extractors and applies normalization.
+Feature pipeline: computes the 48-dim observation vector from raw data.
+
+Expert cricket-trading observation space — every feature is something a
+professional bettor actually looks at on their screen. No noise, no redundancy.
+
+Groups (48 total):
+  1. Core Odds (7)       — prices, margin, spreads
+  2. Momentum (6)        — velocity, volatility, trend
+  3. Market Quality (5)  — spread dynamics, efficiency, staleness
+  4. Match State (7)     — live status, overs, wickets, score, rates
+  5. Portfolio (5)       — bankroll, exposure, positions, win rate
+  6. Position (4)        — net exposure, hedge potential
+  7. Volume (4)          — liquidity depth, imbalance
+  8. Bookmaker (4)       — pricing patterns the agent learns to read
+  9. Format (4)          — T20i / ODI / Test / Franchise one-hot
+  10. Timing (2)         — match elapsed %, tick freshness
 """
 
 from __future__ import annotations
@@ -12,6 +26,7 @@ from typing import Optional
 import numpy as np
 
 from features.data_quality import validate_observation
+from features.extractors.bookmaker_pattern_features import compute_bookmaker_pattern_features
 from features.extractors.category_features import (
     MatchCategoryClassifier,
     compute_category_features,
@@ -21,8 +36,8 @@ from features.extractors.match_stats_features import compute_match_stats_feature
 from features.extractors.momentum_features import compute_momentum_features
 from features.extractors.odds_features import compute_odds_features
 from features.extractors.portfolio_features import compute_portfolio_features
-from features.extractors.statistical_features import compute_statistical_features
-from features.extractors.temporal_features import compute_temporal_features
+from features.extractors.position_features import compute_position_features
+from features.extractors.volume_features import compute_volume_features
 from features.normalizer import OnlineNormalizer
 from features.store import FeatureStore
 from shared.constants import OBSERVATION_SIZE
@@ -36,18 +51,12 @@ class FeaturePipeline:
     """
     Computes RL observation vector from raw data. DATA-ONLY approach.
 
-    Input: match_id + latest OddsEvent + MatchContext + PortfolioState
-    Output: np.ndarray of shape (74,)
+    Input: match_id + latest OddsEvent + MatchContext + PortfolioState + position_state
+    Output: np.ndarray of shape (48,)
 
-    Feature groups (74 total, all data-backed):
-    1. Raw odds (12) -- prices, implied probs, overround, spreads
-    2. Odds momentum (16) -- velocity, acceleration, volatility
-    3. Market microstructure (8) -- spread dynamics, efficiency, staleness
-    4. Raw match statistics (8) -- is_live, overs, wickets, score, run_rate
-    5. Temporal (6) -- cyclical time encoding
-    6. Portfolio state (8) -- bankroll, exposure, streak, win_rate
-    7. Statistical patterns (8) -- z-scores, trend strength, autocorrelation
-    8. Match category (8) -- format, tier, gender (one-hot encoded)
+    Every feature maps to something a professional cricket bettor
+    actually monitors. No cyclical time encoding, no z-scores,
+    no autocorrelation — just what matters for trading.
     """
 
     # Maximum gap between ticks before resetting momentum accumulators
@@ -85,18 +94,20 @@ class FeaturePipeline:
         event: OddsEvent,
         context: Optional[MatchContext] = None,
         portfolio: Optional[PortfolioState] = None,
+        position_state: Optional[dict] = None,
     ) -> np.ndarray:
         """
-        Compute the full 74-feature observation vector.
+        Compute the full 48-feature observation vector.
 
         Args:
             match_id: Unique match identifier.
             event: Latest odds event.
             context: Optional match context from LotusBook.
             portfolio: Optional portfolio state.
+            position_state: Optional dict with net exposure per team for hedging.
 
         Returns:
-            Normalized float32 array of shape (74,).
+            Normalized float32 array of shape (48,).
         """
         # Add event to history
         self.add_event(event)
@@ -124,69 +135,62 @@ class FeaturePipeline:
         self._gap_detected[match_id] = gap_detected
 
         # If gap detected, clear history to reset momentum accumulators
-        # (keep only the latest event to restart fresh)
         if gap_detected:
             history = [event]
 
-        # Compute all feature groups
+        # ── Build the 48-feature vector ─────────────────────────
+
         features: list[float] = []
 
-        # Group 1: Raw Odds (12)
-        odds_feats = compute_odds_features(event)
-        features.extend(odds_feats)
+        # Group 1: Core Odds (7)
+        features.extend(compute_odds_features(event))
 
-        # Group 2: Odds Momentum (16) -- zeroed if gap detected
+        # Group 2: Momentum (6) — zeroed if gap detected
         momentum_feats = compute_momentum_features(history)
         if gap_detected:
             momentum_feats = [0.0] * len(momentum_feats)
         features.extend(momentum_feats)
 
-        # Group 3: Market Microstructure (8)
-        market_feats = compute_market_features(event, history)
-        features.extend(market_feats)
+        # Group 3: Market Quality (5)
+        features.extend(compute_market_features(event, history))
 
-        # Group 4: Raw Match Statistics (8)
-        stats_feats = compute_match_stats_features(context)
-        features.extend(stats_feats)
+        # Group 4: Match State (7)
+        features.extend(compute_match_stats_features(context))
 
-        # Group 5: Temporal (6)
-        temporal_feats = compute_temporal_features(
-            event.timestamp, match_start, last_tick
-        )
-        features.extend(temporal_feats)
+        # Group 5: Portfolio (5)
+        features.extend(compute_portfolio_features(portfolio))
 
-        # Group 6: Portfolio State (8)
-        portfolio_feats = compute_portfolio_features(portfolio)
-        features.extend(portfolio_feats)
+        # Group 6: Position / Hedge Awareness (4)
+        features.extend(compute_position_features(position_state))
 
-        # Group 7: Statistical Patterns (8)
-        stat_pattern_feats = compute_statistical_features(history)
-        features.extend(stat_pattern_feats)
+        # Group 7: Volume / Liquidity (4)
+        features.extend(compute_volume_features(event, history))
 
-        # Group 8: Match Category (8)
+        # Group 8: Bookmaker Behavior (4)
+        features.extend(compute_bookmaker_pattern_features(event, history, context))
+
+        # Group 9: Match Format (4) — T20i / ODI / Test / Franchise
         category = self.category_classifier.classify(
             competition=event.competition,
             team_home=event.team_home,
             team_away=event.team_away,
         )
-        category_feats = compute_category_features(category)
-        features.extend(category_feats)
+        features.extend(compute_category_features(category))
 
-        # Convert to numpy
+        # Group 10: Timing (2) — match elapsed %, tick freshness
+        features.extend(self._compute_timing(event, match_start, last_tick))
+
+        # ── Post-processing ─────────────────────────────────────
+
         obs = np.array(features, dtype=np.float64)
 
-        # Sanity check
         assert obs.shape == (OBSERVATION_SIZE,), (
             f"Feature vector has {obs.shape[0]} features, expected {OBSERVATION_SIZE}"
         )
 
-        # Replace NaN/Inf with 0
         obs = np.nan_to_num(obs, nan=0.0, posinf=10.0, neginf=-10.0)
-
-        # Normalize
         obs = self.normalizer.update_and_transform(obs)
 
-        # Validate the final observation before handing to the agent
         is_valid, reason = validate_observation(obs)
         if not is_valid:
             logger.warning(
@@ -194,11 +198,37 @@ class FeaturePipeline:
                 match_id=match_id,
                 reason=reason,
             )
-            # Return a safe zero vector rather than garbage data
             return np.zeros(OBSERVATION_SIZE, dtype=np.float32)
 
-        # Ensure float32 to match Gymnasium observation space dtype
         return obs.astype(np.float32)
+
+    @staticmethod
+    def _compute_timing(
+        event: OddsEvent,
+        match_start: Optional[datetime],
+        last_tick: Optional[datetime],
+    ) -> list[float]:
+        """
+        Compute 2 timing features inline (no separate extractor needed).
+
+        Features:
+            0: match_elapsed_pct  — fraction of typical match duration elapsed (cap 1.0)
+            1: tick_freshness     — seconds since last tick, normalized (cap 1.0)
+        """
+        # Match elapsed as fraction of ~3.5 hours (typical T20+ODI average)
+        match_elapsed = 0.0
+        if match_start is not None:
+            elapsed_sec = (event.timestamp - match_start).total_seconds()
+            match_elapsed = min(elapsed_sec / 12600.0, 1.0)  # 3.5h = 12600s
+
+        # Tick freshness (seconds since last tick, normalized by 60s)
+        tick_fresh = 0.0
+        if last_tick is not None:
+            tick_fresh = min(
+                (event.timestamp - last_tick).total_seconds() / 60.0, 1.0
+            )
+
+        return [match_elapsed, tick_fresh]
 
     def _get_recent_history(self, match_id: str) -> list[OddsEvent]:
         """Get events within the lookback window."""

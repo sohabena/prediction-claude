@@ -233,4 +233,12 @@ class Trainer:
         ]
 
         self._agent.learn(total_timesteps=total_timesteps, callback=callbacks)
+
+        # Save to configured model_path so orchestrator/live trading loads the
+        # updated model after restart (mirrors train_offline behaviour).
+        best_path = Path(self.settings.rl.model_path)
+        best_path.parent.mkdir(parents=True, exist_ok=True)
+        self._agent.save(best_path)
+        logger.info("incremental_model_saved", path=str(best_path))
+
         return self._agent

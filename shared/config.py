@@ -79,7 +79,7 @@ class RLConfig(BaseSettings):
     graduation_enabled: bool = True
     learning_rate: float = 3e-4
     total_timesteps: int = 500000
-    observation_size: int = 74  # Must match OBSERVATION_SIZE in shared.constants
+    observation_size: int = 48  # Must match OBSERVATION_SIZE in shared.constants
     n_steps: int = 2048
     batch_size: int = 64
     min_matches_to_train: int = 10  # Minimum completed matches before training starts

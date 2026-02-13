@@ -8,30 +8,46 @@ The data pipeline is the foundation of PHOENIX. Every decision the RL agent make
 
 ## Pipeline Stages
 
-```
-Stage 1: Collection       Stage 2: Normalization    Stage 3: Storage
-┌─────────────────┐      ┌──────────────────┐      ┌─────────────┐
-│ LotusBook Site  │ ───► │ LotusBookParser  │ ───► │ TimescaleDB │
-│ (Playwright)    │      │ (normalize data) │      │ (odds_ticks)│
-│                 │      │                  │      │             │
-│ Odds + Volume + │      │                  │      │ match_context│
-│ Score + Live    │      │                  │      │             │
-└─────────────────┘      └──────────────────┘      └─────────────┘
-                                 │                        ▲
-                                 │                        │
-                                 ▼                  ┌─────────────┐
-                          ┌──────────────────┐      │    Redis    │
-                          │ LiveMatchTracker │ ───► │ (pub/sub +  │
-                          │ (derive context  │      │  cache)     │
-                          │  from score_text)│      └─────────────┘
-                          └──────────────────┘            │
-                                                          ▼
-                          Stage 4: Features         Stage 5: Consumption
-                          ┌──────────────────┐      ┌─────────────┐
-                          │ FeaturePipeline  │ ───► │ RL Agent    │
-                          │ (compute obs     │      │ (Gymnasium  │
-                          │  vector, 74-dim) │      │  env)       │
-                          └──────────────────┘      └─────────────┘
+```mermaid
+flowchart LR
+    subgraph "Stage 1: Collection"
+        A[LotusBook Site<br/>Playwright]
+        A1[Odds + Volume +<br/>Score + Live]
+    end
+    
+    subgraph "Stage 2: Normalization"
+        B[LotusBookParser<br/>normalize data]
+    end
+    
+    subgraph "Stage 3: Storage"
+        C[TimescaleDB<br/>odds_ticks]
+        C1[match_context]
+    end
+    
+    subgraph "Stage 4: Context Derivation"
+        D[LiveMatchTracker<br/>derive context from<br/>score_text]
+    end
+    
+    subgraph "Stage 5: Features"
+        E[FeaturePipeline<br/>compute obs vector<br/>48-dim]
+    end
+    
+    subgraph "Stage 6: Consumption"
+        F[RL Agent<br/>Gymnasium env]
+    end
+    
+    subgraph "Redis Layer"
+        G[Redis<br/>pub/sub + cache]
+    end
+    
+    A --> B
+    B --> C
+    A1 --> C1
+    B --> D
+    D --> G
+    G --> E
+    E --> F
+    C --> G
 ```
 
 **Single data source:** All data (odds, volume, score, match context) comes from
@@ -72,25 +88,41 @@ class ScraperWorker:
 
 ### LotusBook Page Structure
 
-Based on observed site structure at `https://lotusbook.site/cricket`:
-
-```
-Page Layout:
-├── Header (Login/Navigation)
-├── Sports Navigation (Cricket selected)
-├── In Play Section
-│   ├── Match Card
-│   │   ├── Team Names (Home vs Away)
-│   │   ├── Competition Badge (e.g., "ICC Men's T20 World Cup")
-│   │   ├── 1X2 Odds Grid
-│   │   │   ├── Column 1 (Home): Back Price | Lay Price
-│   │   │   ├── Column X (Draw): Back Price | Lay Price
-│   │   │   └── Column 2 (Away): Back Price | Lay Price
-│   │   └── "LIVE" indicator
-│   └── ... more match cards
-├── Upcoming Events Section
-│   └── Same structure but with scheduled time
-└── Bet Slip (sidebar)
+```mermaid
+erDiagram
+    LotusBook_Page ||--o{ Match_Card : contains
+    Match_Card ||--|| Competition_Badge : has
+    Match_Card ||--|| Live_Indicator : shows
+    Match_Card ||--|| Odds_Grid : displays
+    Odds_Grid ||--o{ Price_Column : contains
+    Price_Column ||--|| Back_Price : shows
+    Price_Column ||--|| Lay_Price : shows
+    
+    LotusBook_Page {
+        string header
+        string sports_navigation
+        string in_play_section
+        string upcoming_events
+        string bet_slip
+    }
+    
+    Match_Card {
+        string team_home
+        string team_away
+        string competition
+        boolean live_indicator
+    }
+    
+    Odds_Grid {
+        column1 home
+        columnX draw
+        column2 away
+    }
+    
+    Price_Column {
+        float back_price
+        float lay_price
+    }
 ```
 
 ### Normalized Event Schema
@@ -381,49 +413,53 @@ class FeaturePipeline:
     """
     Computes RL observation vector from raw data. DATA-ONLY approach.
     
-    Input: match_id + latest OddsEvent + MatchContext
-    Output: np.ndarray of shape (74,)
+    Input: match_id + OddsEvent + MatchContext + PortfolioState + position_state
+    Output: np.ndarray of shape (48,)
     
-    Feature groups (74 total, all data-backed):
-    1. Raw odds (12) -- prices, implied probs, overround, spreads
-    2. Odds momentum (16) -- velocity, acceleration, volatility (math on prices)
-    3. Market microstructure (8) -- spread dynamics, efficiency, staleness
-    4. Raw match statistics (8) -- is_live, overs, wickets, score, run_rate, innings
-    5. Temporal (6) -- cyclical time encoding
-    6. Portfolio state (8) -- bankroll, exposure, streak, win_rate
-    7. Statistical patterns (8) -- z-scores, trend strength, autocorrelation
+    Feature groups (48 total, expert trading set):
+    1. Core Odds (7) -- prices, margin, spreads
+    2. Momentum (6) -- velocity, volatility, trend (zeroed on gap)
+    3. Market Quality (5) -- spread dynamics, efficiency, staleness
+    4. Match State (7) -- is_live, overs, wickets, score, run_rate, innings
+    5. Portfolio (5) -- bankroll, exposure, positions, win rate, streak
+    6. Position (4) -- net exposure, hedge potential
+    7. Volume (4) -- liquidity depth, imbalance
+    8. Bookmaker (4) -- pricing patterns
+    9. Format (4) -- T20i / ODI / Test / Franchise one-hot
+    10. Timing (2) -- match elapsed %, tick freshness
     """
     
     def compute(self, match_id: str, event: OddsEvent, 
                 context: Optional[MatchContext] = None,
-                portfolio: PortfolioState = None) -> np.ndarray:
+                portfolio: Optional[PortfolioState] = None,
+                position_state: Optional[dict] = None) -> np.ndarray:
         
         features = []
+        history = self._get_recent_history(match_id)  # lookback=120s
         
-        # Fetch recent history for momentum computation
-        history = self.fetch_recent_ticks(match_id, lookback_seconds=120)
+        features.extend(compute_odds_features(event))            # 7
+        features.extend(compute_momentum_features(history))      # 6
+        features.extend(compute_market_features(event, history)) # 5
+        features.extend(compute_match_stats_features(context))   # 7
+        features.extend(compute_portfolio_features(portfolio))   # 5
+        features.extend(compute_position_features(position_state))  # 4
+        features.extend(compute_volume_features(event, history)) # 4
+        features.extend(compute_bookmaker_pattern_features(...))  # 4
+        features.extend(compute_category_features(category))     # 4
+        features.extend(self._compute_timing(event, ...))        # 2
         
-        features.extend(self.compute_odds_features(event))
-        features.extend(self.compute_momentum_features(history))
-        features.extend(self.compute_microstructure_features(event, history))
-        features.extend(self.compute_context_features(context))
-        features.extend(self.compute_temporal_features(event))
-        features.extend(self.compute_portfolio_features(portfolio))
-        features.extend(self.compute_historical_features(match_id, event))
-        
-        # Normalize
-        obs = np.array(features, dtype=np.float32)
-        obs = self.normalizer.transform(obs)
-        
-        return obs
+        obs = np.array(features, dtype=np.float64)
+        obs = self.normalizer.update_and_transform(obs)
+        return obs.astype(np.float32)  # shape (48,)
 ```
 
 ### Feature Normalization
 
-- Z-score normalization for continuous features
-- Min-max scaling for bounded features (probabilities)
-- Cyclical encoding for time features (sin/cos)
-- Running statistics updated online (no look-ahead bias)
+- Online z-score normalization (running mean/std, no look-ahead bias)
+- NaN/Inf/extreme value clamping before normalization
+- Gap detection (>30s between ticks) resets momentum accumulators
+- `validate_observation()` rejects invalid vectors (returns zeros)
+- Normalizer state persisted and reloaded across restarts
 
 ---
 
@@ -506,11 +542,14 @@ automatically and blocks if quality < 0.50 (override with `?skip_validation=true
 
 ### Data Lineage
 
-Every piece of data is traceable:
-```
-OddsEvent → fingerprint → TimescaleDB (with scrape metadata + volume + context)
-                ↓
-         FeatureVector → observation_hash → RL action → virtual_bet
-                                                            ↓
-                                                     outcome → reward
+```mermaid
+flowchart TD
+    A[OddsEvent] --> B[fingerprint]
+    B --> C[TimescaleDB<br/>with scrape metadata<br/>+ volume + context]
+    C --> D[FeatureVector]
+    D --> E[observation_hash]
+    E --> F[RL action]
+    F --> G[virtual_bet]
+    G --> H[outcome]
+    H --> I[reward]
 ```

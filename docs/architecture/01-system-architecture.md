@@ -10,26 +10,61 @@ PHOENIX is a reinforcement learning-based cricket betting intelligence system th
 
 ## Architecture Layers
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                    Layer 6: Dashboard & Monitoring                   │
-│  Next.js 14 | Training Curves | P&L Charts | Graduation Progress   │
-├─────────────────────────────────────────────────────────────────────┤
-│                    Layer 5: Execution Engine                        │
-│  Virtual Bet Engine | Risk Manager | [Live Executor - post grad]   │
-├─────────────────────────────────────────────────────────────────────┤
-│                    Layer 4: RL Learning Engine                      │
-│  Gymnasium Env | PPO Agent | Reward Shaping | Graduation System    │
-├─────────────────────────────────────────────────────────────────────┤
-│                    Layer 3: Feature Engine                          │
-│  Feature Pipeline | Feature Store | Time-Series Extractors         │
-├─────────────────────────────────────────────────────────────────────┤
-│                    Layer 2: Storage                                 │
-│  TimescaleDB (time series) | Redis (pub/sub + cache)               │
-├─────────────────────────────────────────────────────────────────────┤
-│                    Layer 1: Data Collection                         │
-│  LotusBook Scraper | Cricbuzz Enricher | Historical Collector      │
-└─────────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TB
+    subgraph "Layer 6: Dashboard & Monitoring"
+        A[Next.js 14]
+        B[Training Curves]
+        C[P&L Charts]
+        D[Graduation Progress]
+    end
+    
+    subgraph "Layer 5: Execution Engine"
+        E[Virtual Bet Engine]
+        F[Risk Manager]
+        G[Live Executor - post grad]
+    end
+    
+    subgraph "Layer 4: RL Learning Engine"
+        H[Gymnasium Env]
+        I[PPO Agent]
+        J[Reward Shaping]
+        K[Graduation System]
+    end
+    
+    subgraph "Layer 3: Feature Engine"
+        L[Feature Pipeline]
+        M[Feature Store]
+        N[Time-Series Extractors]
+    end
+    
+    subgraph "Layer 2: Storage"
+        O[TimescaleDB<br/>time series]
+        P[Redis<br/>pub/sub + cache]
+    end
+    
+    subgraph "Layer 1: Data Collection"
+        Q[LotusBook Scraper]
+        R[Cricbuzz Enricher]
+        S[Historical Collector]
+    end
+    
+    A --> E
+    B --> H
+    C --> I
+    D --> K
+    E --> H
+    F --> L
+    G --> O
+    H --> L
+    I --> M
+    J --> N
+    K --> P
+    L --> O
+    M --> P
+    N --> Q
+    O --> R
+    P --> S
 ```
 
 ---
@@ -90,16 +125,18 @@ Collects final match outcomes for RL settlement:
 
 ### Data Flow
 
-```
-LotusBook ──► ScraperWorker ──► Redis (match_events) ──► TimescaleDB
-                  │                      │
-             score_text ──► MatchContext ┘
-                                         │
-                                    FeaturePipeline
-                                         │
-                                    RL Environment
-                                         │
-MatchResultCollector ──► match_results + closing_odds ──► Settlement
+```mermaid
+flowchart LR
+    A[LotusBook] --> B[ScraperWorker]
+    B --> C[Redis match_events]
+    C --> D[TimescaleDB]
+    B --> E[MatchContext]
+    E --> D
+    D --> F[FeaturePipeline]
+    F --> G[RL Environment]
+    G --> H[MatchResultCollector]
+    H --> I[match_results + closing_odds]
+    I --> J[Settlement]
 ```
 
 ---
@@ -115,35 +152,56 @@ MatchResultCollector ──► match_results + closing_odds ──► Settlement
    - Indexed on (match_id, time DESC)
    - Retention: 90 days high-res, compressed after 7 days
 
-2. `match_states` - Match context snapshots
-   - Score, wickets, overs, run rate
-   - Joined with odds for feature computation
+2. `match_context` - Match context snapshots
+   - Score, wickets, overs, run rate, req_run_rate, innings
+   - Derived from LotusBook score_text by LiveMatchTracker
 
 3. `virtual_bets` - All virtual bet records
-   - Strategy, action, stake, odds, outcome, P&L
+   - Action (BettingAction enum), team, stake, odds, outcome, P&L
+   - Closing odds + CLV fields for post-settlement analysis
    - Feeds RL reward computation
 
-4. `rl_episodes` - RL training episodes
-   - State snapshots, actions taken, rewards received
-   - Used for offline training and analysis
+4. `training_metrics` - RL training progress
+   - Episode reward, win rate, ROI, Sharpe, losses, entropy
+   - Agent version tracking
 
-5. `graduation_metrics` - Rolling performance metrics
-   - Win rate, ROI, Sharpe ratio, max drawdown
-   - Drives graduation decisions
+5. `graduation_snapshots` - Rolling graduation metrics
+   - Win rate, ROI, Sharpe ratio, max drawdown, profitable days
+   - `all_criteria_met` flag, consecutive qualifying days
+
+6. `match_results` - Final match outcomes
+   - Winner, loser, result_type, margin
+   - Closing odds for CLV calculation
+   - Source: lotusbook_odds, cricbuzz, manual
+
+7. `match_training_status` - Two-phase approval tracking
+   - scrape_status: discovered / scrape_approved / scrape_rejected
+   - training_status: pending / approved / rejected
 
 ### Redis
 
 **Pub/Sub Channels:**
-- `match_events` - Real-time odds + enrichment from scraper
-- `rl_signals` - Agent decisions (bet/hold)
+- `match_events` - Real-time odds from scraper
+- `match_context` - Cricket stats from LiveMatchTracker
+- `rl_actions` - Agent decisions (bet/hold)
 - `virtual_outcomes` - Bet settlement events
 - `training_progress` - Training metrics for dashboard
+- `match_results` - Match result announcements
+- `advisor_signals` - Real-time advisor signals (post-graduation)
 
 **Key-Value Store:**
 - `active_matches` - Currently live matches (JSON)
-- `agent_state` - Current RL agent state/mode
-- `feature_cache:{match_id}` - Computed features per match
-- `graduation_status` - Current graduation progress
+- `agent:state` - Current RL agent mode
+- `agent:version` - Current model version
+- `feature_cache:{match_id}` - Cached feature vector per match
+- `match_context:{match_id}` - Latest match context (TTL 60s)
+- `graduation:status` - Current graduation progress
+- `orchestrator:state` - Lifecycle state (authoritative source of truth)
+- `orchestrator:stats` - Accumulation / training stats
+- `advisor:signals` - Current bet suggestions
+- `shadow:performance` - Shadow trader post-graduation performance
+- `shadow:drift` - Drift detection status
+- `demo:watched_match_id` - User-selected match for watch mode
 
 ---
 
@@ -151,62 +209,49 @@ MatchResultCollector ──► match_results + closing_odds ──► Settlement
 
 The Feature Engine transforms raw odds and match data into the observation space for the RL agent.
 
-### Feature Categories
+### Feature Categories (48-dim observation vector)
 
-**1. Odds Features (from LotusBook)**
-- Current back/lay prices (home, away, draw)
-- Implied probabilities from odds
-- Back-lay spread (market tightness indicator)
-- Overround (bookmaker margin)
+Every feature maps to something a professional cricket bettor monitors. No noise, no redundancy.
 
-**2. Momentum Features (computed from time series)**
-- Odds velocity: rate of change over last N seconds
-- Odds acceleration: change in velocity
-- Volatility: rolling standard deviation of odds
-- Directional momentum: EMA crossovers
-
-**3. Market Microstructure Features**
-- Spread width (back - lay)
-- Spread change velocity
-- Volume imbalance signals
-- Market suspension events
-
-**4. Match Context Features (from Scraper)**
-- Match phase (powerplay=0, middle=1, death=2)
-- Wickets fallen / balls remaining ratio
-- Run rate vs required run rate
-- Batting team pressure index
-
-**5. Temporal Features**
-- Time of day (hour, minute)
-- Day of week
-- Minutes since match start
-- Minutes since last odds change
-
-**6. Portfolio Features (agent's own state)**
-- Current bankroll
-- Open positions count
-- Session P&L
-- Recent win/loss streak
+| Group | Dim | Features |
+|-------|-----|----------|
+| 1. Core Odds | 7 | back/lay home & away, margin, spreads |
+| 2. Momentum | 6 | velocity, volatility, trend (zeroed on gap) |
+| 3. Market Quality | 5 | spread dynamics, efficiency, staleness |
+| 4. Match State | 7 | is_live, overs, wickets, score, run_rate, req_rr, innings |
+| 5. Portfolio | 5 | bankroll %, exposure, positions, win rate, streak |
+| 6. Position | 4 | net exposure home/away, hedge potential |
+| 7. Volume | 4 | liquidity depth, imbalance |
+| 8. Bookmaker | 4 | pricing patterns the agent learns to read |
+| 9. Format | 4 | T20i / ODI / Test / Franchise one-hot |
+| 10. Timing | 2 | match elapsed %, tick freshness |
 
 ### Feature Pipeline
 
 ```python
 class FeaturePipeline:
-    """Transforms raw data into RL observation vectors."""
-    
-    def compute(self, match_id: str) -> np.ndarray:
-        # 1. Fetch recent odds ticks (last 60 seconds)
-        # 2. Compute momentum features
-        # 3. Fetch match context
-        # 4. Compute temporal features
-        # 5. Add portfolio state
-        # 6. Normalize all features
-        # 7. Return fixed-size observation vector
-        pass
+    """
+    Computes RL observation vector from raw data. DATA-ONLY approach.
+    Input: match_id + OddsEvent + MatchContext + PortfolioState + position_state
+    Output: np.ndarray of shape (48,)
+    """
+    def compute(self, match_id, event, context=None, portfolio=None, position_state=None):
+        features = []
+        features.extend(compute_odds_features(event))            # 7
+        features.extend(compute_momentum_features(history))      # 6
+        features.extend(compute_market_features(event, history)) # 5
+        features.extend(compute_match_stats_features(context))   # 7
+        features.extend(compute_portfolio_features(portfolio))   # 5
+        features.extend(compute_position_features(position_state))  # 4
+        features.extend(compute_volume_features(event, history)) # 4
+        features.extend(compute_bookmaker_pattern_features(...))  # 4
+        features.extend(compute_category_features(category))     # 4
+        features.extend(self._compute_timing(event, ...))        # 2
+        obs = self.normalizer.update_and_transform(np.array(features))
+        return obs  # shape (48,)
 ```
 
-**Observation Vector Size:** ~50-80 features (configurable)
+**Observation Vector Size:** 48 features (fixed, defined in `shared/constants.py` as `OBSERVATION_SIZE`)
 
 ---
 
@@ -224,20 +269,26 @@ class CricketBettingEnv(gymnasium.Env):
     State Space: Box(-inf, inf, shape=(obs_size,))
         - Odds features, momentum, market structure, match context, portfolio
     
-    Action Space: Discrete(7)
+    Action Space: Discrete(9)
         0: HOLD (do nothing)
-        1: BACK_HOME (small stake)
-        2: BACK_HOME_LARGE (large stake)  
-        3: BACK_AWAY (small stake)
-        4: BACK_AWAY_LARGE (large stake)
-        5: LAY_HOME (small stake)
-        6: LAY_AWAY (small stake)
+        1: BACK_HOME_SM (back home, 1% bankroll)
+        2: BACK_HOME_LG (back home, 3% bankroll)
+        3: BACK_AWAY_SM (back away, 1% bankroll)
+        4: BACK_AWAY_LG (back away, 3% bankroll)
+        5: LAY_HOME_SM (lay home, 1% bankroll)
+        6: LAY_AWAY_SM (lay away, 1% bankroll)
+        7: LAY_HOME_LG (lay home, 3% bankroll)
+        8: LAY_AWAY_LG (lay away, 3% bankroll)
     
-    Reward: Risk-adjusted profit
-        - Positive reward for profitable bets
-        - Negative reward for losses
-        - Small negative reward for excessive trading (transaction costs)
-        - Bonus for Sharpe ratio improvement
+    Reward: Multi-component trading reward
+        - Hedge bonus (biggest reward for locking guaranteed profit)
+        - Transaction cost (per-bet penalty)
+        - Mark-to-market (continuous unrealized P&L)
+        - Settlement P&L (realized outcome)
+        - Capital safety (penalize naked directional exposure)
+        - Patience (reward for disciplined HOLD)
+        - Risk penalties (overtrading, drawdown)
+        - Episodic (Sharpe + CLV bonuses)
     
     Episode: One complete cricket match
     Step: Each odds tick (~3-5 seconds)
@@ -253,15 +304,11 @@ class CricketBettingEnv(gymnasium.Env):
 - Battle-tested in financial/trading applications
 
 **Architecture:**
-```
-Observation (50-80 features)
-    │
-    ▼
-MLP Policy Network (256 → 256 → 128)
-    │
-    ├──► Action (Discrete: 9 actions)
-    │
-    └──► Value Estimate (critic head)
+```mermaid
+flowchart TD
+    A[Observation 48 features] --> B[MLP Policy Network<br/>256 → 256 → 128]
+    B --> C[Action Head<br/>Discrete: 9 actions]
+    B --> D[Value Head<br/>Critic estimate]
 ```
 
 **Training Configuration:**
@@ -276,39 +323,20 @@ MLP Policy Network (256 → 256 → 128)
 
 ### Reward Function
 
-```python
-def compute_reward(self, action, outcome):
-    """
-    Multi-component reward function.
-    
-    Components:
-    1. P&L reward: Direct profit/loss from bet
-    2. Risk penalty: Penalize oversized bets
-    3. Inaction bonus: Small reward for correctly not betting
-    4. Sharpe bonus: Reward for risk-adjusted returns
-    5. Drawdown penalty: Heavy penalty for exceeding max drawdown
-    """
-    reward = 0.0
-    
-    # Component 1: Direct P&L (normalized by bankroll)
-    if action != HOLD:
-        reward += (profit_or_loss / bankroll) * 100
-    
-    # Component 2: Risk penalty
-    if stake_percent > MAX_STAKE_PERCENT:
-        reward -= 0.5
-    
-    # Component 3: Sharpe bonus (rolling 50-bet window)
-    if len(returns) >= 50:
-        sharpe = np.mean(returns) / (np.std(returns) + 1e-8)
-        reward += sharpe * 0.1
-    
-    # Component 4: Drawdown penalty
-    if current_drawdown > MAX_DRAWDOWN:
-        reward -= 2.0
-    
-    return reward
-```
+Capital-safety-first trading reward (see `rl/reward.py`):
+
+| Component | Scale | Description |
+|-----------|-------|-------------|
+| Hedge Bonus | 15.0 | BIG reward when a hedge locks guaranteed profit |
+| Transaction Cost | -0.02 | Flat per-bet penalty (bookmaker spread is real cost) |
+| Mark-to-Market | 1.0 | Continuous unrealized P&L as odds move |
+| Settlement P&L | 10.0 | Realized outcome (dominant signal) |
+| Capital Safety | -0.01 | Penalize naked directional exposure > 3% |
+| Patience | +0.01 | Reward for disciplined HOLD when no edge |
+| Overtrading | -0.1 | Penalty per bet above 3/hour threshold |
+| Drawdown | -50.0 | Quadratic penalty above 10% drawdown |
+| Sharpe Bonus | 0.5 | End-of-episode Sharpe ratio bonus |
+| CLV Bonus | 2.0 | Reward for positive Closing Line Value |
 
 ### Training Modes
 
@@ -349,9 +377,12 @@ class VirtualBetEngine:
 ```
 
 **Slippage Simulation:**
-- 8-second delay assumption (scraper lag)
-- Odds drift during delay (random walk model)
-- Bet rejection probability (5% for large stakes)
+- Gaussian slippage model (0.5% std dev on odds)
+- Bet rejection probability (5%)
+- Per-match budget (₹1,00,000) with payout-aware headroom (1.5×)
+- Human-like stake rounding to buckets [50, 100, 200, 500, 1000, 2000, 5000]
+- Anti-detection: ±20% stake noise, 5-15s random delay, 15s minimum cooldown
+- Max 20 bets per match, min odds guard (LAY ≥ 1.10, BACK ≤ 50.0)
 
 ### Risk Manager
 
@@ -421,12 +452,13 @@ The RL agent must meet ALL criteria over a rolling window before going live:
 
 | Metric | Threshold | Window |
 |--------|-----------|--------|
-| Win Rate | > 55% | Last 200 virtual bets |
-| ROI | > 8% | Last 200 virtual bets |
-| Sharpe Ratio | > 1.5 | Last 30 days |
-| Max Drawdown | < 15% | Last 30 days |
-| Consecutive Profitable Days | > 10 | Last 14 days |
-| Bet Volume | > 100 bets | Last 30 days |
+| Win Rate | ≥ 55% | Last 200 virtual bets |
+| ROI | ≥ 8% | Last 200 virtual bets |
+| Sharpe Ratio | ≥ 1.5 | Last 30 days |
+| Max Drawdown | ≤ 15% | Last 30 days |
+| Profitable Days | ≥ 10 | Last 14 days |
+| Bet Volume | ≥ 100 bets | Last 30 days |
+| Average CLV | > 0 | Last 200 bets |
 
 **Graduation Process:**
 1. Agent meets all thresholds for 14 consecutive days
@@ -456,47 +488,88 @@ The RL agent must meet ALL criteria over a rolling window before going live:
 
 ---
 
-## Service Architecture
+### Service Architecture
 
-```
-┌──────────────────────────────────────────────────────────┐
-│                    Docker Compose                         │
-├──────────────┬──────────────┬──────────────┬─────────────┤
-│ TimescaleDB  │    Redis     │  Prometheus  │   Grafana   │
-│  :5432       │   :6379      │   :9090      │   :3001     │
-├──────────────┴──────────────┴──────────────┴─────────────┤
-│                                                          │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌─────────┐ │
-│  │ Scraper  │  │ Feature  │  │ RL Agent │  │ Backend │ │
-│  │ Manager  │→ │ Pipeline │→ │ Trainer  │→ │   API   │ │
-│  │          │  │          │  │          │  │  :8001  │ │
-│  └──────────┘  └──────────┘  └──────────┘  └─────────┘ │
-│                                                          │
-│  ┌──────────┐  ┌──────────┐                             │
-│  │Cricbuzz  │  │ Frontend │                             │
-│  │Enricher  │  │  :3000   │                             │
-│  └──────────┘  └──────────┘                             │
-└──────────────────────────────────────────────────────────┘
+```mermaid
+graph TB
+    subgraph "Docker Compose"
+        subgraph "Infrastructure"
+            A[TimescaleDB<br/>:5432]
+            B[Redis<br/>:6379]
+            C[Prometheus<br/>:9090]
+            D[Grafana<br/>:3001]
+        end
+        
+        subgraph "Application Services"
+            E[Scraper Manager]
+            F[Feature Pipeline]
+            G[RL Agent Trainer]
+            H[Backend API<br/>:8001]
+        end
+        
+        subgraph "Support Services"
+            I[Cricbuzz Enricher]
+            J[Frontend<br/>:3000]
+        end
+        
+        E --> F
+        F --> G
+        G --> H
+        I --> A
+        J --> H
+        
+        F --> B
+        G --> B
+        H --> B
+        H --> A
+        
+        C --> E
+        C --> F
+        C --> G
+        C --> H
+        D --> C
+    end
 ```
 
 ---
 
 ## Data Flow Sequence (One Betting Decision)
 
-```
-1. LotusBook page updates odds
-2. ScraperWorker intercepts via WebSocket/DOM
-3. Parser normalizes data → publishes to Redis (match_events)
-4. TimescaleDB writer persists tick
-5. FeaturePipeline computes observation vector
-6. RL Agent receives observation → selects action
-7. If action != HOLD:
-   a. RiskManager validates (stake size, exposure limits)
-   b. VirtualBetEngine records bet
-   c. On match outcome: settle bet, compute reward
-   d. Reward fed back to RL agent for policy update
-8. Dashboard updates in real-time via WebSocket
-9. GraduationSystem evaluates rolling metrics
+```mermaid
+sequenceDiagram
+    participant LB as LotusBook
+    participant SW as ScraperWorker
+    participant R as Redis
+    participant TS as TimescaleDB
+    participant FP as FeaturePipeline
+    participant RL as RL Agent
+    participant RM as RiskManager
+    participant VBE as VirtualBetEngine
+    participant S as Settlement
+    participant D as Dashboard
+    participant GS as GraduationSystem
+    
+    LB->>SW: Page updates odds
+    SW->>SW: Intercept via WebSocket/DOM
+    SW->>R: Publish match_events
+    R->>TS: Persist tick
+    TS->>FP: Raw odds data
+    FP->>RL: Observation vector
+    RL->>RL: Select action
+    
+    alt Action != HOLD
+        RL->>RM: Validate bet
+        RM->>VBE: Approval
+        VBE->>TS: Record bet
+        
+        Note over S: On match outcome
+        S->>TS: Settle bet
+        S->>RL: Compute reward
+        RL->>RL: Policy update
+    end
+    
+    TS->>D: Real-time updates
+    D->>GS: Rolling metrics
 ```
 
 ---
@@ -534,38 +607,43 @@ class DatabaseConfig(BaseSettings):
     port: int = 5432
     name: str = "phoenix_betting"
     user: str = "phoenix"
-    password: str = "phoenixpassword"
+    password: str = ""
     
     @property
     def url(self) -> str:
-        return f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.name}"
+        return f"postgresql+asyncpg://{self.user}:{self.password}@{self.host}:{self.port}/{self.name}"
     
-    class Config:
-        env_prefix = "POSTGRES_"
+    model_config = {"env_prefix": "POSTGRES_"}
 
 class RedisConfig(BaseSettings):
     host: str = "localhost"
     port: int = 6379
+    db: int = 0
     
-    class Config:
-        env_prefix = "REDIS_"
+    model_config = {"env_prefix": "REDIS_"}
 
 class ScraperConfig(BaseSettings):
     betting_site_url: str = "https://lotusbook.site/cricket"
     headless: bool = True
     poll_interval: int = 3
+    international_only: bool = True
+    auto_approve_matches: bool = False
     
-    class Config:
-        env_prefix = "SCRAPER_"
+    model_config = {"env_prefix": "SCRAPER_"}
 
 class RLConfig(BaseSettings):
-    training_mode: str = "offline"  # offline|online|eval
+    training_mode: str = "offline"  # offline | online | eval
     model_path: str = "models/best_model.zip"
     starting_bankroll: int = 100000
     graduation_enabled: bool = True
+    observation_size: int = 48  # Must match OBSERVATION_SIZE in shared.constants
+    algorithm: str = "ppo"  # ppo | dqn
+    total_timesteps: int = 500000
+    min_matches_to_train: int = 10
+    nightly_retrain_steps: int = 50000
+    min_ticks_per_match: int = 50
     
-    class Config:
-        env_prefix = "RL_"
+    model_config = {"env_prefix": "RL_"}
 ```
 
 ### 3. Structured Logging
@@ -776,6 +854,17 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 from typing import Optional
 
+class BettingAction(IntEnum):
+    HOLD = 0
+    BACK_HOME_SM = 1  # Back home team, 1% bankroll
+    BACK_HOME_LG = 2  # Back home team, 3% bankroll
+    BACK_AWAY_SM = 3  # Back away team, 1% bankroll
+    BACK_AWAY_LG = 4  # Back away team, 3% bankroll
+    LAY_HOME_SM = 5   # Lay home team, 1% bankroll
+    LAY_AWAY_SM = 6   # Lay away team, 1% bankroll
+    LAY_HOME_LG = 7   # Lay home team, 3% bankroll
+    LAY_AWAY_LG = 8   # Lay away team, 3% bankroll
+
 class OddsEvent(BaseModel):
     match_id: str
     timestamp: datetime
@@ -787,21 +876,29 @@ class OddsEvent(BaseModel):
     lay_away: Optional[float] = Field(None, gt=1.0)
     is_live: bool = False
     competition: str = ""
+    score_text: str = ""  # Raw score string from scraper
     source: str = "lotusbook"
+    volume_back_home: Optional[float] = None
+    volume_lay_home: Optional[float] = None
 
 class VirtualBet(BaseModel):
     match_id: str
-    action: str         # BACK_HOME_SM, LAY_AWAY_SM, etc.
+    placed_at: datetime
+    action: BettingAction  # IntEnum, not string
     team: str
     odds: float = Field(gt=1.0)
     stake: float = Field(gt=0)
     confidence: Optional[float] = None
+    outcome: BetOutcome = BetOutcome.PENDING
+    profit_loss: float = 0.0
+    closing_odds: Optional[float] = None
+    clv: Optional[float] = None
 
 class GraduationStatus(BaseModel):
-    ready: bool
-    consecutive_days: int
+    ready: bool = False
+    consecutive_days: int = 0
     required_days: int = 14
-    criteria: dict[str, dict]  # {metric: {value, threshold, met}}
+    criteria: list[GraduationCriterion] = []  # List of criterion objects
 ```
 
 ### 12. Project Structure (Updated with best practices)

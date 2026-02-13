@@ -1,6 +1,7 @@
 ---
 description: Master rule for PHOENIX project. Always applied. Ground truth for architecture, file paths, data flows, and engineering standards.
 globs: ["**/*"]
+trigger: model_decision
 ---
 # PHOENIX — Master Project Rule
 
@@ -36,14 +37,14 @@ scraper/
     └── lotusbook_parser.py  # Raw DOM → OddsEvent normalization
 
 features/
-├── pipeline.py         # 74-dim observation vector (float32)
+├── pipeline.py         # 48-dim observation vector (float32)
 ├── data_quality.py     # TickValidator + EpisodeQualityGate
 ├── normalizer.py       # Online z-score normalization
 ├── store.py            # Feature caching (Redis)
-└── extractors/         # odds, momentum, market, match_stats, temporal, portfolio, statistical, category
+└── extractors/         # odds(7), momentum(6), market(5), match_stats(7), portfolio(5), position(4), volume(4), bookmaker(4), format(4), timing(2)
 
 rl/
-├── environment.py      # CricketBettingEnv (Gymnasium, 74-obs, 9-action)
+├── environment.py      # CricketBettingEnv (Gymnasium, 48-obs, 9-action)
 ├── agent.py            # PhoenixAgent (PPO wrapper)
 ├── reward.py           # 6-component reward function
 ├── trainer.py          # Offline + online training, saves to models/best_model.zip
@@ -139,7 +140,7 @@ The scraper JavaScript walks up the DOM to find the section header:
 - The frontend must never show stale or misleading state (see UI rules below).
 
 ### RL Standards
-- Observation: fixed 74 floats, dtype=float32, no NaN.
+- Observation: fixed 48 floats, dtype=float32, no NaN.
 - Actions: 9 discrete (HOLD + 4 BACK + 4 LAY). HOLD should be ~90%.
 - Reward: 6 components (P&L, patience, overtrading, risk, drawdown, Sharpe). No cricket heuristics.
 - Curriculum: 4 stages. Graduation: all criteria met for 14 consecutive days.

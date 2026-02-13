@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter
 
-from shared.constants import KEY_AGENT_STATE, KEY_AGENT_VERSION, KEY_ORCHESTRATOR_STATE
+from shared.constants import KEY_ACTIVE_MATCHES, KEY_AGENT_STATE, KEY_AGENT_VERSION, KEY_ORCHESTRATOR_STATE
 from shared.db import check_database_health
 from shared.logging import setup_logging
 from shared.redis_client import get_redis
@@ -59,7 +59,7 @@ async def health_check() -> HealthStatus:
                     agent_version = str(version_data.get("version", ""))
 
             # Check scraper status via active_matches timestamp
-            active = await redis.get_json("active_matches")
+            active = await redis.get_json(KEY_ACTIVE_MATCHES)
             if isinstance(active, dict):
                 updated = active.get("updated_at")
                 if updated:

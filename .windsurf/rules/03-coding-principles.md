@@ -1,6 +1,7 @@
 ---
 description: Coding thought process principles. Applied to every task. Defines how to think through building, modifying, and debugging code to produce correct, aligned output on the first attempt.
 globs: ["**/*"]
+trigger: always_on
 ---
 # Coding Thought Process Principles
 

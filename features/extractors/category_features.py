@@ -1,25 +1,18 @@
 """
-Group 8: Match Category Features (8 features)
+Match Format Features (4 features)
 
-Encodes the structural context of a match so the RL agent can learn
-format-specific and tier-specific betting strategies.
+One-hot encoding of match format so the agent can learn format-specific
+odds patterns. Each format has fundamentally different dynamics:
+  - T20i: volatile, quick swings, moderate liquidity
+  - ODI: slower progression, longer episodes
+  - Test: multi-day, very different odds structure
+  - Franchise (IPL/BBL/PSL): highest liquidity, most predictable patterns
 
 Feature layout:
-    0: is_t20              (1 if T20 format, else 0)
-    1: is_odi              (1 if ODI format, else 0)
-    2: is_test             (1 if Test/FC format, else 0)
-    3: is_icc_event        (1 if ICC tournament, else 0)
-    4: is_intl_bilateral   (1 if international bilateral, else 0)
-    5: is_major_franchise  (1 if IPL/BBL/PSL/CPL/Hundred/SA20/MLC, else 0)
-    6: is_minor_domestic   (1 if none of the above tiers, else 0)
-    7: is_womens           (1 if women's match, else 0)
-
-Rationale:
-- Different formats have fundamentally different odds dynamics.
-  T20s are volatile with quick swings; ODIs are slower; Tests span days.
-- Tier determines market depth and liquidity. An IPL match has 10-100x the
-  volume of a Ranji Trophy or minor league match, affecting spread reliability.
-- Women's matches have thinner markets and different liquidity profiles.
+    0: is_t20i       (T20 international or minor T20)
+    1: is_odi        (ODI / 50-over)
+    2: is_test       (Test / First-class)
+    3: is_franchise  (IPL, BBL, PSL, CPL, Hundred, SA20, MLC — high-liquidity T20)
 """
 
 from __future__ import annotations
@@ -278,34 +271,22 @@ class MatchCategoryClassifier:
 
 def compute_category_features(category: MatchCategory) -> list[float]:
     """
-    Encode a MatchCategory as 8 binary features.
+    Encode a MatchCategory as 4 format features (one-hot).
 
-    Features:
-        0: is_t20              (format one-hot)
-        1: is_odi              (format one-hot)
-        2: is_test             (format one-hot)
-        3: is_icc_event        (tier one-hot)
-        4: is_intl_bilateral   (tier one-hot)
-        5: is_major_franchise  (tier one-hot)
-        6: is_minor_domestic   (tier one-hot)
-        7: is_womens           (binary)
+    The agent learns separate odds patterns per format:
+        0: is_t20i       (T20 international / minor T20 — NOT franchise)
+        1: is_odi        (ODI / 50-over)
+        2: is_test       (Test / First-class)
+        3: is_franchise  (IPL/BBL/PSL etc. — high-liquidity T20 leagues)
     """
-    # Format one-hot (3)
-    is_t20 = 1.0 if category.format == MatchFormat.T20 else 0.0
-    is_odi = 1.0 if category.format == MatchFormat.ODI else 0.0
-    is_test = 1.0 if category.format == MatchFormat.TEST else 0.0
-
-    # Tier one-hot (4)
-    is_icc = 1.0 if category.tier == MatchTier.ICC_EVENT else 0.0
-    is_intl = 1.0 if category.tier == MatchTier.INTERNATIONAL_BILATERAL else 0.0
-    is_franchise = 1.0 if category.tier == MatchTier.MAJOR_FRANCHISE else 0.0
-    is_domestic = 1.0 if category.tier == MatchTier.MINOR_DOMESTIC else 0.0
-
-    # Gender (1)
-    is_womens = 1.0 if category.is_womens else 0.0
+    is_franchise = (
+        category.format == MatchFormat.T20
+        and category.tier == MatchTier.MAJOR_FRANCHISE
+    )
 
     return [
-        is_t20, is_odi, is_test,
-        is_icc, is_intl, is_franchise, is_domestic,
-        is_womens,
+        1.0 if category.format == MatchFormat.T20 and not is_franchise else 0.0,
+        1.0 if category.format == MatchFormat.ODI else 0.0,
+        1.0 if category.format == MatchFormat.TEST else 0.0,
+        1.0 if is_franchise else 0.0,
     ]

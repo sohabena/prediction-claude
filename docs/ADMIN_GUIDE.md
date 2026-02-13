@@ -2,20 +2,29 @@
 
 ## Architecture Overview
 
-```
-[LotusBook.site] <-- Playwright (every 3s)
-        |
-    [Scraper] -- MatchClassifier filters international matches
-        |
-    [Result Collector] -- Cricbuzz (final outcomes)
-        |
-   [Redis PubSub] -----> [Frontend Dashboard]
-        |
-   [TimescaleDB] <------ odds_ticks, match_context, match_results, virtual_bets
-        |
-   [Orchestrator] -- manages lifecycle, trains PPO/DQN agent
-        |
-   [Backend API] -------> [Frontend Dashboard]
+```mermaid
+flowchart TD
+    A[LotusBook.site] --> B[Playwright<br/>every 3s]
+    B --> C[Scraper]
+    C --> D[MatchClassifier<br/>filters international matches]
+    D --> E[Result Collector]
+    E --> F[Cricbuzz<br/>final outcomes]
+    
+    C --> G[Redis PubSub]
+    G --> H[Frontend Dashboard]
+    
+    C --> I[TimescaleDB]
+    I --> J[odds_ticks]
+    I --> K[match_context]
+    I --> L[match_results]
+    I --> M[virtual_bets]
+    
+    I --> N[Orchestrator]
+    N --> O[manages lifecycle]
+    N --> P[trains PPO/DQN agent]
+    
+    N --> Q[Backend API]
+    Q --> H
 ```
 
 ---
@@ -74,6 +83,8 @@ All management is done through `phoenix.ps1`:
 | PATCH | `/api/matches/{id}/approve-scrape` | Approve match for scraping |
 | PATCH | `/api/matches/{id}/reject-scrape` | Reject match from scraping |
 | GET | `/api/training/data-quality` | Episode quality gate report for all matches |
+| POST | `/api/agent/settle-pending` | Retroactively settle pending bets with match results |
+| GET | `/api/matches/context/{id}` | Match context history |
 | GET | `/api/training/steps` | Current training progress |
 
 ---
@@ -88,6 +99,7 @@ All configuration is in `shared/config.py` with environment variable overrides.
 |---------|---------|---------|-------------|
 | DB Password | `POSTGRES_PASSWORD` | - | Set in `.env` |
 | Scraper URL | `SCRAPER_BETTING_SITE_URL` | lotusbook.site/cricket | Target site |
+| International Only | `SCRAPER_INTERNATIONAL_ONLY` | true | Filter for ICC + major franchise matches |
 | Poll Interval | `SCRAPER_POLL_INTERVAL` | 3 seconds | Scraping frequency |
 | Auto-approve Matches | `SCRAPER_AUTO_APPROVE_MATCHES` | false | If false, all matches require manual approval on /matches |
 | RL Algorithm | `RL_ALGORITHM` | ppo | ppo or dqn |
@@ -101,10 +113,12 @@ All configuration is in `shared/config.py` with environment variable overrides.
 |----------|-------|-------------|
 | `PER_MATCH_BUDGET` | 1,00,000 | Default budget per match |
 | `PAYOUT_HEADROOM_FACTOR` | 1.5 | Budget extends by 1.5× potential payouts |
-| `MAX_BETS_PER_MATCH` | 0 (unlimited) | No hard cap — multi-account distribution |
+| `MAX_BETS_PER_MATCH` | 20 | Reasonable limit per match (prevents runaway betting) |
 | `MIN_BET_INTERVAL_SECONDS` | 15 | Baseline cooldown between bets on same match |
-| `STAKE_NOISE_PERCENT` | 0.20 | +/-20% random noise on stakes |
+| Stake Percent (RL env) | SM=1%, LG=3% of bankroll | During RL training episodes |
+| Stake Percent (Live) | SM=10%, LG=25% of per-match budget | During virtual/live trading |
 | `STAKE_ROUND_BUCKETS` | [50..5000] | Human-like stake rounding amounts |
+| `STAKE_NOISE_PERCENT` | 0.20 | +/-20% random noise on stakes |
 | `BET_DELAY_MIN_SECONDS` | 5 | Min random delay before bet placement |
 | `BET_DELAY_MAX_SECONDS` | 15 | Max random delay before bet placement |
 
@@ -136,31 +150,37 @@ All must be met for 14 consecutive days:
 
 ## Match Result Pipeline
 
-After a match completes, the `MatchResultCollector` (running alongside the scraper):
-1. Detects matches with no new odds ticks for 30+ minutes
-2. Queries Cricbuzz API for the verified result
-3. Falls back to match_context inference if Cricbuzz unavailable
-4. **NEW:** Manual fallback via `POST /api/matches/{id}/result` endpoint
-5. **NEW:** Captures closing odds (last tick before completion) for CLV calculation
-6. Stores the result in the `match_results` table (with closing odds fields)
-7. Publishes to the `match_results` Redis channel
-
-### Manual Result Submission
-
-If Cricbuzz API fails, use the dashboard UI or API directly:
-
-```powershell
-# Via API
-curl -X POST "http://localhost:8001/api/matches/lb_12345/result?winner=India&loser=Namibia&result_type=win&margin=8%20wickets"
+```mermaid
+sequenceDiagram
+    participant M as Match
+    participant RC as ResultCollector
+    participant CB as Cricbuzz API
+    participant UI as Dashboard UI
+    participant DB as TimescaleDB
+    participant RL as RL Environment
+    participant ST as Shadow Trader
+    participant SE as Settlement Engine
+    participant BT as Backtesting
+    
+    Note over M: Match completes
+    RC->>RC: Detect 30+ min<br/>no new ticks
+    RC->>CB: Query verified result
+    
+    alt Cricbuzz available
+        CB-->>RC: Return result
+    else Cricbuzz unavailable
+        RC->>RC: Infer from<br/>match_context
+        UI->>RC: Manual result submission<br/>(NEW)
+    end
+    
+    RC->>DB: Store result +<br/>closing odds (NEW)
+    RC->>RL: Real-outcome training
+    RC->>ST: Verified settlement
+    RC->>SE: CLV calculation<br/>using closing odds
+    RC->>BT: Historical replay<br/>with true outcomes
+    
+    RC->>DB: Publish to<br/>match_results channel
 ```
-
-Or use the **📝 Result** button on approved matches in the /matches page.
-
-Results are used by:
-- **RL Environment:** Real-outcome training (replaces simulated random settlement)
-- **Shadow Trader:** Verified settlement instead of odds-movement heuristic
-- **Settlement Engine:** CLV calculation using closing odds
-- **Backtesting:** Historical replay with true outcomes
 
 ---
 

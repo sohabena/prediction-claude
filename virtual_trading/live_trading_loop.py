@@ -74,6 +74,8 @@ class LiveVirtualTradingLoop:
         self._open_bets: dict[str, list[tuple[VirtualBet, datetime]]] = {}
         # Pending bet tasks (for cancellation on stop)
         self._pending_bet_tasks: set[asyncio.Task] = set()
+        # Completed match IDs (loaded from DB, prevents betting on finished matches)
+        self._completed_match_ids: set[str] = set()
 
     async def start(self) -> None:
         """Start the live trading loop (subscribe and process)."""
@@ -82,6 +84,15 @@ class LiveVirtualTradingLoop:
 
         # Rebuild engine per-match state from DB (bet counts, stakes)
         await self._engine.rebuild_state_from_db()
+
+        # Load completed match IDs from DB (Principle 4: belt-and-suspenders with scraper)
+        await self._load_completed_matches()
+
+        # Rebuild _open_bets from DB (Principle 6: survive restarts)
+        await self._rebuild_open_bets()
+
+        # Settle any orphaned pending bets that have match results in DB
+        await self._settle_pending_from_db()
 
         redis = await get_redis()
         self._pubsub = await redis.subscribe(CHANNEL_MATCH_EVENTS, CHANNEL_MATCH_RESULTS)
@@ -162,6 +173,11 @@ class LiveVirtualTradingLoop:
             if not event.is_live:
                 return
 
+            # COMPLETED GATE: don't bet on matches that already have results
+            # (Principle 4: defend at every layer, not just the scraper)
+            if event.match_id in self._completed_match_ids:
+                return
+
             # Watch mode: only process events for the user-selected match
             redis = await get_redis()
             watched_id = await redis.client.get(KEY_WATCHED_MATCH_ID)
@@ -170,11 +186,13 @@ class LiveVirtualTradingLoop:
 
             context = await get_match_context(event.match_id)
             portfolio = self._build_portfolio_state()
+            position_state = self._build_position_state(event)
             obs = self._feature_pipeline.compute(
                 match_id=event.match_id,
                 event=event,
                 context=context,
                 portfolio=portfolio,
+                position_state=position_state,
             )
 
             # Populate feature cache for advisor fast path (orchestrator._generate_signal)
@@ -220,7 +238,13 @@ class LiveVirtualTradingLoop:
         team_home = data.get("team_home", "")
         team_away = data.get("team_away", "")
 
-        if not match_id or match_id not in self._open_bets:
+        if not match_id:
+            return
+
+        # Mark match as completed regardless of whether we have open bets
+        self._completed_match_ids.add(match_id)
+
+        if match_id not in self._open_bets:
             return
 
         # Fetch closing odds for CLV calculation
@@ -326,6 +350,61 @@ class LiveVirtualTradingLoop:
             logger.debug("closing_odds_fetch_error", match_id=match_id, error=str(e))
         return None, None, None, None
 
+    def _build_position_state(self, event: OddsEvent) -> dict:
+        """Build position state for the feature pipeline (hedging awareness)."""
+        net_home = 0.0
+        net_away = 0.0
+        best_back_home = 0.0
+        best_back_away = 0.0
+        best_lay_home = 0.0
+        best_lay_away = 0.0
+
+        for match_id, bet_list in self._open_bets.items():
+            if match_id != event.match_id:
+                continue
+            for bet, _placed_at in bet_list:
+                is_back = bet.action in (
+                    BettingAction.BACK_HOME_SM, BettingAction.BACK_HOME_LG,
+                    BettingAction.BACK_AWAY_SM, BettingAction.BACK_AWAY_LG,
+                )
+                on_home = bet.action in (
+                    BettingAction.BACK_HOME_SM, BettingAction.BACK_HOME_LG,
+                    BettingAction.LAY_HOME_SM, BettingAction.LAY_HOME_LG,
+                )
+                if on_home:
+                    if is_back:
+                        net_home += bet.stake
+                        if best_back_home <= 1.0 or bet.odds < best_back_home:
+                            best_back_home = bet.odds
+                    else:
+                        net_home -= bet.stake
+                        if best_lay_home <= 1.0 or bet.odds > best_lay_home:
+                            best_lay_home = bet.odds
+                else:
+                    if is_back:
+                        net_away += bet.stake
+                        if best_back_away <= 1.0 or bet.odds < best_back_away:
+                            best_back_away = bet.odds
+                    else:
+                        net_away -= bet.stake
+                        if best_lay_away <= 1.0 or bet.odds > best_lay_away:
+                            best_lay_away = bet.odds
+
+        bankroll = self._portfolio.state.current_balance
+        return {
+            "net_home_exposure": net_home,
+            "net_away_exposure": net_away,
+            "bankroll": bankroll,
+            "back_home_odds": event.back_home or 0.0,
+            "lay_home_odds": event.lay_home or 0.0,
+            "back_away_odds": event.back_away or 0.0,
+            "lay_away_odds": event.lay_away or 0.0,
+            "best_entry_home": best_back_home,
+            "best_entry_away": best_back_away,
+            "best_entry_lay_home": best_lay_home,
+            "best_entry_lay_away": best_lay_away,
+        }
+
     def _build_portfolio_state(self) -> PortfolioState:
         """Build portfolio state for feature pipeline."""
         state = self._portfolio.state
@@ -341,3 +420,159 @@ class LiveVirtualTradingLoop:
             consecutive_streak=state.consecutive_streak,
             time_since_last_bet=state.time_since_last_bet,
         )
+
+    async def _load_completed_matches(self) -> None:
+        """Load completed match IDs from DB to prevent betting on finished matches.
+
+        Principle 4: Defend Every Gate — this is a second gate independent of the scraper's
+        completed-match filter. Even if the scraper incorrectly marks a finished match as
+        live, the trading loop will refuse to bet on it.
+        """
+        try:
+            from sqlalchemy import text
+
+            async with get_session() as session:
+                result = await session.execute(
+                    text("SELECT match_id FROM match_results")
+                )
+                ids = {row[0] for row in result.fetchall()}
+                self._completed_match_ids = ids
+                if ids:
+                    logger.info("completed_matches_loaded", count=len(ids))
+        except Exception as e:
+            logger.warning("load_completed_matches_error", error=str(e))
+
+    async def _rebuild_open_bets(self) -> None:
+        """Rebuild _open_bets dict from DB after a restart.
+
+        Principle 6: In-Memory State Dies on Restart — without this, any bets placed
+        before a restart can never be settled via the Redis pub/sub path.
+        """
+        try:
+            from sqlalchemy import text
+
+            async with get_session() as session:
+                result = await session.execute(
+                    text("""
+                        SELECT placed_at, match_id, action, team, odds, stake
+                        FROM virtual_bets
+                        WHERE settled_at IS NULL
+                        ORDER BY placed_at ASC
+                    """)
+                )
+                rows = result.fetchall()
+                rebuilt = 0
+                for row in rows:
+                    placed_at, match_id, action_str, team, odds, stake = row
+                    try:
+                        action = BettingAction[action_str]
+                    except (KeyError, ValueError):
+                        continue
+
+                    bet = VirtualBet(
+                        match_id=match_id,
+                        placed_at=placed_at,
+                        action=action,
+                        team=team,
+                        odds=float(odds),
+                        stake=float(stake),
+                    )
+                    if match_id not in self._open_bets:
+                        self._open_bets[match_id] = []
+                    self._open_bets[match_id].append((bet, placed_at))
+                    rebuilt += 1
+
+                if rebuilt:
+                    logger.info("open_bets_rebuilt", count=rebuilt)
+        except Exception as e:
+            logger.warning("rebuild_open_bets_error", error=str(e))
+
+    async def _settle_pending_from_db(self) -> None:
+        """Settle orphaned pending bets using match results already in the DB.
+
+        This handles the case where bets were placed, the loop restarted, and match
+        results arrived while the loop was down. Without this, those bets stay
+        PENDING forever (the bug visible in the screenshot).
+        """
+        try:
+            from sqlalchemy import text
+
+            async with get_session() as session:
+                # Find pending bets that have a match result available
+                result = await session.execute(
+                    text("""
+                        SELECT vb.placed_at, vb.match_id, vb.action, vb.team,
+                               vb.odds, vb.stake,
+                               mr.winner, mr.result_type
+                        FROM virtual_bets vb
+                        INNER JOIN match_results mr ON vb.match_id = mr.match_id
+                        WHERE vb.settled_at IS NULL
+                    """)
+                )
+                rows = result.fetchall()
+                if not rows:
+                    return
+
+                settled_count = 0
+                for row in rows:
+                    placed_at, match_id, action_str, team, odds, stake, winner, result_type = row
+
+                    if result_type in ("tie", "no_result", "draw", "abandoned"):
+                        outcome = "void"
+                        pnl = 0.0
+                    else:
+                        is_back = "BACK" in action_str
+                        team_won = (team == winner)
+
+                        if is_back:
+                            if team_won:
+                                pnl = float(stake) * (float(odds) - 1.0)
+                                outcome = "win"
+                            else:
+                                pnl = -float(stake)
+                                outcome = "loss"
+                        else:  # LAY
+                            if team_won:
+                                pnl = -float(stake) * (float(odds) - 1.0)
+                                outcome = "loss"
+                            else:
+                                pnl = float(stake)
+                                outcome = "win"
+
+                    await session.execute(
+                        text("""
+                            UPDATE virtual_bets
+                            SET settled_at = NOW(),
+                                outcome = :outcome,
+                                profit_loss = :pnl
+                            WHERE match_id = :match_id
+                              AND placed_at = :placed_at
+                              AND settled_at IS NULL
+                        """),
+                        {
+                            "match_id": match_id,
+                            "placed_at": placed_at,
+                            "outcome": outcome,
+                            "pnl": pnl,
+                        },
+                    )
+                    settled_count += 1
+
+                    # Also mark this match as completed
+                    self._completed_match_ids.add(match_id)
+
+                    # Remove from _open_bets if present
+                    if match_id in self._open_bets:
+                        self._open_bets.pop(match_id, None)
+
+                    logger.info(
+                        "orphaned_bet_settled",
+                        match_id=match_id,
+                        outcome=outcome,
+                        pnl=round(pnl, 2),
+                    )
+
+                if settled_count:
+                    logger.info("pending_bets_settled_from_db", count=settled_count)
+        except Exception as e:
+            logger.warning("settle_pending_from_db_error", error=str(e))

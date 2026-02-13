@@ -10,78 +10,82 @@ PHOENIX is an automated cricket betting analysis system that uses Reinforcement 
 
 ## Dashboard Pages
 
-### Main Dashboard (http://localhost:3000)
-
-The home page shows a high-level overview:
-- **Health Status Bar (NEW):** Shows real-time status of API, Redis, Database, and Scraper
-- **Training Progress:** Total timesteps trained, episodes, recent win rate and Sharpe ratio
-- **Virtual Trading:** Total virtual bets, win rate, P&L, average odds
-- **System Status:** Agent version, ROI, wins/losses
-
-The page auto-refreshes every 10 seconds.
-
-### Training Monitor (/training)
-
-Tracks the RL agent's training progress:
-- **Summary Cards:** Policy loss, value loss, entropy, current model version
-- **Charts:** Episode reward over time, win rate trend, ROI trend
-
-### Virtual Trading (/trading)
-
-Shows the agent's virtual betting performance:
-- **Performance Cards:** Total bets, win rate, total P&L, average odds
-- **Bet History Table:** Last 50 bets with timestamp, action, team, odds, stake, outcome, and P&L
-
-### Graduation Progress (/graduation)
-
-Monitors the agent's progress toward graduation:
-- **Progress Bar:** Consecutive qualifying days out of 14 required
-- **Criteria Cards:** Win rate, ROI, Sharpe ratio, max drawdown, profitable days, bet volume, average CLV
-- Each criterion shows current value, threshold, and pass/fail status
-
-### Live Matches (/matches)
-
-Displays matches being tracked by the scraper with a **two-phase approval workflow**:
-
-**Step 1: Scrape Approval** — Decide which discovered matches to scrape
-- Approve Scraping / Skip buttons for each match
-- Shows tick count as data accumulates
-
-**Step 2: Training Approval** — Approve collected data for RL training
-- **Validate button** — runs full data quality analysis
-- Validation shows: quality score, recommendation (approve/review/reject), live vs pre-match ticks, completeness, odds range, missing data
-- Approve / Reject buttons for training
-- **📝 Result button (NEW):** Submit manual match result if Cricbuzz API fails
-
-**Features:**
-- Filter buttons: All, Discovered, Scraping, Skipped (Step 1) and All, Pending, Approved, Rejected (Step 2)
-- WebSocket connection status indicator
-- Summary pills showing counts per status
-
-### Advisor (/advisor)
-
-The most important page post-graduation:
-- **Lifecycle State:** Shows current state (accumulating, training, virtual trading, graduated)
-- **Drift Warning Banner:** Appears if performance is degrading (amber) or demotion is imminent (red)
-- **Shadow Trading Performance:** Balance, P&L, win rate, ROI, Sharpe, drawdown
-- **Confidence Calibration:** How accurate the agent's confidence scores are
-- **Daily P&L Chart:** Last 30 days of shadow trading performance
-- **Live Signals:** Active bet recommendations with action, confidence, and probability distribution
-- **Manual Demotion:** Admin button to demote the agent back to virtual trading
+```mermaid
+graph TB
+    subgraph "Main Dashboard"
+        A[localhost:3000]
+        A1[Health Status Bar]
+        A2[Training Progress]
+        A3[Virtual Trading]
+        A4[System Status]
+    end
+    
+    subgraph "Training Monitor"
+        B[/training]
+        B1[Summary Cards]
+        B2[Episode Charts]
+        B3[Win Rate Trend]
+    end
+    
+    subgraph "Virtual Trading"
+        C[/trading]
+        C1[Performance Cards]
+        C2[Bet History Table]
+    end
+    
+    subgraph "Graduation Progress"
+        D[/graduation]
+        D1[Progress Bar]
+        D2[Criteria Cards]
+        D3[Pass/Fail Status]
+    end
+    
+    subgraph "Live Matches"
+        E[/matches]
+        E1[Step 1: Scrape Approval]
+        E2[Step 2: Training Approval]
+        E3[Data Validation]
+        E4[Manual Result Entry]
+    end
+    
+    subgraph "Advisor"
+        F[/advisor]
+        F1[Lifecycle State]
+        F2[Drift Warning]
+        F3[Shadow Trading]
+        F4[Live Signals]
+        F5[Manual Demotion]
+    end
+    
+    A --> B
+    A --> C
+    A --> D
+    A --> E
+    A --> F
+```
 
 ---
 
 ## Agent Lifecycle
 
-The agent progresses through 5 states automatically:
-
-1. **Accumulating** -- Collecting odds data from live matches. Needs 10+ matches with 50+ ticks each.
-2. **Offline Training** -- Training the PPO/DQN agent on historical data (500,000 timesteps).
-3. **Online Training** -- Curriculum learning through 4 progressive difficulty stages.
-4. **Virtual Trading** -- Agent places virtual bets on live matches. Must pass all graduation criteria for 14 consecutive days.
-5. **Graduated (Advisor)** -- Agent generates bet signals. Shadow trading continues to validate performance.
-
-If performance drifts after graduation (5 consecutive drift days), the agent automatically demotes back to Virtual Trading.
+```mermaid
+stateDiagram-v2
+    [*] --> Accumulating
+    Accumulating --> OfflineTraining: 10+ matches<br/>50+ ticks each
+    OfflineTraining --> OnlineTraining: 500K timesteps<br/>completed
+    OnlineTraining --> VirtualTrading: Curriculum<br/>stages passed
+    VirtualTrading --> Graduated: All criteria met<br/>14 consecutive days
+    Graduated --> VirtualTrading: Performance drift<br/>5 consecutive days
+    VirtualTrading --> OfflineTraining: Nightly retrain<br/>if needed
+    Graduated --> [*]: Manual stop
+    VirtualTrading --> [*]: Manual stop
+    OfflineTraining --> [*]: Manual stop
+    Accumulating --> [*]: Manual stop
+    
+    note right of Graduated: Advisor mode<br/>Generates bet signals<br/>Shadow trading continues
+    
+    note right of VirtualTrading: Places virtual bets<br/>Validates profitability<br/>Must meet graduation criteria
+```
 
 ---
 
@@ -93,7 +97,9 @@ When the agent is graduated, the Advisor page shows signals like:
 - **Confidence:** How certain the agent is (e.g., 72%)
 - **Action Probabilities:** Full distribution across all 9 actions
 
-**Per-Match Budget:** Each match has a default budget of ₹1,00,000. SM actions use ~10% (₹10,000), LG actions use ~25% (₹25,000). Stakes are rounded to human-like amounts (100, 500, 1000, etc.).
+**Per-Match Budget:** Each match has a default budget of ₹1,00,000. SM actions use ~10% (₹10,000), LG actions use ~25% (₹25,000) of the per-match budget during live/virtual trading. Stakes are rounded to human-like amounts (100, 500, 1000, etc.) with ±20% noise for anti-detection.
+
+> **Note:** During RL training, stake sizes are 1% (SM) / 3% (LG) of the agent's bankroll — different from live trading which uses the per-match budget.
 
 **Multi-Account Strategy:** Distribute each recommendation to a different account. One account may profit, another may lose, but the portfolio stays net positive. This avoids bookmaker flagging.
 
@@ -101,7 +107,7 @@ When the agent is graduated, the Advisor page shows signals like:
 - Only act on signals with confidence > 50%
 - Start with small stakes (SM actions) until you trust the system
 - Place hedging bets on both sides to lock in profit during volatile moments
-- The agent may recommend many bets per match during high-volatility events (wickets, sixes)
+- The agent may recommend up to 20 bets per match (`MAX_BETS_PER_MATCH`), with a 15-second minimum cooldown between bets
 
 ---
 

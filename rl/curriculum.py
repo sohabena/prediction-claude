@@ -96,9 +96,8 @@ class CurriculumManager:
             return all_data
 
         if self.current_stage == CurriculumStage.PATTERN_RECOGNITION:
-            # Use first half of data (simpler matches)
-            split = max(1, len(all_data) // 2)
-            return all_data[:split]
+            # Use all data — action mask (HOLD + BACK_HOME_SM) controls difficulty
+            return all_data
 
         elif self.current_stage == CurriculumStage.FULL_ACTIONS:
             return all_data

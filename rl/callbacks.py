@@ -250,18 +250,24 @@ class DatabaseMetricsCallback(BaseCallback):
         return True
 
     def _flush_to_db(self) -> None:
-        """Flush pending rows to DB synchronously via asyncio."""
+        """Flush pending rows to DB synchronously via a fresh event loop.
+
+        Training runs in a thread pool without an asyncio event loop,
+        so we always create a dedicated loop for the DB write.
+        """
         rows = self._pending_rows.copy()
         self._pending_rows.clear()
+        loop = asyncio.new_event_loop()
         try:
-            asyncio.get_event_loop().run_until_complete(self._write_rows(rows))
-        except RuntimeError:
-            # If there's no event loop (running outside async context), create one
-            loop = asyncio.new_event_loop()
+            loop.run_until_complete(self._write_rows(rows))
+        except Exception as e:
+            logger.warning("db_metrics_flush_error", error=str(e), count=len(rows))
+        finally:
             try:
-                loop.run_until_complete(self._write_rows(rows))
-            finally:
-                loop.close()
+                loop.run_until_complete(loop.shutdown_asyncgens())
+            except Exception:
+                pass
+            loop.close()
 
     @staticmethod
     async def _write_rows(rows: list[dict[str, Any]]) -> None:
@@ -282,7 +288,6 @@ class DatabaseMetricsCallback(BaseCallback):
                         """),
                         row,
                     )
-                await session.commit()
             logger.debug("db_metrics_flushed", count=len(rows))
         except Exception as e:
             logger.warning("db_metrics_flush_error", error=str(e), count=len(rows))

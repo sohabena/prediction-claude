@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import select, text, update
 
 from backend.models.match_status import MatchTrainingStatus
+from shared.constants import KEY_ACTIVE_MATCHES
 from shared.db import get_session
 from shared.logging import setup_logging
 from shared.redis_client import get_redis
@@ -22,7 +23,7 @@ async def get_active_matches() -> dict[str, Any]:
     """Get currently active/live matches."""
     try:
         redis = await get_redis()
-        data = await redis.get_json("active_matches")
+        data = await redis.get_json(KEY_ACTIVE_MATCHES)
         if data:
             return data
     except Exception as e:

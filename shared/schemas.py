@@ -124,7 +124,7 @@ class OddsEvent(BaseModel):
                 lay_draw=float(data["lay_draw"]) if data.get("lay_draw") else None,
                 back_away=float(data["back_away"]) if data.get("back_away") else None,
                 lay_away=float(data["lay_away"]) if data.get("lay_away") else None,
-                is_live=data.get("is_live", True),
+                is_live=data.get("is_live", False),
             )
         except Exception:
             return None

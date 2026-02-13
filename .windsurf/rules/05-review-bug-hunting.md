@@ -380,3 +380,77 @@ When something is wrong and you don't know where to start:
 8. **Check defaults** — is a constant/config set to a wrong value?
 9. **Verify fix** — test against real data, not just logic
 10. **Prevent recurrence** — add a test, a check, or a rule
+
+---
+
+## Part 6: Iterative Hunt Strategy
+
+For exhaustive codebase-wide bug hunts, use this multi-pass convergence strategy. The goal is to reach **2 consecutive clean passes** (zero bugs found) before declaring the codebase clean.
+
+### Process
+
+```
+Repeat:
+  1. Run a fresh hunt pass applying ALL 7 techniques (Part 3)
+  2. Log every bug found with file, line, root cause, and fix
+  3. Fix all bugs found in this pass
+  4. Run full test suite — all tests must pass
+  5. If bugs were found → increment pass counter, go to step 1
+  6. If zero bugs found → increment consecutive-clean counter
+  7. If consecutive-clean counter reaches 2 → DONE
+  8. If bugs were found in this pass → reset consecutive-clean counter to 0
+```
+
+### Pass Strategy: Vary Your Angle
+
+Each pass should attack from a **different angle** to avoid blind spots:
+
+| Pass | Primary Focus | Secondary Focus |
+|------|--------------|----------------|
+| 1 | Silent failures, consistency audit, hardcoded strings | State machine transitions, P&L formulas |
+| 2 | is_live/default value safety, action enum consistency | Contract audit (DB ↔ API ↔ Frontend) |
+| 3 | Boundary values, race conditions, error swallowing | Configuration validation, import correctness |
+| 4 | Fresh eyes on all previous fix sites, edge cases | Documentation accuracy, remaining tech debt |
+
+### What Counts as a Bug
+
+**Counts (must fix):**
+- Wrong default values (e.g., `is_live=True` when safe default is `False`)
+- Missing model save after training (data loss on restart)
+- Double-commit or redundant DB operations
+- Swapped enum mappings (wrong action names for indices)
+- Stale documentation that contradicts code (wrong dimension counts)
+- Hardcoded strings that should use constants (in production code)
+- Silent error swallowing in critical paths
+
+**Does NOT count (note but skip):**
+- Style issues in utility/admin scripts (not production)
+- Redundant-but-harmless operations in one-off scripts
+- Documentation preferences (wording, not factual errors)
+- Potential future issues that aren't bugs today
+
+### Tracking Template
+
+Use a structured TODO list across passes:
+
+```
+Pass #1: [status] — found N bugs (brief list)
+Pass #2: [status] — found N bugs (brief list)
+Pass #3: [status] — CLEAN (0 bugs) ← 1st consecutive clean
+Pass #4: [status] — CLEAN (0 bugs) ← 2nd consecutive clean ✅ DONE
+```
+
+### After Each Fix Round
+
+1. Run `python -m pytest tests/ -v --tb=short` — **all tests must pass**
+2. Verify fixes didn't introduce new issues (check related code paths)
+3. Update stale documentation if the fix changes observable behavior
+4. Log the fix in your pass summary (file, line, what changed, why)
+
+### Exit Criteria
+
+- **2 consecutive passes with 0 bugs found**
+- **All tests pass** after every fix round
+- **No known unfixed bugs** remaining in the backlog
+
+This strategy works because each pass naturally finds fewer bugs, and requiring 2 consecutive clean passes provides high confidence that no systematic blind spots remain.

@@ -75,9 +75,12 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             async for message in pubsub.listen():
                 if message["type"] == "message":
                     try:
+                        channel = message["channel"]
+                        if isinstance(channel, bytes):
+                            channel = channel.decode("utf-8")
                         data = json.loads(message["data"])
                         await websocket.send_json({
-                            "channel": message["channel"],
+                            "channel": channel,
                             "data": data,
                         })
                     except json.JSONDecodeError:

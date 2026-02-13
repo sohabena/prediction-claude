@@ -39,9 +39,10 @@ class CricketBettingEnv(gym.Env):
     """
     Custom Gymnasium environment for cricket betting RL.
 
-    Observation: 74-dim float vector (data-only features)
-        Groups: odds(12) + momentum(16) + market(8) + match_stats(8)
-              + temporal(6) + portfolio(8) + statistical(8) + category(8)
+    Observation: 48-dim float vector (data-only features)
+        Groups: odds(7) + momentum(6) + market(5) + match_stats(7)
+              + portfolio(5) + position(4) + volume(4) + bookmaker(4)
+              + format(4) + timing(2)
     Action: 9 discrete actions (HOLD + 4 BACK + 4 LAY)
     Reward: Multi-component (P&L, patience, risk penalties, Sharpe bonus)
     """
@@ -54,6 +55,7 @@ class CricketBettingEnv(gym.Env):
         initial_bankroll: float = 100_000.0,
         render_mode: Optional[str] = None,
         settlement_mode: str = "real",
+        max_bets_per_episode: int = 10,
     ) -> None:
         """
         Args:
@@ -65,6 +67,9 @@ class CricketBettingEnv(gym.Env):
             settlement_mode: "real" uses actual match result, "simulated"
                            uses random outcome based on implied probability
                            (legacy mode for unit tests / curriculum stage 1).
+            max_bets_per_episode: Hard cap on bets per episode. Forces the
+                                 agent to be selective. Expert bettors make
+                                 only 3-10 bets per match.
         """
         super().__init__()
 
@@ -103,7 +108,20 @@ class CricketBettingEnv(gym.Env):
         self._open_bets: list[VirtualBet] = []
         self._episode_returns: list[float] = []
         self._bets_this_hour: int = 0
+        self._bets_this_episode: int = 0
+        self.max_bets_per_episode = max_bets_per_episode
         self._peak_balance: float = initial_bankroll
+        self._prev_unrealized_pnl: float = 0.0  # For mark-to-market delta
+
+        # Position tracking for hedging/trading strategy
+        # Net exposure per team: positive = long (backed), negative = short (laid)
+        self._net_exposure_home: float = 0.0
+        self._net_exposure_away: float = 0.0
+        # Best entry odds for hedge profit calculation
+        self._best_back_entry_home: float = 0.0  # lowest back odds on home
+        self._best_back_entry_away: float = 0.0  # lowest back odds on away
+        self._best_lay_entry_home: float = 0.0   # highest lay odds on home
+        self._best_lay_entry_away: float = 0.0   # highest lay odds on away
 
         # Action masking for curriculum (None = all actions allowed)
         self._allowed_actions: Optional[list[int]] = None
@@ -126,7 +144,15 @@ class CricketBettingEnv(gym.Env):
         self._open_bets = []
         self._episode_returns = []
         self._bets_this_hour = 0
+        self._bets_this_episode = 0
         self._peak_balance = self.initial_bankroll
+        self._prev_unrealized_pnl = 0.0
+        self._net_exposure_home = 0.0
+        self._net_exposure_away = 0.0
+        self._best_back_entry_home = 0.0
+        self._best_back_entry_away = 0.0
+        self._best_lay_entry_home = 0.0
+        self._best_lay_entry_away = 0.0
         self._step_idx = 0
 
         # Select episode data
@@ -190,25 +216,60 @@ class CricketBettingEnv(gym.Env):
         if self._allowed_actions is not None and action not in self._allowed_actions:
             action = 0
 
+        # Enforce bet budget: once exhausted, all bets become HOLD
+        if action != 0 and self._bets_this_episode >= self.max_bets_per_episode:
+            action = 0
+
         betting_action = BettingAction(action)
         step_info: dict[str, Any] = {}
 
-        # 1. Apply action
+        # 1. Apply action — track potential profit/loss and hedging
+        bet_potential_profit = 0.0
+        bet_potential_loss = 0.0
+        bet_placed = False
+        hedge_locked_pnl = 0.0  # P&L locked by hedging (both sides covered)
+        is_hedge = False
         if betting_action != BettingAction.HOLD:
             bet = self._place_bet(betting_action)
             if bet:
                 self._open_bets.append(bet)
                 self._bets_this_hour += 1
+                self._bets_this_episode += 1
+                bet_placed = True
+                is_back = bet.action in (
+                    BettingAction.BACK_HOME_SM, BettingAction.BACK_HOME_LG,
+                    BettingAction.BACK_AWAY_SM, BettingAction.BACK_AWAY_LG,
+                )
+                bet_on_home = bet.action in (
+                    BettingAction.BACK_HOME_SM, BettingAction.BACK_HOME_LG,
+                    BettingAction.LAY_HOME_SM, BettingAction.LAY_HOME_LG,
+                )
+                if is_back:
+                    bet_potential_profit = bet.stake * (bet.odds - 1.0)
+                    bet_potential_loss = bet.stake
+                else:  # LAY
+                    bet_potential_profit = bet.stake
+                    bet_potential_loss = bet.stake * (bet.odds - 1.0)
+
+                # Update position tracking and detect hedges
+                hedge_locked_pnl, is_hedge = self._update_position(
+                    bet, is_back, bet_on_home
+                )
 
         # 2. Advance to next tick
         self._step_idx += 1
         terminated = self._step_idx >= len(self._current_episode_data)
         truncated = False
 
-        # 3. Compute CLV for open bets (before settlement) - intermediate reward signal
+        # 3. Mark-to-market: compute unrealized P&L change for open bets
+        current_unrealized = self._compute_unrealized_pnl()
+        unrealized_pnl_delta = current_unrealized - self._prev_unrealized_pnl
+        self._prev_unrealized_pnl = current_unrealized
+
+        # 4. Compute CLV for open bets (before settlement)
         clv_improvement = self._compute_open_bets_clv()
 
-        # 4. Settle bets (simplified: settle when match ends or after N steps)
+        # 5. Settle bets (simplified: settle when match ends or after N steps)
         settled_pnl = self._settle_bets()
 
         # Update portfolio
@@ -217,11 +278,13 @@ class CricketBettingEnv(gym.Env):
         self._portfolio.daily_pnl += settled_pnl
         if settled_pnl != 0:
             self._episode_returns.append(settled_pnl / self.initial_bankroll)
+            # Reset unrealized tracking after settlement
+            self._prev_unrealized_pnl = self._compute_unrealized_pnl()
 
         # Track peak for drawdown
         self._peak_balance = max(self._peak_balance, self._portfolio.current_balance)
 
-        # 5. Compute reward
+        # 6. Compute reward
         current_odds_change = self._get_odds_change()
         drawdown = 1.0 - (self._portfolio.current_balance / self._peak_balance)
 
@@ -238,6 +301,19 @@ class CricketBettingEnv(gym.Env):
             "episode_returns": self._episode_returns,
             "portfolio": self._portfolio if terminated else None,
             "clv_improvement": clv_improvement,
+            # Potential profit/loss signals
+            "bet_placed": bet_placed,
+            "bet_potential_profit": bet_potential_profit,
+            "bet_potential_loss": bet_potential_loss,
+            # Mark-to-market unrealized P&L delta
+            "unrealized_pnl_delta": unrealized_pnl_delta,
+            "unrealized_pnl_total": current_unrealized,
+            "open_bet_count": len(self._open_bets),
+            # Hedging signals
+            "is_hedge": is_hedge,
+            "hedge_locked_pnl": hedge_locked_pnl,
+            "net_exposure_home": self._net_exposure_home,
+            "net_exposure_away": self._net_exposure_away,
         }
 
         reward = self.reward_fn.compute(action, step_info)
@@ -417,11 +493,14 @@ class CricketBettingEnv(gym.Env):
 
         context = self._tick_to_context(tick)
 
+        position_state = self._build_position_state(tick)
+
         obs = self.feature_pipeline.compute(
             match_id=event.match_id,
             event=event,
             context=context,
             portfolio=self._portfolio,
+            position_state=position_state,
         )
         return obs
 
@@ -434,6 +513,142 @@ class CricketBettingEnv(gym.Env):
             "balance": self._portfolio.current_balance if self._portfolio else 0.0,
             "open_bets": len(self._open_bets),
         }
+
+    def _build_position_state(self, tick: dict[str, Any]) -> dict:
+        """Build position state dict for the feature pipeline."""
+        bankroll = self._portfolio.current_balance if self._portfolio else self.initial_bankroll
+        return {
+            "net_home_exposure": self._net_exposure_home,
+            "net_away_exposure": self._net_exposure_away,
+            "bankroll": bankroll,
+            "back_home_odds": tick.get("back_home") or 0.0,
+            "lay_home_odds": tick.get("lay_home") or 0.0,
+            "back_away_odds": tick.get("back_away") or 0.0,
+            "lay_away_odds": tick.get("lay_away") or 0.0,
+            "best_entry_home": self._best_back_entry_home,
+            "best_entry_away": self._best_back_entry_away,
+            "best_entry_lay_home": self._best_lay_entry_home,
+            "best_entry_lay_away": self._best_lay_entry_away,
+        }
+
+    def _update_position(
+        self, bet: VirtualBet, is_back: bool, bet_on_home: bool
+    ) -> tuple[float, bool]:
+        """
+        Update net position tracking when a bet is placed.
+        Detects hedges: when a new bet REDUCES net exposure on a team.
+
+        Returns:
+            (locked_pnl, is_hedge) -- locked_pnl > 0 means guaranteed profit
+            was locked by this hedge, regardless of match outcome.
+        """
+        stake = bet.stake
+        odds = bet.odds
+        locked_pnl = 0.0
+        is_hedge = False
+
+        if bet_on_home:
+            old_exposure = self._net_exposure_home
+            if is_back:
+                # BACK home: increase long exposure
+                self._net_exposure_home += stake
+                # Track best (lowest) back entry odds
+                if self._best_back_entry_home <= 1.0 or odds < self._best_back_entry_home:
+                    self._best_back_entry_home = odds
+            else:
+                # LAY home: decrease long exposure (or go short)
+                self._net_exposure_home -= stake
+                if self._best_lay_entry_home <= 1.0 or odds > self._best_lay_entry_home:
+                    self._best_lay_entry_home = odds
+
+            # Did this bet reduce exposure? That's a hedge.
+            if abs(self._net_exposure_home) < abs(old_exposure) and old_exposure != 0:
+                is_hedge = True
+                # Compute locked profit from the hedged portion
+                hedged_amount = abs(old_exposure) - abs(self._net_exposure_home)
+                if is_back and self._best_lay_entry_home > 1.0:
+                    # Was short (laid), now backing to hedge
+                    # Profit if back odds > lay entry odds
+                    if odds > self._best_lay_entry_home:
+                        locked_pnl = hedged_amount * (odds - self._best_lay_entry_home) / odds
+                elif not is_back and self._best_back_entry_home > 1.0:
+                    # Was long (backed), now laying to hedge
+                    # Profit if lay odds < back entry odds
+                    if odds < self._best_back_entry_home:
+                        locked_pnl = hedged_amount * (self._best_back_entry_home - odds) / odds
+        else:
+            # Away team
+            old_exposure = self._net_exposure_away
+            if is_back:
+                self._net_exposure_away += stake
+                if self._best_back_entry_away <= 1.0 or odds < self._best_back_entry_away:
+                    self._best_back_entry_away = odds
+            else:
+                self._net_exposure_away -= stake
+                if self._best_lay_entry_away <= 1.0 or odds > self._best_lay_entry_away:
+                    self._best_lay_entry_away = odds
+
+            if abs(self._net_exposure_away) < abs(old_exposure) and old_exposure != 0:
+                is_hedge = True
+                hedged_amount = abs(old_exposure) - abs(self._net_exposure_away)
+                if is_back and self._best_lay_entry_away > 1.0:
+                    if odds > self._best_lay_entry_away:
+                        locked_pnl = hedged_amount * (odds - self._best_lay_entry_away) / odds
+                elif not is_back and self._best_back_entry_away > 1.0:
+                    if odds < self._best_back_entry_away:
+                        locked_pnl = hedged_amount * (self._best_back_entry_away - odds) / odds
+
+        return locked_pnl, is_hedge
+
+    def _compute_unrealized_pnl(self) -> float:
+        """
+        Mark-to-market: compute unrealized P&L of all open bets using current odds.
+
+        For BACK bets: if current odds < entry odds, implied probability increased
+            → the market now agrees more with our bet → positive unrealized value.
+        For LAY bets: if current odds > entry odds, implied probability decreased
+            → the selection is less likely to win → positive unrealized value.
+        """
+        if not self._open_bets or self._step_idx >= len(self._current_episode_data):
+            return 0.0
+
+        tick = self._current_episode_data[min(self._step_idx, len(self._current_episode_data) - 1)]
+        total_unrealized = 0.0
+
+        for bet in self._open_bets:
+            entry = bet.odds
+            if entry <= 1.0:
+                continue
+
+            is_back = bet.action in (
+                BettingAction.BACK_HOME_SM, BettingAction.BACK_HOME_LG,
+                BettingAction.BACK_AWAY_SM, BettingAction.BACK_AWAY_LG,
+            )
+            # Get current market odds for this bet's side
+            if bet.action in (BettingAction.BACK_HOME_SM, BettingAction.BACK_HOME_LG):
+                current = tick.get("back_home") or 0.0
+            elif bet.action in (BettingAction.BACK_AWAY_SM, BettingAction.BACK_AWAY_LG):
+                current = tick.get("back_away") or 0.0
+            elif bet.action in (BettingAction.LAY_HOME_SM, BettingAction.LAY_HOME_LG):
+                current = tick.get("lay_home") or 0.0
+            else:  # LAY_AWAY
+                current = tick.get("lay_away") or 0.0
+
+            if current <= 1.0:
+                continue
+
+            if is_back:
+                # BACK bet unrealized: edge = (1/current - 1/entry) * stake * entry
+                # Positive when current < entry (odds shortened in our favor)
+                unrealized = ((1.0 / current) - (1.0 / entry)) * bet.stake * entry
+            else:
+                # LAY bet unrealized: edge = (1/entry - 1/current) * stake * entry
+                # Positive when current > entry (odds drifted, selection less likely)
+                unrealized = ((1.0 / entry) - (1.0 / current)) * bet.stake * entry
+
+            total_unrealized += unrealized
+
+        return total_unrealized
 
     def _compute_open_bets_clv(self) -> float:
         """
