@@ -199,6 +199,25 @@ class LiveVirtualTradingLoop:
             await self._feature_store.store(event.match_id, np.asarray(obs, dtype=np.float32))
 
             agent = self._get_agent() if self._get_agent else self._agent
+
+            # Resolve format specialist from ModelZoo if available
+            try:
+                from rl.model_zoo import get_model_zoo
+                zoo = get_model_zoo()
+                fmt_str = getattr(context, 'match_format', getattr(context, 'format', ''))
+                comp_str = getattr(context, 'competition', '')
+                spec_agent, _ = zoo.get_agent_for_match(
+                    format_name=str(fmt_str),
+                    event_name=str(comp_str),
+                    match_name=f'{event.team_home} vs {event.team_away}',
+                    team_home=event.team_home,
+                    team_away=event.team_away,
+                )
+                if spec_agent is not None:
+                    agent = spec_agent
+            except Exception as e:
+                logger.debug('model_zoo_route_fallback', error=str(e))
+
             if agent is None:
                 return
 

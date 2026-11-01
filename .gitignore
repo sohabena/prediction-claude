@@ -44,6 +44,7 @@ credentials.json
 
 # --- ML Models (large files) ---
 models/checkpoints/*.zip
+models/specialists/*.zip
 models/best_model.zip
 *.pkl
 *.h5

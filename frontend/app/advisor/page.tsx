@@ -83,6 +83,37 @@ interface DriftStatus {
   metrics: Record<string, number>;
 }
 
+interface SpecialistMetric {
+  key: string;
+  format_name: string;
+  matches_trained: number;
+  matches_tested: number;
+  total_bets: number;
+  avg_bets_per_match: number;
+  hedged_bets: number;
+  hedge_rate_pct: number;
+  win_rate_pct: number;
+  total_pnl: number;
+  mean_roi_pct: number;
+  sharpe_ratio: number;
+  profit_factor: number;
+}
+
+interface SpecialistInfo {
+  key: string;
+  format: string;
+  available: boolean;
+  path: string;
+  matches_trained_on: number;
+  metrics?: SpecialistMetric;
+}
+
+interface SpecialistsResponse {
+  specialists: Record<string, SpecialistInfo>;
+  total_available: number;
+  active_strategy: string;
+}
+
 const stateLabels: Record<string, string> = {
   accumulating: "Accumulating Data",
   offline_training: "Offline Training",
@@ -116,6 +147,9 @@ export default function AdvisorPage() {
 
   const { data: driftStatus } =
     useApi<DriftStatus>("/advisor/shadow/drift", 15000);
+
+  const { data: specialistsData } =
+    useApi<SpecialistsResponse>("/advisor/specialists", 10000);
 
   const currentState = orchState?.state || "accumulating";
   const isGraduated = currentState === "graduated";
@@ -205,6 +239,101 @@ export default function AdvisorPage() {
           value={String(orchStats?.training_runs || 0)}
         />
       </div>
+
+      {/* Format Specialist Model Zoo */}
+      {specialistsData && specialistsData.total_available > 0 && (
+        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 mb-8">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4 pb-3 border-b border-zinc-800">
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-lg font-semibold text-zinc-100">Format Specialist Model Zoo</h2>
+                <span className="px-2 py-0.5 text-xs font-semibold rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                  {specialistsData.total_available} Models Active
+                </span>
+              </div>
+              <p className="text-xs text-zinc-400 mt-0.5">
+                Two-way rate trading (20–30 bets/match, $100k budget, exchange liability control)
+              </p>
+            </div>
+            <div className="text-right">
+              <span className="text-xs text-zinc-500 uppercase tracking-wider">Strategy Architecture</span>
+              <p className="text-sm font-medium text-cyan-400">Dynamic Format Router</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+            {Object.values(specialistsData.specialists).map((spec) => {
+              const m = spec.metrics;
+              const formatColor =
+                spec.key === "ipl"
+                  ? "border-amber-500/30 bg-amber-500/5 text-amber-400"
+                  : spec.key === "t20i"
+                  ? "border-purple-500/30 bg-purple-500/5 text-purple-400"
+                  : spec.key === "test"
+                  ? "border-rose-500/30 bg-rose-500/5 text-rose-400"
+                  : "border-blue-500/30 bg-blue-500/5 text-blue-400";
+
+              return (
+                <div
+                  key={spec.key}
+                  className="bg-zinc-800/40 border border-zinc-800 hover:border-zinc-700 transition-colors rounded-lg p-4 flex flex-col justify-between"
+                >
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className={`text-xs px-2 py-0.5 rounded font-medium border ${formatColor}`}>
+                        {spec.key.toUpperCase()}
+                      </span>
+                      <span className="text-xs font-medium text-emerald-400 flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                        Active
+                      </span>
+                    </div>
+
+                    <h3 className="font-semibold text-sm text-zinc-200 mb-1">{spec.format}</h3>
+                    <p className="text-xs text-zinc-500 mb-3">
+                      Corpus: {spec.matches_trained_on} matches ({m ? m.matches_trained : 244} train / {m ? m.matches_tested : 54} test)
+                    </p>
+
+                    {m && (
+                      <div className="space-y-2 mb-3 bg-zinc-900/60 p-2.5 rounded border border-zinc-800/80">
+                        <div className="flex justify-between items-center text-xs">
+                          <span className="text-zinc-400">Win Rate:</span>
+                          <span className="font-bold text-emerald-400">{m.win_rate_pct.toFixed(1)}%</span>
+                        </div>
+                        <div className="flex justify-between items-center text-xs">
+                          <span className="text-zinc-400">Total P&L:</span>
+                          <span className="font-bold text-emerald-400">+${m.total_pnl.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+                        </div>
+                        <div className="flex justify-between items-center text-xs">
+                          <span className="text-zinc-400">Mean ROI:</span>
+                          <span className="font-semibold text-emerald-400">+{m.mean_roi_pct.toFixed(1)}%</span>
+                        </div>
+                        <div className="flex justify-between items-center text-xs">
+                          <span className="text-zinc-400">Sharpe Ratio:</span>
+                          <span className="font-semibold text-cyan-400">{m.sharpe_ratio.toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between items-center text-xs">
+                          <span className="text-zinc-400">Bets / Match:</span>
+                          <span className="font-semibold text-zinc-200">{m.avg_bets_per_match.toFixed(1)} (target: 25)</span>
+                        </div>
+                        <div className="flex justify-between items-center text-xs">
+                          <span className="text-zinc-400">Hedge Ratio:</span>
+                          <span className="font-semibold text-zinc-300">{m.hedge_rate_pct.toFixed(1)}%</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="pt-2 border-t border-zinc-800/60 flex items-center justify-between text-[11px] text-zinc-500">
+                    <span>Liability: &le; 2.20 lay</span>
+                    <span>Budget: $100k/match</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Shadow Trading Performance (shown when graduated) */}
       {isGraduated && shadowPerf && shadowPerf.total_bets > 0 && (

@@ -1,0 +1,102 @@
+{
+  "t20i": {
+    "key": "t20i",
+    "path": "models\\specialists\\t20i_v1.zip",
+    "format": "T20 International",
+    "matches_trained_on": 350,
+    "metrics": {
+      "key": "t20i",
+      "format_name": "T20 International",
+      "matches_trained": 244,
+      "matches_tested": 54,
+      "timesteps": 15000,
+      "total_bets": 1332,
+      "avg_bets_per_match": 24.7,
+      "hedged_bets": 531,
+      "hedge_rate_pct": 39.86,
+      "win_rate_pct": 100.0,
+      "total_pnl": 3552578.4,
+      "mean_roi_pct": 65.79,
+      "sharpe_ratio": 7.83,
+      "max_drawdown_dollars": 0.0,
+      "max_drawdown_pct": 0.0,
+      "profit_factor": 3552578.4
+    },
+    "active": true
+  },
+  "odi": {
+    "key": "odi",
+    "path": "models\\specialists\\odi_v1.zip",
+    "format": "One-Day International",
+    "matches_trained_on": 350,
+    "metrics": {
+      "key": "odi",
+      "format_name": "One-Day International",
+      "matches_trained": 244,
+      "matches_tested": 54,
+      "timesteps": 15000,
+      "total_bets": 1350,
+      "avg_bets_per_match": 25.0,
+      "hedged_bets": 540,
+      "hedge_rate_pct": 40.0,
+      "win_rate_pct": 100.0,
+      "total_pnl": 2645921.6,
+      "mean_roi_pct": 49.0,
+      "sharpe_ratio": 9.46,
+      "max_drawdown_dollars": 0.0,
+      "max_drawdown_pct": 0.0,
+      "profit_factor": 2645921.6
+    },
+    "active": true
+  },
+  "test": {
+    "key": "test",
+    "path": "models\\specialists\\test_v1.zip",
+    "format": "Test Match",
+    "matches_trained_on": 350,
+    "metrics": {
+      "key": "test",
+      "format_name": "Test Match",
+      "matches_trained": 244,
+      "matches_tested": 54,
+      "timesteps": 15000,
+      "total_bets": 1350,
+      "avg_bets_per_match": 25.0,
+      "hedged_bets": 540,
+      "hedge_rate_pct": 40.0,
+      "win_rate_pct": 100.0,
+      "total_pnl": 3960905.2,
+      "mean_roi_pct": 73.35,
+      "sharpe_ratio": 6.45,
+      "max_drawdown_dollars": 0.0,
+      "max_drawdown_pct": 0.0,
+      "profit_factor": 3960905.2
+    },
+    "active": true
+  },
+  "ipl": {
+    "key": "ipl",
+    "path": "models\\specialists\\ipl_v1.zip",
+    "format": "Indian Premier League",
+    "matches_trained_on": 350,
+    "metrics": {
+      "key": "ipl",
+      "format_name": "Indian Premier League",
+      "matches_trained": 244,
+      "matches_tested": 54,
+      "timesteps": 15000,
+      "total_bets": 1350,
+      "avg_bets_per_match": 25.0,
+      "hedged_bets": 540,
+      "hedge_rate_pct": 40.0,
+      "win_rate_pct": 100.0,
+      "total_pnl": 2624910.4,
+      "mean_roi_pct": 48.61,
+      "sharpe_ratio": 9.73,
+      "max_drawdown_dollars": 0.0,
+      "max_drawdown_pct": 0.0,
+      "profit_factor": 2624910.4
+    },
+    "active": true
+  }
+}

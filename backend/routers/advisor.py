@@ -224,3 +224,24 @@ async def manual_demote() -> dict[str, Any]:
     except Exception as e:
         logger.error("manual_demote_error", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/specialists")
+async def get_specialists_catalog() -> dict[str, Any]:
+    """
+    Get the catalog of format-specialized trading models (T20I, ODI, Test, IPL).
+    Returns training status, corpus sizes, and validation performance metrics.
+    """
+    try:
+        from rl.model_zoo import get_model_zoo
+        zoo = get_model_zoo()
+        specialists = zoo.list_specialists()
+        return {
+            "specialists": specialists,
+            "total_available": sum(1 for s in specialists.values() if s.get("available")),
+            "active_strategy": "Format Specialist Model Zoo",
+        }
+    except Exception as e:
+        logger.error("get_specialists_error", error=str(e))
+        return {"specialists": {}, "total_available": 0, "error": str(e)}
+

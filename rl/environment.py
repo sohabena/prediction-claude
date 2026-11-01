@@ -178,17 +178,13 @@ class CricketBettingEnv(gym.Env):
                 self._match_result_type = meta.get("result_type", "win")
                 self._current_episode_data = raw_episode.get("ticks", [])
             elif isinstance(raw_episode, list) and raw_episode:
-                # Legacy format: list of tick dicts, check first tick for _meta
-                if "_meta" in raw_episode[0]:
-                    meta = raw_episode[0]["_meta"]
-                    self._match_winner = meta.get("winner", "")
-                    self._match_home_team = meta.get("team_home", "")
-                    self._match_away_team = meta.get("team_away", "")
-                    self._match_result_type = meta.get("result_type", "win")
-                else:
-                    # Infer home/away from first tick
-                    self._match_home_team = raw_episode[0].get("team_home", "")
-                    self._match_away_team = raw_episode[0].get("team_away", "")
+                # Format: list of tick dicts, check first tick for _meta and top-level fields
+                first_tick = raw_episode[0]
+                meta = first_tick.get("_meta", {})
+                self._match_winner = meta.get("winner") or first_tick.get("winner", "")
+                self._match_home_team = meta.get("team_home") or first_tick.get("team_home", "")
+                self._match_away_team = meta.get("team_away") or first_tick.get("team_away", "")
+                self._match_result_type = meta.get("result_type", "win")
                 self._current_episode_data = raw_episode
             else:
                 self._current_episode_data = raw_episode if isinstance(raw_episode, list) else []
@@ -335,6 +331,9 @@ class CricketBettingEnv(gym.Env):
         assert self._portfolio is not None
 
         if self._step_idx >= len(self._current_episode_data):
+            return None
+
+        if self._bets_this_episode >= self.max_bets_per_episode:
             return None
 
         tick = self._current_episode_data[self._step_idx]
