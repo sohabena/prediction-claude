@@ -201,10 +201,18 @@ class LiveVirtualTradingLoop:
             agent = self._get_agent() if self._get_agent else self._agent
             if agent is None:
                 return
+
             action, _ = agent.predict(obs, deterministic=True)
 
             if action == BettingAction.HOLD:
                 return
+
+            # Get confidence
+            try:
+                action_probs = agent.get_action_distribution(obs)
+                confidence = float(action_probs[action])
+            except AttributeError:
+                confidence = 0.5  # Fallback if agent doesn't support probability distribution
 
             # Risk check
             stake_pct = 0.03 if "LG" in BettingAction(action).name else 0.01
@@ -214,7 +222,7 @@ class LiveVirtualTradingLoop:
                 logger.debug("bet_rejected_risk", match_id=event.match_id, violations=risk["violations"])
                 return
 
-            bet = self._engine.execute_action(action, event)
+            bet = self._engine.execute_action(action, event, confidence=confidence)
             if bet is None:
                 return
 

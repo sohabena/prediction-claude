@@ -183,24 +183,28 @@ export default function TradingPage() {
                   <td className="py-2 pr-4 font-mono">
                     {bet.stake?.toFixed(0)}
                   </td>
-                  <td className="py-2 pr-4">
+                   <td className="py-2 pr-4">
                     <span
                       className={`text-xs font-medium ${
                         bet.outcome === "win"
                           ? "text-emerald-400"
                           : bet.outcome === "loss"
                             ? "text-red-400"
-                            : "text-amber-400"
+                            : bet.outcome === "void"
+                              ? "text-zinc-500"
+                              : "text-amber-400"
                       }`}
                     >
                       {bet.outcome === "win"
                         ? "WON"
                         : bet.outcome === "loss"
                           ? "LOST"
-                          : "PENDING"}
+                          : bet.outcome === "void"
+                            ? "VOIDED"
+                            : "PENDING"}
                     </span>
                   </td>
-                  <td
+                   <td
                     className={`py-2 font-mono ${
                       bet.profit_loss > 0
                         ? "text-emerald-400"
@@ -211,7 +215,9 @@ export default function TradingPage() {
                   >
                     {bet.outcome === "win" || bet.outcome === "loss"
                       ? `${bet.profit_loss > 0 ? "+" : ""}${bet.profit_loss?.toFixed(0) ?? "0"}`
-                      : "—"}
+                      : bet.outcome === "void"
+                        ? "0"
+                        : "—"}
                   </td>
                 </tr>
               ))}

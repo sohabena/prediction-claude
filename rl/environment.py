@@ -39,10 +39,10 @@ class CricketBettingEnv(gym.Env):
     """
     Custom Gymnasium environment for cricket betting RL.
 
-    Observation: 48-dim float vector (data-only features)
+    Observation: 50-dim float vector (data-only features)
         Groups: odds(7) + momentum(6) + market(5) + match_stats(7)
               + portfolio(5) + position(4) + volume(4) + bookmaker(4)
-              + format(4) + timing(2)
+              + format(4) + timing(2) + match_momentum(2)
     Action: 9 discrete actions (HOLD + 4 BACK + 4 LAY)
     Reward: Multi-component (P&L, patience, risk penalties, Sharpe bonus)
     """
@@ -314,6 +314,8 @@ class CricketBettingEnv(gym.Env):
             "hedge_locked_pnl": hedge_locked_pnl,
             "net_exposure_home": self._net_exposure_home,
             "net_exposure_away": self._net_exposure_away,
+            "win_rate": self._portfolio.win_rate if self._portfolio.total_bets > 0 else 0.0,
+            "roi": self._portfolio.roi,
         }
 
         reward = self.reward_fn.compute(action, step_info)

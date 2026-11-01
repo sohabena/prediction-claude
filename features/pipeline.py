@@ -70,6 +70,7 @@ class FeaturePipeline:
 
         # In-memory history buffer per match
         self._history: dict[str, list[OddsEvent]] = defaultdict(list)
+        self._context_history: dict[str, list[MatchContext]] = defaultdict(list)
         self._match_start_times: dict[str, datetime] = {}
         self._last_tick_times: dict[str, datetime] = {}
         self._gap_detected: dict[str, bool] = {}  # Per-match gap flag
@@ -134,11 +135,22 @@ class FeaturePipeline:
                 )
         self._gap_detected[match_id] = gap_detected
 
-        # If gap detected, clear history to reset momentum accumulators
+        # Add context to history
+        if context is not None:
+            self._context_history[match_id].append(context)
+            if len(self._context_history[match_id]) > self._max_history:
+                self._context_history[match_id] = self._context_history[match_id][-self._max_history:]
+        
+        ctx_history = self._context_history[match_id]
+
+        # If gap detected, clear context history too
         if gap_detected:
             history = [event]
+            if context is not None:
+                self._context_history[match_id] = [context]
+                ctx_history = [context]
 
-        # ── Build the 48-feature vector ─────────────────────────
+        # ── Build the 50-feature vector ─────────────────────────
 
         features: list[float] = []
 
@@ -179,6 +191,10 @@ class FeaturePipeline:
 
         # Group 10: Timing (2) — match elapsed %, tick freshness
         features.extend(self._compute_timing(event, match_start, last_tick))
+
+        # Group 11: Match Momentum (2) — score/wicket changes in recent window
+        from features.extractors.match_momentum_features import compute_match_momentum_features
+        features.extend(compute_match_momentum_features(ctx_history))
 
         # ── Post-processing ─────────────────────────────────────
 

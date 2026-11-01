@@ -32,6 +32,8 @@ WINNER_ODDS_THRESHOLD = 1.10
 AMBIGUOUS_ODDS_FLOOR = 1.30
 # Seconds a match must be absent from scrape results before we declare it completed
 ABSENCE_THRESHOLD_SECONDS = 300  # 5 minutes
+# Seconds to wait before declaring an ambiguous match as 'no_result'
+AMBIGUOUS_THRESHOLD_SECONDS = 3600  # 1 hour
 
 
 @dataclass
@@ -167,6 +169,15 @@ class LotusResultDetector:
             # Match has been absent long enough — infer result
             result = self._infer_result(tracked, now)
             if result is not None:
+                # If it's a 'no_result' and hasn't been gone long enough for AMBIGUOUS_THRESHOLD, skip
+                if result["result_type"] == "no_result" and absence < AMBIGUOUS_THRESHOLD_SECONDS:
+                    logger.debug(
+                        "match_absent_ambiguous_waiting",
+                        match_id=match_id,
+                        absence_seconds=round(absence),
+                    )
+                    continue
+
                 tracked.resolved = True
                 self._resolved_ids.add(match_id)
                 results.append(result)

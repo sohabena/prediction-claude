@@ -1,5 +1,3 @@
-version: '3.8'
-
 # ============================================================
 # PHOENIX - Cricket Betting RL System
 # Docker Compose for local Windows deployment

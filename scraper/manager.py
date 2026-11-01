@@ -59,6 +59,7 @@ class ScraperManager:
         self._completed_match_ids: set[str] = set()  # matches with results
         self._quality_stats = {"stored": 0, "warnings": 0, "rejected": 0}
         self._result_detector = LotusResultDetector()
+        self._last_approved_refresh: datetime | None = None
 
     async def start(self) -> None:
         """Start the scraper manager: launch browser, begin scraping."""
@@ -87,6 +88,15 @@ class ScraperManager:
             wait_until="domcontentloaded",
             timeout=self.settings.scraper.session_timeout,
         )
+        # LotusBook is SPA/async: anchors may not exist yet; without this the first poll
+        # often returns 0 matches (see a[href*="/cricket/"][href*="vs"] — no #inPlayTeamName).
+        try:
+            await page.wait_for_selector(
+                'a[href*="/cricket/"][href*="vs"]',
+                timeout=min(self.settings.scraper.session_timeout, 60000),
+            )
+        except Exception as e:
+            logger.warning("match_links_selector_timeout", error=str(e))
 
         logger.info("page_loaded", url=self.settings.scraper.betting_site_url)
 
@@ -120,19 +130,27 @@ class ScraperManager:
         await self._worker.poll_loop(callback=self._on_events)
 
     async def _load_scrape_approved(self) -> None:
-        """Load scrape-approved match IDs from DB into memory cache."""
+        """Load scrape-approved match IDs and times from DB into memory cache."""
         try:
             from sqlalchemy import select
             from backend.models.match_status import MatchTrainingStatus
             async with get_session() as session:
                 result = await session.execute(
-                    select(MatchTrainingStatus.match_id).where(
+                    select(MatchTrainingStatus.match_id, MatchTrainingStatus.match_start_time).where(
                         MatchTrainingStatus.scrape_status == "scrape_approved"
                     )
                 )
-                ids = {row[0] for row in result.fetchall()}
-                self._scrape_approved_ids = ids
-                logger.info("scrape_approved_loaded", count=len(ids))
+                
+                approved_ids = set()
+                approved_times = {}
+                for row in result.fetchall():
+                    approved_ids.add(row[0])
+                    if row[1]:
+                        approved_times[row[0]] = row[1]
+                        
+                self._scrape_approved_ids = approved_ids
+                self._scrape_approved_times = approved_times
+                logger.info("scrape_approved_loaded", count=len(approved_ids))
         except Exception as e:
             logger.error("load_scrape_approved_error", error=str(e))
 
@@ -188,6 +206,11 @@ class ScraperManager:
         now = datetime.now(timezone.utc)
         current_batch_ids: set[str] = set()
 
+        # Periodically refresh scrape-approved matches (every 60s) so UI approvals take effect
+        if self._last_approved_refresh is None or (now - self._last_approved_refresh).total_seconds() > 60:
+            await self._load_scrape_approved()
+            self._last_approved_refresh = now
+
         for event in events:
             # Match filter: skip non-qualifying matches
             if not self._match_filter.qualifies(event):
@@ -235,6 +258,15 @@ class ScraperManager:
                 continue
             if not event.is_live:
                 continue
+
+            # ── SCHEDULE GATE: wait for scheduled match time ──
+            if hasattr(self, "_scrape_approved_times"):
+                start_time = self._scrape_approved_times.get(event.match_id)
+                if start_time is not None:
+                    from datetime import timedelta
+                    # Allow scraping starting 10 minutes before the scheduled time
+                    if now < start_time - timedelta(minutes=10):
+                        continue
 
             # ── Ingestion Quality Gate ──────────────────────────────
 
@@ -507,9 +539,18 @@ class ScraperManager:
                 )
                 record = existing.scalar_one_or_none()
                 if record is not None:
+                    # Update start time if it was missing and we now have it
+                    if record.match_start_time is None and event.scheduled_time is not None:
+                        record.match_start_time = event.scheduled_time
+                        
                     # Already tracked — but update scrape cache if approved
                     if record.scrape_status == "scrape_approved":
                         self._scrape_approved_ids.add(event.match_id)
+                        if record.match_start_time:
+                            if not hasattr(self, "_scrape_approved_times"):
+                                self._scrape_approved_times = {}
+                            self._scrape_approved_times[event.match_id] = record.match_start_time
+                            
                     return
 
                 # Auto-approve both scraping AND training for high-tier matches.
@@ -526,6 +567,7 @@ class ScraperManager:
                     scrape_status=scrape_status,
                     training_status=training_status,
                     auto_approved=should_auto,
+                    match_start_time=event.scheduled_time,
                 )
                 session.add(record)
 

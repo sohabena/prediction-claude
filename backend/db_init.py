@@ -2,8 +2,14 @@
 Database initialization script for PHOENIX.
 Creates all tables and TimescaleDB hypertables.
 
+For schema migrations, prefer `alembic upgrade head`.
+This script remains for TimescaleDB-specific DDL (hypertables,
+retention policies) that Alembic cannot natively manage.
+
 Usage:
-    python -m backend.db_init
+    python -m backend.db_init          # Full init (tables + hypertables)
+    alembic upgrade head               # Schema-only via Alembic
+    alembic stamp head                 # Mark existing DB as current
 """
 
 from __future__ import annotations

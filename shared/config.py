@@ -27,17 +27,17 @@ class DatabaseConfig(BaseSettings):
 
     host: str = "localhost"
     port: int = 5432
-    name: str = "phoenix_betting"
+    db: str = "phoenix_betting"
     user: str = "phoenix"
     password: str = ""
 
     @property
     def url(self) -> str:
-        return f"postgresql+asyncpg://{self.user}:{self.password}@{self.host}:{self.port}/{self.name}"
+        return f"postgresql+asyncpg://{self.user}:{self.password}@{self.host}:{self.port}/{self.db}"
 
     @property
     def sync_url(self) -> str:
-        return f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.name}"
+        return f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.db}"
 
     model_config = {"env_prefix": "POSTGRES_"}
 
@@ -79,7 +79,7 @@ class RLConfig(BaseSettings):
     graduation_enabled: bool = True
     learning_rate: float = 3e-4
     total_timesteps: int = 500000
-    observation_size: int = 48  # Must match OBSERVATION_SIZE in shared.constants
+    observation_size: int = 50  # Must match OBSERVATION_SIZE in shared.constants
     n_steps: int = 2048
     batch_size: int = 64
     min_matches_to_train: int = 10  # Minimum completed matches before training starts

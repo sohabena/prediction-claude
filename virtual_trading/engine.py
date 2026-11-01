@@ -91,7 +91,7 @@ class VirtualBetEngine:
         self._match_potential_payouts: dict[str, float] = {}
 
     def execute_action(
-        self, action: int, event: OddsEvent
+        self, action: int, event: OddsEvent, confidence: float = 0.5
     ) -> Optional[VirtualBet]:
         """
         Execute an RL agent action as a virtual bet.
@@ -99,9 +99,7 @@ class VirtualBetEngine:
         Args:
             action: Integer action from the agent.
             event: Current odds event.
-
-        Returns:
-            VirtualBet if placed, None if HOLD or rejected.
+            confidence: Probability/confidence of the action (0.0 to 1.0).
         """
         betting_action = BettingAction(action)
 
@@ -119,7 +117,6 @@ class VirtualBetEngine:
             return None
 
         # Minimum odds guard for LAY bets: laying at < 1.10 is terrible EV
-        # (risk huge liability for tiny profit — e.g. lay at 1.02 = risk 98x profit)
         is_lay = betting_action in (
             BettingAction.LAY_HOME_SM, BettingAction.LAY_AWAY_SM,
             BettingAction.LAY_HOME_LG, BettingAction.LAY_AWAY_LG,
@@ -144,50 +141,49 @@ class VirtualBetEngine:
         adjusted_odds = base_odds * (1.0 + slippage)
         adjusted_odds = max(1.01, adjusted_odds)
 
-        # Per-match bet limit check (0 = unlimited)
+        # Per-match bet limit check
         match_id = event.match_id
         if MAX_BETS_PER_MATCH > 0 and self._match_bet_counts.get(match_id, 0) >= MAX_BETS_PER_MATCH:
-            logger.debug("bet_rejected_match_limit", match_id=match_id,
-                         count=self._match_bet_counts[match_id])
             return None
 
-        # Dynamic cooldown: baseline MIN_BET_INTERVAL_SECONDS (15s)
-        # but no hard block — just a minimum spacing to avoid bot patterns
+        # Dynamic cooldown
         now_ts = datetime.now(timezone.utc).timestamp()
         last_bet_ts = self._match_last_bet_time.get(match_id, 0)
         if (now_ts - last_bet_ts) < MIN_BET_INTERVAL_SECONDS:
-            logger.debug("bet_rejected_cooldown", match_id=match_id,
-                         seconds_since_last=round(now_ts - last_bet_ts, 1))
             return None
 
-        # Per-match budget check with payout-aware headroom
+        # Budget Check
         staked_so_far = self._match_total_staked.get(match_id, 0.0)
         potential_payouts = self._match_potential_payouts.get(match_id, 0.0)
         effective_budget = self.per_match_budget + (potential_payouts * (PAYOUT_HEADROOM_FACTOR - 1.0))
 
-        # Determine stake from per-match budget (SM = ~10%, LG = ~25% of budget)
+        # Dynamic Confidence Sizing (Fractional Kelly approximation)
+        # Base stakes on confidence, shifting away from hardcoded 10/25%
+        # Confidence typically between 0.2 (low) and 0.9 (high) for Softmax Q
+        confidence_scaler = max(0.05, min(1.0, (confidence - 0.2) / 0.7))
+        
         if betting_action in (
             BettingAction.BACK_HOME_SM, BettingAction.BACK_AWAY_SM,
             BettingAction.LAY_HOME_SM, BettingAction.LAY_AWAY_SM,
         ):
-            raw_stake = self.per_match_budget * 0.10
+            # SM actions: 5% to 15% budget based on confidence
+            raw_stake = self.per_match_budget * (0.05 + (0.10 * confidence_scaler))
         else:
-            raw_stake = self.per_match_budget * 0.25
+            # LG actions: 10% to 35% budget based on confidence
+            raw_stake = self.per_match_budget * (0.10 + (0.25 * confidence_scaler))
 
-        # Anti-detection: stake noise +/-20% (avoids robotic consistency)
-        raw_stake *= 1.0 + random.uniform(-STAKE_NOISE_PERCENT, STAKE_NOISE_PERCENT)
+        # Anti-detection: stake noise +/-10% 
+        raw_stake *= 1.0 + random.uniform(-(STAKE_NOISE_PERCENT/2), (STAKE_NOISE_PERCENT/2))
 
-        # Cap stake to remaining budget (with payout headroom)
+        # Cap stake to remaining budget
         remaining = max(0, effective_budget - staked_so_far)
         if remaining <= 0:
-            logger.debug("bet_rejected_budget_exhausted", match_id=match_id,
-                         staked=staked_so_far, budget=effective_budget)
             return None
         raw_stake = min(raw_stake, remaining)
 
-        # Round to human-like amount (e.g. 2946 -> 3000)
+        # Round to human-like amount
         stake = humanize_stake(raw_stake)
-        stake = min(stake, remaining)  # Ensure rounding didn't exceed remaining
+        stake = min(stake, remaining)
 
         # Create bet
         bet = VirtualBet(

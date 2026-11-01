@@ -27,7 +27,9 @@ COMPETITION_WHITELIST: list[str] = [
     # International formats
     r"t20i", r"odi", r"\btest\b", r"bilateral",
     # Major franchise leagues (top-tier only)
+    # Note: "Indian Premier League" does not contain the substring "ipl"; use indian\s*premier + explicit ipl/tata
     r"\bipl\b", r"indian\s*premier", r"tata\s*ipl",
+    r"\bwpl\b", r"women'?s\s*premier", r"women\s+premier",
     r"\bbbl\b", r"big\s*bash",
     r"\bpsl\b", r"pakistan\s*super",
     r"\bcpl\b", r"caribbean\s*premier",
@@ -162,7 +164,21 @@ class MatchClassifier:
     def _is_known_team(self, team_name: str) -> bool:
         """Check if a team name is in the known teams database."""
         normalized = team_name.lower().strip()
-        return normalized in ALL_KNOWN_TEAMS
+        if normalized in ALL_KNOWN_TEAMS:
+            return True
+        # LotusBook often appends " W" / " Women" for women's franchise sides (WPL).
+        stripped = self._strip_womens_suffix(normalized)
+        return stripped != normalized and stripped in ALL_KNOWN_TEAMS
+
+    @staticmethod
+    def _strip_womens_suffix(normalized: str) -> str:
+        """Remove common women's-side suffixes so WPL teams match men's franchise aliases."""
+        n = normalized
+        for suffix in (" (w)", " w", " women", " w."):
+            if n.endswith(suffix):
+                n = n[: -len(suffix)].strip()
+                break
+        return n
 
     @property
     def stats(self) -> dict[str, int]:

@@ -130,8 +130,12 @@ class RewardFunction:
         net_away = abs(step_info.get("net_exposure_away", 0.0))
         # Naked exposure = max one-sided exposure as fraction of bankroll
         max_naked = max(net_home, net_away) / bankroll
-        if max_naked > 0.03:  # > 3% of bankroll on one side unhedged
-            reward -= (max_naked - 0.03) * self.naked_exposure_penalty
+        
+        # INCREASED THRESHOLD: Allow the agent to hold up to 15% bankroll risk 
+        # without penalty so it can ride profitable directional trends
+        if max_naked > 0.15:  
+            # REDUCED PENALTY SCALE: Don't panic, just gently discourage extreme risk
+            reward -= (max_naked - 0.15) * (self.naked_exposure_penalty * 0.5)
 
         # ============================================================
         # 6. PATIENCE — small reward for disciplined HOLD

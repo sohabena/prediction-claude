@@ -42,10 +42,10 @@ CIRCUIT_BREAKER_CONSECUTIVE = 5 # Consecutive losses to trigger halt
 # RL Agent Configuration
 # ============================================================
 
-OBSERVATION_SIZE = 48           # Feature vector dimension (lean expert trading set)
+OBSERVATION_SIZE = 50           # Feature vector dimension (lean expert trading set)
                                 # Groups: odds(7) + momentum(6) + market(5) +
                                 #   match_stats(7) + portfolio(5) + position(4) +
-                                #   volume(4) + bookmaker(4) + format(4) + timing(2)
+                                #   volume(4) + bookmaker(4) + format(4) + timing(2) + match_momentum(2)
 ACTION_SPACE_SIZE = 9           # Number of discrete actions (HOLD + 4 BACK + 4 LAY)
 SMALL_STAKE_PERCENT = 0.01     # 1% of bankroll
 LARGE_STAKE_PERCENT = 0.03     # 3% of bankroll

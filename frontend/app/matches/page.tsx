@@ -57,6 +57,7 @@ interface TrainingMatch {
   auto_approved: boolean;
   approved_at: string | null;
   created_at: string | null;
+  match_start_time: string | null;
   tick_count: number;
 }
 
@@ -314,27 +315,48 @@ export default function MatchesPage() {
         </div>
       </div>
 
-      {/* View tabs: Scrape Approval vs Training Approval */}
-      <div className="flex gap-1 mb-4 bg-zinc-800/50 p-1 rounded-lg w-fit">
+      {/* View tabs and actions */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
+        <div className="flex gap-1 bg-zinc-800/50 p-1 rounded-lg w-fit">
+          <button
+            onClick={() => setViewTab("scrape")}
+            className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+              viewTab === "scrape"
+                ? "bg-blue-600 text-white"
+                : "text-zinc-400 hover:text-zinc-200"
+            }`}
+          >
+            Step 1: Scrape Approval
+          </button>
+          <button
+            onClick={() => setViewTab("training")}
+            className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+              viewTab === "training"
+                ? "bg-indigo-600 text-white"
+                : "text-zinc-400 hover:text-zinc-200"
+            }`}
+          >
+            Step 2: Training Approval
+          </button>
+        </div>
+        
         <button
-          onClick={() => setViewTab("scrape")}
-          className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
-            viewTab === "scrape"
-              ? "bg-blue-600 text-white"
-              : "text-zinc-400 hover:text-zinc-200"
-          }`}
+          onClick={async () => {
+            if (!confirm("Delete all old matches that have 0 collected ticks? This will not delete matches scheduled for today.")) return;
+            try {
+              const res = await fetch(`${API_BASE}/matches/cleanup/empty`, { method: "DELETE" });
+              if (!res.ok) throw new Error("Failed to cleanup matches");
+              const data = await res.json();
+              alert(`Successfully deleted ${data.deleted_count} empty matches.`);
+              refresh();
+            } catch (err) {
+              console.error(err);
+              alert("Error cleaning up matches.");
+            }
+          }}
+          className="px-4 py-2 text-sm font-medium bg-zinc-800 hover:bg-red-900/50 text-red-400 rounded-md transition-colors border border-red-500/20"
         >
-          Step 1: Scrape Approval
-        </button>
-        <button
-          onClick={() => setViewTab("training")}
-          className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
-            viewTab === "training"
-              ? "bg-indigo-600 text-white"
-              : "text-zinc-400 hover:text-zinc-200"
-          }`}
-        >
-          Step 2: Training Approval
+          Cleanup Empty Matches
         </button>
       </div>
 
@@ -416,11 +438,20 @@ export default function MatchesPage() {
                             ? "Awaiting approval"
                             : "Skipped"}
                       </span>
-                      <span>
-                        {match.created_at
-                          ? new Date(match.created_at).toLocaleDateString()
-                          : "—"}
-                      </span>
+                      <div className="flex flex-col items-end">
+                        {match.match_start_time && (
+                          <span suppressHydrationWarning className="text-amber-500/80 mb-0.5">
+                            Starts: {new Date(match.match_start_time).toLocaleDateString('en-GB', {
+                              day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'
+                            })}
+                          </span>
+                        )}
+                        <span suppressHydrationWarning>
+                          {match.created_at
+                            ? new Date(match.created_at).toLocaleDateString()
+                            : "—"}
+                        </span>
+                      </div>
                     </div>
 
                     {/* Action buttons */}

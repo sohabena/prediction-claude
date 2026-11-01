@@ -4,7 +4,7 @@ Uses DOM polling with optional WebSocket interception.
 
 Tailored to LotusBook's Tailwind CSS grid layout:
   - .eventHeadName containers group matches by competition
-  - a#inPlayTeamName links contain team names
+  - Match links use a[href*="/cricket/"][href*="vs"] (site dropped id=inPlayTeamName)
   - Odds in sibling col-span-6 divs with back/lay cells
 """
 
@@ -26,13 +26,15 @@ logger = setup_logging("scraper_worker")
 
 # JavaScript to extract all match data from LotusBook's cricket page.
 # This runs in the browser context and returns structured match data.
-LOTUSBOOK_EXTRACT_JS = """
+LOTUSBOOK_EXTRACT_JS = r"""
 () => {
     const results = [];
 
-    // Find every match link on the cricket page.
-    // Each match is an <a id="inPlayTeamName"> with href containing "vs".
-    const matchLinks = document.querySelectorAll('a#inPlayTeamName');
+    // Match links: historically a#inPlayTeamName; current LotusBook uses plain <a> with
+    // href /cricket/{Team%20vs%20Team}/... and no id (verified Mar 2026).
+    const matchLinks = document.querySelectorAll(
+        'a[href*="/cricket/"][href*="vs"]'
+    );
 
     for (const link of matchLinks) {
         try {
@@ -42,100 +44,77 @@ LOTUSBOOK_EXTRACT_JS = """
             if (!href.includes('vs')) continue;
 
             // --- Team names ---
-            // Team names are in span.text-text_color_primary1 with direct text
+            let teams = [];
             const teamSpans = link.querySelectorAll(
-                'span[class*="text-text_color_primary1"]'
+                'span[class*="text_color_primary"], span[class*="text-text_color_primary"]'
             );
-            const teams = [];
             for (const span of teamSpans) {
                 const t = span.textContent.trim();
-                if (t && t.length > 1) teams.push(t);
+                // Exclude the date/time span (primary1) and LIVE badge
+                if (t && t.length > 1 && !/^LIVE$/i.test(t) && !span.className.includes('primary1')) {
+                    teams.push(t);
+                }
+            }
+
+            function parseTeamsFromHref(hrefStr) {
+                try {
+                    const m = hrefStr.match(/\/cricket\/([^/?#]+)/i);
+                    if (!m) return [];
+                    const seg = decodeURIComponent(m[1].replace(/\+/g, ' '));
+                    const parts = seg.split(/\s+vs\s+|-vs-/i);
+                    if (parts.length >= 2) {
+                        return [parts[0].trim(), parts[1].trim()];
+                    }
+                } catch (e) {}
+                return [];
+            }
+            function parseTeamsFromLinkText(el) {
+                const raw = (el.textContent || '').trim().replace(/^LIVE\s*/i, '').trim();
+                const parts = raw.split(/\s+vs\s+|-vs-/i);
+                if (parts.length >= 2) {
+                    return [parts[0].trim(), parts[1].trim()];
+                }
+                return [];
+            }
+            if (teams.length < 2) {
+                const fromHref = parseTeamsFromHref(href);
+                if (fromHref.length >= 2) teams = fromHref;
+            }
+            if (teams.length < 2) {
+                const fromText = parseTeamsFromLinkText(link);
+                if (fromText.length >= 2) teams = fromText;
             }
             if (teams.length < 2) continue;
 
             // --- Match ID from URL ---
-            // URL format: /cricket/{name}%20vs%20{name}/{type}/{matchId}
             const urlParts = href.split('/');
             const lotusId = urlParts[urlParts.length - 1] || '';
 
             // --- Live / time detection ---
-            // The parent row div contains an #inPlayTime span sibling
-            const rowDiv = link.parentElement;  // col-span-6 grid grid-cols-7
             let isLive = false;
             let timeText = '';
             let scoreText = '';
             let scheduledTime = '';
 
+            // 1. Check for scheduled time in primary1 span
+            const scheduledTimeEl = link.querySelector('span[class*="primary1"]');
+            if (scheduledTimeEl) {
+                const raw = scheduledTimeEl.textContent.trim();
+                if (/today|tomorrow|\d{1,2}[-/]\d{1,2}/i.test(raw)) {
+                    scheduledTime = raw;
+                    isLive = false;
+                }
+            }
+
+            // 2. Check for live indicators in sibling #inPlayTime
+            const rowDiv = link.parentElement;
             if (rowDiv) {
                 const timeEl = rowDiv.querySelector('#inPlayTime, [id="inPlayTime"]');
                 if (timeEl) {
                     const raw = timeEl.textContent.trim();
-                    timeText = raw;
-
-                    // === PRIORITY 1: Definitive LIVE indicators ===
-                    // These ALWAYS win, even if the text also contains a date.
-                    // On LotusBook, #inPlayTime textContent can include both
-                    // a date AND a nested #inPlay "LIVE" badge, so we must
-                    // check live signals BEFORE scheduled patterns.
-
-                    // Check for #inPlay LIVE badge element
-                    let hasLiveBadge = false;
-                    const liveEl = timeEl.querySelector('#inPlay, [id="inPlay"]');
-                    if (liveEl) {
-                        const liveText = liveEl.textContent.trim().toUpperCase();
-                        if (liveText.includes('LIVE') || liveEl.querySelector('[class*="animate"]') || liveEl.querySelector('[class*="pulse"]') || liveEl.querySelector('[class*="blink"]')) {
-                            hasLiveBadge = true;
-                        }
-                    }
-
-                    // Score pattern like "45/2" or "123/5" — definitive live signal
-                    const hasScorePattern = /\\d+\\/\\d/.test(raw);
-                    if (hasScorePattern) {
-                        scoreText = raw;
-                    }
-
-                    if (hasLiveBadge || hasScorePattern) {
-                        // Definitive live signal found — mark live regardless of date text
+                    if (raw.includes('LIVE') || timeEl.querySelector('#inPlay')) {
                         isLive = true;
-                    } else {
-                        // === PRIORITY 2: Section-aware detection (fallback) ===
-                        // No live signal found — check if scheduled/upcoming.
-
-                        // Walk up DOM to find section header ("In Play" vs "Upcoming Events")
-                        let inUpcomingSection = false;
-                        let ancestor = link.closest('.eventHeadName') || link.parentElement;
-                        while (ancestor && ancestor !== document.body) {
-                            const headerText = ancestor.textContent || '';
-                            if (/upcoming\\s*events?/i.test(headerText.substring(0, 200))) {
-                                const sectionHeaders = ancestor.querySelectorAll('h1, h2, h3, h4, h5, h6, [class*="header"], [class*="title"], [class*="heading"]');
-                                for (const hdr of sectionHeaders) {
-                                    if (/upcoming/i.test(hdr.textContent)) {
-                                        inUpcomingSection = true;
-                                        break;
-                                    }
-                                }
-                                if (!inUpcomingSection) {
-                                    const directText = Array.from(ancestor.childNodes)
-                                        .filter(n => n.nodeType === 3)
-                                        .map(n => n.textContent.trim())
-                                        .join('');
-                                    if (/upcoming/i.test(directText)) {
-                                        inUpcomingSection = true;
-                                    }
-                                }
-                            }
-                            if (inUpcomingSection) break;
-                            ancestor = ancestor.parentElement;
-                        }
-
-                        // Date/time patterns for SCHEDULED matches
-                        const scheduledPattern = /tomorrow|\\d{1,2}[-/]\\d{1,2}[-/]\\d{2,4}/i;
-                        const hasScheduledTime = scheduledPattern.test(raw);
-
-                        if (inUpcomingSection || hasScheduledTime) {
-                            isLive = false;
-                            scheduledTime = raw;
-                        }
+                        timeText = raw;
                     }
                 }
             }
@@ -150,7 +129,7 @@ LOTUSBOOK_EXTRACT_JS = """
                     rowDiv.parentElement,
                     link,
                 ];
-                const scorePattern = /(\\d{1,3})\\/(\\d{1,2})(?:\\s*\\(?([\\d.]+)\\)?)?/;
+                const scorePattern = /(\d{1,3})\/(\d{1,2})(?:\s*\(?([\d.]+)\)?)?/;
                 for (const area of searchAreas) {
                     if (!area || scoreText) break;
                     // Check all text-containing elements for score patterns
@@ -168,6 +147,12 @@ LOTUSBOOK_EXTRACT_JS = """
                 }
             }
 
+            // --- LIVE: "LIVE" prefix on the team link (some builds omit #inPlayTime here) ---
+            const linkTextFull = (link.textContent || '').trim();
+            if (/^LIVE/i.test(linkTextFull)) {
+                isLive = true;
+            }
+
             // --- Competition name ---
             // Walk up to the .eventHeadName parent to find competition
             let competition = '';
@@ -175,24 +160,50 @@ LOTUSBOOK_EXTRACT_JS = """
             if (container) {
                 // The first link in the container that has a competition icon
                 const compLink = container.querySelector(
-                    'a#inPlayTeamName[href*="/cricket/"]:not([href*="vs"])'
+                    'a[href*="/cricket/"]:not([href*="vs"])'
                 );
                 if (compLink) {
                     // Clean: remove emoji prefix
-                    competition = compLink.textContent.trim().replace(/^[\\u{1F300}-\\u{1FAFF}\\u{2600}-\\u{27BF}]+/u, '').trim();
+                    competition = compLink.textContent.trim().replace(/^[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]+/u, '').trim();
+                }
+                if (!competition) {
+                    const ct = (container.textContent || '').substring(0, 1500);
+                    if (/Indian Premier League|Tata\s*IPL|\bIPL\s*20/i.test(ct)) {
+                        competition = 'Indian Premier League';
+                    }
                 }
             }
 
             // --- Odds extraction ---
-            // The odds are in the nextElementSibling of the parent row div
+            // Odds usually sit in the next sibling of the match row; if the <a> is nested
+            // deeper, walk up until we find a sibling that contains back/lay cells.
+            let oddsDiv = null;
+            if (rowDiv && rowDiv.nextElementSibling) {
+                const cand = rowDiv.nextElementSibling;
+                if (cand.querySelector('[class*="backBtnBg"], [class*="layBtnBg"]')) {
+                    oddsDiv = cand;
+                }
+            }
+            if (!oddsDiv) {
+                let w = link;
+                for (let depth = 0; depth < 12 && w; depth++) {
+                    const sib = w.nextElementSibling;
+                    if (sib && sib.querySelector &&
+                        sib.querySelector('[class*="backBtnBg"], [class*="layBtnBg"]')) {
+                        oddsDiv = sib;
+                        break;
+                    }
+                    w = w.parentElement;
+                }
+            }
+
             let back_home = null, lay_home = null;
             let back_draw = null, lay_draw = null;
             let back_away = null, lay_away = null;
             let volume_back_home = null, volume_lay_home = null;
             let volume_back_away = null, volume_lay_away = null;
 
-            if (rowDiv && rowDiv.nextElementSibling) {
-                const oddsDiv = rowDiv.nextElementSibling;
+            if (oddsDiv) {
 
                 // Inside the odds div, find all individual cells.
                 // Structure: 3 x col-span-4 groups (Home/1, Draw/X, Away/2)
@@ -265,40 +276,46 @@ LOTUSBOOK_EXTRACT_JS = """
                     return { odds, volume };
                 }
 
-                // Map cells: 0=back_1, 1=lay_1, 2=back_X, 3=lay_X, 4=back_2, 5=lay_2
-                if (cells.length >= 2) {
-                    const c0 = parseCell(cells[0]);
-                    const c1 = parseCell(cells[1]);
-                    back_home = c0.odds;
-                    volume_back_home = c0.volume;
-                    lay_home = c1.odds;
-                    volume_lay_home = c1.volume;
-                }
-                if (cells.length >= 4) {
-                    const c2 = parseCell(cells[2]);
-                    const c3 = parseCell(cells[3]);
-                    back_draw = c2.odds;
-                    lay_draw = c3.odds;
-                }
-                if (cells.length >= 6) {
-                    const c4 = parseCell(cells[4]);
-                    const c5 = parseCell(cells[5]);
-                    back_away = c4.odds;
-                    volume_back_away = c4.volume;
-                    lay_away = c5.odds;
-                    volume_lay_away = c5.volume;
-                }
-                // If only 4 cells (no draw market, common in cricket):
-                // cells are: back_1, lay_1, back_2, lay_2
-                if (cells.length === 4) {
-                    const c2 = parseCell(cells[2]);
-                    const c3 = parseCell(cells[3]);
-                    back_away = c2.odds;
-                    volume_back_away = c2.volume;
-                    lay_away = c3.odds;
-                    volume_lay_away = c3.volume;
-                    back_draw = null;
-                    lay_draw = null;
+                // Safest parsing: split backs and lays explicitly
+                const backs = Array.from(oddsDiv.querySelectorAll('[class*="backBtnBg"]'));
+                const lays = Array.from(oddsDiv.querySelectorAll('[class*="layBtnBg"]'));
+
+                if (backs.length > 0 && lays.length > 0) {
+                    let rCount = 2; // Default to Home, Away
+                    let cCount = 1; // Default to 1 col per runner
+                    
+                    // Heuristics for LotusBook layouts
+                    if (backs.length === 3 || backs.length === 9) rCount = 3;
+                    if (backs.length === 6 || backs.length === 9) cCount = 3;
+                    if (backs.length >= 12) { rCount = 2; cCount = 3; } // Assume 2 teams, 3 cols, ignore rest
+                    
+                    let hIdx = 0;
+                    let aIdx = rCount === 3 ? 2 : 1; // Away is last if 3 runners
+                    let dIdx = rCount === 3 ? 1 : -1; // Draw is middle if 3 runners
+                    
+                    // Helper to safely get from array
+                    function getCellSafely(arr, idx) {
+                        return idx >= 0 && idx < arr.length ? parseCell(arr[idx]) : {odds: null, volume: null};
+                    }
+                    
+                    // In Backs: Best odds is the right-most cell (index cCount-1)
+                    // In Lays: Best odds is the left-most cell (index 0)
+                    const homeB = getCellSafely(backs, hIdx * cCount + cCount - 1);
+                    const homeL = getCellSafely(lays, hIdx * cCount);
+                    back_home = homeB.odds; volume_back_home = homeB.volume;
+                    lay_home = homeL.odds; volume_lay_home = homeL.volume;
+                    
+                    const awayB = getCellSafely(backs, aIdx * cCount + cCount - 1);
+                    const awayL = getCellSafely(lays, aIdx * cCount);
+                    back_away = awayB.odds; volume_back_away = awayB.volume;
+                    lay_away = awayL.odds; volume_lay_away = awayL.volume;
+                    
+                    if (dIdx !== -1) {
+                        const drawB = getCellSafely(backs, dIdx * cCount + cCount - 1);
+                        const drawL = getCellSafely(lays, dIdx * cCount);
+                        back_draw = drawB.odds;
+                        lay_draw = drawL.odds;
+                    }
                 }
             }
 

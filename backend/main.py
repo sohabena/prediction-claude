@@ -62,6 +62,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Prometheus metrics (graceful no-op if prometheus_client not installed)
+from backend.observability.metrics import add_metrics_middleware
+add_metrics_middleware(app)
+
 # Include routers
 app.include_router(health.router, prefix="/api", tags=["Health"])
 app.include_router(matches.router, prefix="/api/matches", tags=["Matches"])

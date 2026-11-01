@@ -15,7 +15,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from shared.constants import VALID_ODDS_MAX, VALID_ODDS_MIN
+from shared.constants import FRANCHISE_TEAMS, VALID_ODDS_MAX, VALID_ODDS_MIN
 from shared.logging import setup_logging
 from shared.schemas import OddsEvent
 
@@ -63,13 +63,17 @@ class LotusBookParser:
                     logger.warning("missing_team_names", raw=str(raw)[:200])
                     continue
 
+                competition = self._infer_competition_if_empty(
+                    team_home, team_away, str(raw.get("competition", "") or "").strip()
+                )
+
                 # Prefer LotusBook URL ID for stable match identification
                 lotus_id = raw.get("lotus_id", "")
                 if lotus_id:
                     match_id = f"lb_{lotus_id}"
                 else:
                     match_id = self._generate_match_id(
-                        team_home, team_away, raw.get("competition", "")
+                        team_home, team_away, competition
                     )
 
                 event = OddsEvent(
@@ -77,7 +81,7 @@ class LotusBookParser:
                     timestamp=now,
                     team_home=team_home,
                     team_away=team_away,
-                    competition=raw.get("competition", ""),
+                    competition=competition,
                     back_home=self._parse_odds(raw.get("back_home")),
                     lay_home=self._parse_odds(raw.get("lay_home")),
                     back_draw=self._parse_odds(raw.get("back_draw")),
@@ -190,8 +194,8 @@ class LotusBookParser:
         2. Any present odds within valid range
         3. Back <= Lay where both exist (spread consistency)
         """
-        # Must have at least one back price
-        if event.back_home is None and event.back_away is None:
+        # Must have at least one back price OR a scheduled time
+        if event.back_home is None and event.back_away is None and event.scheduled_time is None:
             logger.debug("validation_fail_no_odds", match_id=event.match_id)
             return False
 
@@ -231,6 +235,24 @@ class LotusBookParser:
         except (ValueError, TypeError):
             return None
 
+    def _infer_competition_if_empty(
+        self, team_home: str, team_away: str, competition: str
+    ) -> str:
+        """When LotusBook omits the competition row, infer IPL from both franchise names."""
+        if competition:
+            return competition
+        ipl = FRANCHISE_TEAMS.get("IPL", set())
+
+        def franchise_key(name: str) -> str:
+            n = name.lower().strip()
+            if n.endswith(" w"):
+                n = n[:-2].strip()
+            return n
+
+        if franchise_key(team_home) in ipl and franchise_key(team_away) in ipl:
+            return "Indian Premier League"
+        return ""
+
     def _clean_team_name(self, name: str) -> str:
         """Normalize team name for consistency."""
         if not name:
@@ -257,6 +279,7 @@ class LotusBookParser:
             str(event.back_away), str(event.lay_away),
             str(event.back_draw), str(event.lay_draw),
             str(event.is_live),
+            str(event.scheduled_time),
         ]
         return "|".join(parts)
 
@@ -264,12 +287,73 @@ class LotusBookParser:
         """Parse a datetime from various formats."""
         if value is None:
             return None
+        from datetime import datetime, timedelta, timezone
         if isinstance(value, datetime):
-            return value
-        try:
-            return datetime.fromisoformat(str(value))
-        except (ValueError, TypeError):
+            return value.astimezone(timezone.utc) if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        
+        s = str(value).strip().lower()
+        if not s:
             return None
+            
+        from shared.logging import setup_logging
+        _logger = setup_logging("parser_debug")
+        _logger.debug("parsing_time", raw=s)
+        
+        try:
+            dt = datetime.fromisoformat(s)
+            return dt.astimezone(timezone.utc) if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+
+        try:
+            import re
+            ist_tz = timezone(timedelta(hours=5, minutes=30))
+            now_ist = datetime.now(ist_tz)
+            
+            # 1. Handle "Today at 5:30 PM" or "today 5:30 pm"
+            m = re.search(r"today(?:\s+at)?\s+(\d{1,2}):(\d{2})\s*(am|pm)?", s)
+            if m:
+                hour, minute, ampm = m.groups()
+                h = int(hour)
+                if ampm == "pm" and h < 12: h += 12
+                if ampm == "am" and h == 12: h = 0
+                dt = datetime(now_ist.year, now_ist.month, now_ist.day, h, int(minute), tzinfo=ist_tz)
+                return dt.astimezone(timezone.utc)
+
+            # 2. Handle "Tomorrow 9:00 AM" or "tomorrow 9:00 am"
+            m = re.search(r"tomorrow\s+(\d{1,2}):(\d{2})\s*(am|pm)?", s)
+            if m:
+                hour, minute, ampm = m.groups()
+                h = int(hour)
+                if ampm == "pm" and h < 12: h += 12
+                if ampm == "am" and h == 12: h = 0
+                target_date = now_ist.date() + timedelta(days=1)
+                dt = datetime(target_date.year, target_date.month, target_date.day, h, int(minute), tzinfo=ist_tz)
+                return dt.astimezone(timezone.utc)
+
+            # 3. Handle "21-04-2026 7:30 PM" or "21/04/2026 7:30 PM"
+            m = re.search(r"(\d{1,2})[-/](\d{1,2})[-/](\d{4})\s+(\d{1,2}):(\d{2})\s*(am|pm)?", s)
+            if m:
+                day, month, year, hour, minute, ampm = m.groups()
+                h = int(hour)
+                if ampm == "pm" and h < 12: h += 12
+                if ampm == "am" and h == 12: h = 0
+                dt = datetime(int(year), int(month), int(day), h, int(minute), tzinfo=ist_tz)
+                return dt.astimezone(timezone.utc)
+
+            # 4. Fallback for simpler "DD/MM HH:MM" if ever used
+            m = re.search(r"(\d{1,2})[-/](\d{1,2})(?:\s+(\d{1,2}):(\d{2}))?", s)
+            if m:
+                day, month, hour, minute = m.groups()
+                h = int(hour) if hour else 0
+                mi = int(minute) if minute else 0
+                dt = datetime(now_ist.year, int(month), int(day), h, mi, tzinfo=ist_tz)
+                return dt.astimezone(timezone.utc)
+
+        except Exception:
+            pass
+            
+        return None
 
     def _parse_volume(self, value: Any) -> float | None:
         """Parse a volume value, handling strings, floats, None."""

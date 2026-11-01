@@ -613,6 +613,130 @@ function Invoke-DbInit {
 }
 
 # ============================================================
+# DB-MIGRATE (Alembic)
+# ============================================================
+
+function Invoke-DbMigrate {
+    Write-Banner "Database Migration (Alembic)"
+    Set-Location $ProjectRoot
+
+    switch ($Service.ToLower()) {
+        "stamp" {
+            Write-Step "1/1" "Stamping existing DB as current..."
+            python -m alembic stamp head
+            Write-Ok "Database stamped at HEAD"
+        }
+        "generate" {
+            Write-Step "1/1" "Generating new migration..."
+            python -m alembic revision --autogenerate -m "auto_migration"
+            Write-Ok "Migration generated in alembic/versions/"
+        }
+        "history" {
+            Write-Step "1/1" "Migration history:"
+            python -m alembic history --verbose
+        }
+        "current" {
+            Write-Step "1/1" "Current revision:"
+            python -m alembic current
+        }
+        default {
+            Write-Step "1/1" "Running migrations to HEAD..."
+            python -m alembic upgrade head
+            Write-Ok "Database migrated to HEAD"
+        }
+    }
+}
+
+# ============================================================
+# MAINTAIN (log rotation + dead letter cleanup)
+# ============================================================
+
+function Invoke-Maintain {
+    Write-Banner "Maintenance Tasks" "Yellow"
+    Set-Location $ProjectRoot
+
+    # --- Log rotation ---
+    Write-Step "1/3" "Rotating logs..."
+    $logsDir = Join-Path $ProjectRoot "logs"
+    $archiveDir = Join-Path $logsDir "archive"
+    if (-not (Test-Path $archiveDir)) { New-Item -ItemType Directory -Path $archiveDir -Force | Out-Null }
+
+    $rotatedCount = 0
+    if (Test-Path $logsDir) {
+        $maxLogSizeKb = 5120  # 5 MB
+        $maxArchives = 10
+
+        foreach ($logFile in (Get-ChildItem $logsDir -File -Include "*.out","*.err","*.log" -Recurse | Where-Object { $_.DirectoryName -eq $logsDir })) {
+            if ($logFile.Length -gt ($maxLogSizeKb * 1024)) {
+                $ts = Get-Date -Format "yyyyMMdd_HHmmss"
+                $archiveName = "$($logFile.BaseName)_$ts$($logFile.Extension)"
+                Move-Item $logFile.FullName (Join-Path $archiveDir $archiveName)
+                New-Item -ItemType File -Path $logFile.FullName -Force | Out-Null
+                $rotatedCount++
+            }
+        }
+
+        # Prune old archives
+        $archives = Get-ChildItem $archiveDir -File | Sort-Object LastWriteTime -Descending
+        if ($archives.Count -gt $maxArchives) {
+            $archives | Select-Object -Skip $maxArchives | Remove-Item -Force
+        }
+    }
+    Write-Ok "Rotated $rotatedCount log file(s)"
+
+    # --- Dead letter cleanup ---
+    Write-Step "2/3" "Cleaning dead letters..."
+    $dlFile = Join-Path $ProjectRoot "dead_letters.jsonl"
+    $dlArchive = Join-Path $archiveDir "dead_letters"
+    if (-not (Test-Path $dlArchive)) { New-Item -ItemType Directory -Path $dlArchive -Force | Out-Null }
+
+    if (Test-Path $dlFile) {
+        $dlSize = (Get-Item $dlFile).Length
+        if ($dlSize -gt 0) {
+            $ts = Get-Date -Format "yyyyMMdd_HHmmss"
+            Copy-Item $dlFile (Join-Path $dlArchive "dead_letters_$ts.jsonl")
+            Clear-Content $dlFile
+            Write-Ok "Archived dead letters ($([math]::Round($dlSize/1024, 1)) KB)"
+
+            # Prune old dead letter archives
+            $dlArchives = Get-ChildItem $dlArchive -File | Sort-Object LastWriteTime -Descending
+            if ($dlArchives.Count -gt 5) {
+                $dlArchives | Select-Object -Skip 5 | Remove-Item -Force
+            }
+        }
+        else {
+            Write-Ok "Dead letter file is empty (no issues)"
+        }
+    }
+    else {
+        Write-Ok "No dead letter file (clean)"
+    }
+
+    # --- Stale PID cleanup ---
+    Write-Step "3/3" "Checking for stale PIDs..."
+    $pids = $null
+    if (Test-Path $PidFile) {
+        try { $pids = Get-Content $PidFile | ConvertFrom-Json } catch {}
+    }
+    if ($pids) {
+        $staleCount = 0
+        foreach ($svc in @("scraper", "orchestrator", "backend", "frontend")) {
+            $pidVal = $pids.$svc
+            if ($pidVal) {
+                $proc = Get-Process -Id $pidVal -ErrorAction SilentlyContinue
+                if (-not $proc) { $staleCount++ }
+            }
+        }
+        Write-Ok "$staleCount stale PID(s) found"
+    }
+    else {
+        Write-Ok "No PID file to check"
+    }
+
+    Write-Banner "Maintenance Complete" "Green"
+}
+
+# ============================================================
 # OPEN
 # ============================================================
 
@@ -777,16 +901,18 @@ function Invoke-Restore {
 # ============================================================
 
 switch ($Command.ToLower()) {
-    "start"   { Invoke-Start }
-    "stop"    { Invoke-Stop }
-    "status"  { Invoke-Status }
-    "logs"    { Invoke-Logs }
-    "restart" { Invoke-Restart }
-    "test"    { Invoke-Test }
-    "db-init" { Invoke-DbInit }
-    "open"    { Invoke-Open }
-    "orch"    { Invoke-OrchStatus }
-    "backup"  { Invoke-Backup }
-    "restore" { Invoke-Restore }
-    default   { Invoke-Status }
+    "start"      { Invoke-Start }
+    "stop"       { Invoke-Stop }
+    "status"     { Invoke-Status }
+    "logs"       { Invoke-Logs }
+    "restart"    { Invoke-Restart }
+    "test"       { Invoke-Test }
+    "db-init"    { Invoke-DbInit }
+    "db-migrate" { Invoke-DbMigrate }
+    "open"       { Invoke-Open }
+    "orch"       { Invoke-OrchStatus }
+    "backup"     { Invoke-Backup }
+    "restore"    { Invoke-Restore }
+    "maintain"   { Invoke-Maintain }
+    default      { Invoke-Status }
 }
