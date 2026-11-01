@@ -75,7 +75,7 @@ class SettlementEngine:
             BettingAction.LAY_HOME_LG, BettingAction.LAY_AWAY_LG,
         )
 
-        team_won = bet.team == winning_team
+        team_won = str(bet.team).strip().lower() == str(winning_team).strip().lower()
 
         if is_back:
             if team_won:

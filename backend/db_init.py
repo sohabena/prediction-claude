@@ -76,6 +76,30 @@ MIGRATION_STATEMENTS = [
         THEN ALTER TABLE match_training_status ADD COLUMN completeness FLOAT DEFAULT 0.0;
         END IF;
     END $$;""",
+    """DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name='match_results' AND column_name='closing_back_home')
+        THEN ALTER TABLE match_results ADD COLUMN closing_back_home FLOAT;
+        END IF;
+    END $$;""",
+    """DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name='match_results' AND column_name='closing_back_away')
+        THEN ALTER TABLE match_results ADD COLUMN closing_back_away FLOAT;
+        END IF;
+    END $$;""",
+    """DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name='match_results' AND column_name='closing_lay_home')
+        THEN ALTER TABLE match_results ADD COLUMN closing_lay_home FLOAT;
+        END IF;
+    END $$;""",
+    """DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name='match_results' AND column_name='closing_lay_away')
+        THEN ALTER TABLE match_results ADD COLUMN closing_lay_away FLOAT;
+        END IF;
+    END $$;""",
 ]
 
 INDEX_STATEMENTS = [

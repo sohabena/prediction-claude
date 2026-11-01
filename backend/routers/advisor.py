@@ -17,6 +17,7 @@ from shared.config import get_settings
 from shared.constants import (
     KEY_ADVISOR_SIGNALS,
     KEY_AGENT_STATE,
+    KEY_AGENT_VERSION,
     KEY_DRIFT_STATUS,
     KEY_ORCHESTRATOR_STATE,
     KEY_ORCHESTRATOR_STATS,
@@ -64,7 +65,11 @@ async def get_orchestrator_state() -> dict[str, Any]:
     try:
         redis = await get_redis()
         data = await redis.get_json(KEY_ORCHESTRATOR_STATE)
+        agent_ver_data = await redis.get_json(KEY_AGENT_VERSION)
         if data:
+            if isinstance(agent_ver_data, dict) and "version" in agent_ver_data:
+                data["model_version"] = max(data.get("model_version", 0), int(agent_ver_data["version"]))
+                data["strategy_name"] = agent_ver_data.get("strategy_name", "")
             return data
     except Exception as e:
         logger.error("orchestrator_state_error", error=str(e))

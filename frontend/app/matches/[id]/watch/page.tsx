@@ -94,9 +94,14 @@ export default function MatchWatchPage() {
   };
 
   const match = activeData?.matches?.find((m) => m.match_id === matchId);
-  const teamHome = match?.team_home ?? "—";
-  const teamAway = match?.team_away ?? "—";
-  const competition = match?.competition ?? "Unknown";
+  const bets = betsData?.bets ?? [];
+  const uniqueTeams = Array.from(new Set(bets.map((b) => b.team).filter(Boolean))) as string[];
+  const teamHome = match?.team_home ?? uniqueTeams[0] ?? (matchId.startsWith("cric_") ? "Team Home" : "—");
+  const teamAway = match?.team_away ?? uniqueTeams[1] ?? (matchId.startsWith("cric_") ? "Team Away" : "—");
+  const competition = match?.competition || (matchId.startsWith("cric_") ? "Official International Match" : matchId.startsWith("bf_") ? "Betfair Historical Series" : "Live Cricket Match");
+  
+  const totalMatchPnL = bets.reduce((acc, b) => acc + (b.profit_loss ?? 0), 0);
+  const settledBets = bets.filter((b) => b.settled_at);
 
   const currentState = orchState?.state ?? "accumulating";
   const isAgentReady =
@@ -106,7 +111,6 @@ export default function MatchWatchPage() {
   const isTraining = currentState === "online_training";
   const isGraduated = currentState === "graduated";
 
-  const bets = betsData?.bets ?? [];
 
   return (
     <div>
@@ -125,6 +129,17 @@ export default function MatchWatchPage() {
           <p className="text-zinc-400 text-sm">
             {teamHome} vs {teamAway} — {competition}
           </p>
+          <div className="flex gap-4 mt-2 text-xs">
+            <span className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 font-mono font-medium">
+              ID: {matchId}
+            </span>
+            <span className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300">
+              Total Bets: <b className="text-zinc-100">{bets.length}</b>
+            </span>
+            <span className={`px-2 py-0.5 rounded font-mono font-bold ${totalMatchPnL >= 0 ? "bg-emerald-950/60 text-emerald-400 border border-emerald-800/40" : "bg-red-950/60 text-red-400 border border-red-800/40"}`}>
+              Match P&L: {totalMatchPnL >= 0 ? "+$" : "-$"}{Math.abs(Math.round(totalMatchPnL)).toLocaleString()}
+            </span>
+          </div>
         </div>
         <button
           onClick={handleStopWatching}
@@ -190,18 +205,18 @@ export default function MatchWatchPage() {
                   </span>
                 </div>
                 <div className="text-right">
-                  <span className="text-sm">
-                    Stake: {bet.stake?.toFixed(0) ?? "—"}
+                  <span className="text-sm font-mono">
+                    Stake: ${Math.round(bet.stake ?? 0).toLocaleString()}
                   </span>
                   {bet.settled_at && (
-                    <div className="text-xs mt-0.5">
+                    <div className="text-xs mt-0.5 font-mono font-bold">
                       {bet.outcome === "win" ? (
                         <span className="text-emerald-400">
-                          Win +{bet.profit_loss?.toFixed(0) ?? "0"}
+                          WON +${Math.abs(Math.round(bet.profit_loss ?? 0)).toLocaleString()}
                         </span>
                       ) : bet.outcome === "loss" ? (
                         <span className="text-red-400">
-                          Loss {bet.profit_loss?.toFixed(0) ?? "0"}
+                          LOST -${Math.abs(Math.round(bet.profit_loss ?? 0)).toLocaleString()}
                         </span>
                       ) : (
                         <span className="text-zinc-500">—</span>

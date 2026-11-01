@@ -98,7 +98,7 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - SCRAPER_BETTING_SITE_URL=${SCRAPER_BETTING_SITE_URL:-https://lotusbook.site/cricket}
+      - SCRAPER_BETTING_SITE_URL=${SCRAPER_BETTING_SITE_URL:-https://lotusbook.cc/cricket}
       - SCRAPER_HEADLESS=${SCRAPER_HEADLESS:-true}
       - SCRAPER_POLL_INTERVAL=${SCRAPER_POLL_INTERVAL:-3}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}

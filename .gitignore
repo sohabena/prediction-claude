@@ -86,3 +86,8 @@ coverage.xml
 *.bak
 *.tmp
 *.temp
+
+# --- Large Data & Scratch ---
+data/
+scratch/
+frontend/tsconfig.tsbuildinfo

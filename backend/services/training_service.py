@@ -61,7 +61,6 @@ class TrainingService:
             result["progress"] = None
         try:
             result.update(await repo.get_training_summary())
-            return result
         except Exception as e:
             logger.error("training_summary_error", error=str(e))
         result.setdefault("total_timesteps", 0)
@@ -70,6 +69,17 @@ class TrainingService:
         result.setdefault("recent_roi", 0.0)
         result.setdefault("recent_sharpe", 0.0)
         result.setdefault("latest_version", "none")
+
+        if not result.get("latest_version") or result["latest_version"] == "none":
+            try:
+                from shared.constants import KEY_AGENT_VERSION
+                from shared.redis_client import get_redis
+                redis = await get_redis()
+                v_data = await redis.get_json(KEY_AGENT_VERSION)
+                if isinstance(v_data, dict) and "version" in v_data:
+                    result["latest_version"] = f"v{v_data['version']} (twoway_v3)"
+            except Exception:
+                pass
         return result
 
     @staticmethod

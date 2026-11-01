@@ -388,7 +388,7 @@ class MatchRepository:
                 # Logic for P&L calculation (sync with SettlementEngine)
                 if result_type == "win":
                     is_back = "BACK" in action
-                    team_won = (team == winner)
+                    team_won = (str(team).strip().lower() == str(winner).strip().lower())
                     
                     if is_back:
                         if team_won:

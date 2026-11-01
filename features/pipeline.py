@@ -1,12 +1,12 @@
 """
-Feature pipeline: computes the 48-dim observation vector from raw data.
+Feature pipeline: computes the 50-dim observation vector from raw data.
 
 Expert cricket-trading observation space — every feature is something a
 professional bettor actually looks at on their screen. No noise, no redundancy.
 
-Groups (48 total):
+Groups (50 total):
   1. Core Odds (7)       — prices, margin, spreads
-  2. Momentum (6)        — velocity, volatility, trend
+  2. Momentum (6)        — velocity, volatility, trend (zeroed on gap)
   3. Market Quality (5)  — spread dynamics, efficiency, staleness
   4. Match State (7)     — live status, overs, wickets, score, rates
   5. Portfolio (5)       — bankroll, exposure, positions, win rate
@@ -15,6 +15,7 @@ Groups (48 total):
   8. Bookmaker (4)       — pricing patterns the agent learns to read
   9. Format (4)          — T20i / ODI / Test / Franchise one-hot
   10. Timing (2)         — match elapsed %, tick freshness
+  11. Match Momentum (2) — recent score & wicket acceleration
 """
 
 from __future__ import annotations
@@ -52,7 +53,7 @@ class FeaturePipeline:
     Computes RL observation vector from raw data. DATA-ONLY approach.
 
     Input: match_id + latest OddsEvent + MatchContext + PortfolioState + position_state
-    Output: np.ndarray of shape (48,)
+    Output: np.ndarray of shape (50,)
 
     Every feature maps to something a professional cricket bettor
     actually monitors. No cyclical time encoding, no z-scores,
@@ -98,7 +99,7 @@ class FeaturePipeline:
         position_state: Optional[dict] = None,
     ) -> np.ndarray:
         """
-        Compute the full 48-feature observation vector.
+        Compute the full 50-feature observation vector.
 
         Args:
             match_id: Unique match identifier.
@@ -108,7 +109,7 @@ class FeaturePipeline:
             position_state: Optional dict with net exposure per team for hedging.
 
         Returns:
-            Normalized float32 array of shape (48,).
+            Normalized float32 array of shape (50,).
         """
         # Add event to history
         self.add_event(event)

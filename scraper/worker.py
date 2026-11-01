@@ -96,61 +96,39 @@ LOTUSBOOK_EXTRACT_JS = r"""
             let scoreText = '';
             let scheduledTime = '';
 
-            // 1. Check for scheduled time in primary1 span
-            const scheduledTimeEl = link.querySelector('span[class*="primary1"]');
-            if (scheduledTimeEl) {
-                const raw = scheduledTimeEl.textContent.trim();
+            // 1. Check for explicit inPlay badge inside link or child elements
+            const inPlayEl = link.querySelector('#inPlay, [id="inPlay"], [class*="inPlay"], [class*="in_play"]');
+            if (inPlayEl) {
+                isLive = true;
+                timeText = inPlayEl.textContent.trim();
+            } else if (/LIVE/i.test(link.textContent || '')) {
+                isLive = true;
+            }
+
+            // 2. Check for scheduled time in spans (e.g. "Today at 10:00 PM", "Tomorrow 12:15 PM")
+            const spans = link.querySelectorAll('span');
+            for (const span of spans) {
+                const raw = span.textContent.trim();
                 if (/today|tomorrow|\d{1,2}[-/]\d{1,2}/i.test(raw)) {
                     scheduledTime = raw;
-                    isLive = false;
+                    break;
                 }
             }
 
-            // 2. Check for live indicators in sibling #inPlayTime
-            const rowDiv = link.parentElement;
-            if (rowDiv) {
-                const timeEl = rowDiv.querySelector('#inPlayTime, [id="inPlayTime"]');
-                if (timeEl) {
-                    const raw = timeEl.textContent.trim();
-                    if (raw.includes('LIVE') || timeEl.querySelector('#inPlay')) {
-                        isLive = true;
-                        timeText = raw;
-                    }
-                }
+            // If scheduled time exists and no inPlay badge, it's upcoming (not live)
+            if (scheduledTime && !inPlayEl) {
+                isLive = false;
             }
 
-            // --- Enhanced score extraction ---
-            // Search multiple DOM locations for score data if not found above.
-            // LotusBook can show scores in various elements near the match row.
-            if (!scoreText && rowDiv) {
-                // Strategy 1: Look for score-related elements in the match row area
-                const searchAreas = [
-                    rowDiv,
-                    rowDiv.parentElement,
-                    link,
-                ];
-                const scorePattern = /(\d{1,3})\/(\d{1,2})(?:\s*\(?([\d.]+)\)?)?/;
-                for (const area of searchAreas) {
-                    if (!area || scoreText) break;
-                    // Check all text-containing elements for score patterns
-                    const allEls = area.querySelectorAll(
-                        'span, div, p, [class*="score"], [class*="Score"], [class*="run"], [class*="inning"]'
-                    );
-                    for (const el of allEls) {
-                        const t = el.textContent.trim();
-                        if (scorePattern.test(t) && t.length < 50) {
-                            scoreText = t;
-                            isLive = true;
-                            break;
-                        }
-                    }
+            // 3. Score extraction (e.g. 142/3 (18.2))
+            const scorePattern = /(\d{1,3})\/(\d{1,2})(?:\s*\(?([\d.]+)\)?)?/;
+            for (const span of spans) {
+                const t = span.textContent.trim();
+                if (scorePattern.test(t)) {
+                    scoreText = t;
+                    isLive = true;
+                    break;
                 }
-            }
-
-            // --- LIVE: "LIVE" prefix on the team link (some builds omit #inPlayTime here) ---
-            const linkTextFull = (link.textContent || '').trim();
-            if (/^LIVE/i.test(linkTextFull)) {
-                isLive = true;
             }
 
             // --- Competition name ---
@@ -175,21 +153,15 @@ LOTUSBOOK_EXTRACT_JS = r"""
             }
 
             // --- Odds extraction ---
-            // Odds usually sit in the next sibling of the match row; if the <a> is nested
-            // deeper, walk up until we find a sibling that contains back/lay cells.
-            let oddsDiv = null;
-            if (rowDiv && rowDiv.nextElementSibling) {
-                const cand = rowDiv.nextElementSibling;
-                if (cand.querySelector('[class*="backBtnBg"], [class*="layBtnBg"]')) {
-                    oddsDiv = cand;
-                }
-            }
-            if (!oddsDiv) {
+            // On lotusbook.cc, odds sit directly in link.nextElementSibling (col-span-6 lg:col-span-7 div).
+            let oddsDiv = link.nextElementSibling;
+            if (!oddsDiv || !oddsDiv.querySelector('button, [class*="backBtnBg"], [class*="layBtnBg"]')) {
                 let w = link;
-                for (let depth = 0; depth < 12 && w; depth++) {
+                oddsDiv = null;
+                for (let depth = 0; depth < 10 && w; depth++) {
                     const sib = w.nextElementSibling;
                     if (sib && sib.querySelector &&
-                        sib.querySelector('[class*="backBtnBg"], [class*="layBtnBg"]')) {
+                        sib.querySelector('button[data-odd-type], [class*="backBtnBg"], [class*="layBtnBg"]')) {
                         oddsDiv = sib;
                         break;
                     }
@@ -204,29 +176,11 @@ LOTUSBOOK_EXTRACT_JS = r"""
             let volume_back_away = null, volume_lay_away = null;
 
             if (oddsDiv) {
-
-                // Inside the odds div, find all individual cells.
-                // Structure: 3 x col-span-4 groups (Home/1, Draw/X, Away/2)
-                // Each col-span-4 has 2 cells (back, lay) with odds + volume spans.
-                //
-                // The cells have classes like bg-bg_color_backBtnBg / bg-bg_color_layBtnBg
-                // OR they might just be divs inside col-span-4 groups.
-                //
-                // Strategy: Get all leaf-level clickable cells in DOM order.
-                // They appear in order: back_1, lay_1, back_X, lay_X, back_2, lay_2
-                const cells = oddsDiv.querySelectorAll(
-                    '[class*="backBtnBg"], [class*="layBtnBg"]'
-                );
-
-                // Parse a cell: first span/div with a decimal number is the odds,
-                // second is the volume. Volume may have currency/abbreviation
-                // suffixes like '₹1.2L', '50K', '1,200', '$500'.
                 function parseVolume(txt) {
                     if (!txt) return null;
-                    const cleaned = txt.replace(/[₹$,\\s]/g, '').trim();
+                    const cleaned = txt.replace(/[₹$,\s]/g, '').trim();
                     if (!cleaned || cleaned === '-') return null;
-                    // Handle abbreviations: K=1000, L/Lac=100000, Cr=10000000
-                    const abbrevMatch = cleaned.match(/^([\\d.]+)\\s*(K|L|Lac|Cr|M)?$/i);
+                    const abbrevMatch = cleaned.match(/^([\d.]+)\s*(K|L|Lac|Cr|M)?$/i);
                     if (abbrevMatch) {
                         let val = parseFloat(abbrevMatch[1]);
                         const suffix = (abbrevMatch[2] || '').toUpperCase();
@@ -240,81 +194,83 @@ LOTUSBOOK_EXTRACT_JS = r"""
                     return isNaN(num) ? null : num;
                 }
 
-                function parseCell(cell) {
-                    if (!cell) return { odds: null, volume: null };
-                    const spans = cell.querySelectorAll('span');
+                function parseBtn(btn) {
+                    if (!btn) return { odds: null, volume: null };
+                    // 1. Try explicit data attributes (lotusbook.cc)
+                    const dataPrice = btn.getAttribute('data-price');
+                    const dataSize = btn.getAttribute('data-size');
+                    if (dataPrice !== null && dataPrice !== undefined) {
+                        let odds = parseFloat(dataPrice);
+                        let vol = dataSize ? parseFloat(dataSize) : null;
+                        if (!isNaN(odds) && odds > 0) {
+                            return { odds: odds, volume: (!isNaN(vol) && vol > 0) ? vol : null };
+                        }
+                    }
+                    // 2. Fallback: Parse spans or text
+                    const spans = btn.querySelectorAll('span');
                     let odds = null;
                     let volume = null;
                     for (const span of spans) {
                         const txt = span.textContent.trim();
                         if (!txt || txt === '-') continue;
                         const num = parseFloat(txt.replace(/,/g, ''));
-                        if (!isNaN(num)) {
-                            if (odds === null) {
-                                odds = num;
-                            } else if (volume === null) {
-                                volume = parseVolume(txt);
-                            }
+                        if (!isNaN(num) && num > 0) {
+                            if (odds === null) odds = num;
+                            else if (volume === null) volume = parseVolume(txt);
                         }
                     }
-                    // If spans didn't work, try parsing the full text
                     if (odds === null) {
-                        const fullText = cell.textContent.trim();
-                        const match = fullText.match(/^([\\d.]+)/);
-                        if (match) odds = parseFloat(match[1]);
-                    }
-                    // If still no volume, try finding it in a deeper child
-                    if (volume === null) {
-                        const volEls = cell.querySelectorAll(
-                            '[class*="vol"], [class*="Vol"], [class*="amount"], [class*="size"]'
-                        );
-                        for (const ve of volEls) {
-                            volume = parseVolume(ve.textContent.trim());
-                            if (volume !== null) break;
+                        const fullText = btn.textContent.trim();
+                        const match = fullText.match(/^([\d.]+)/);
+                        if (match) {
+                            const val = parseFloat(match[1]);
+                            if (!isNaN(val) && val > 0) odds = val;
                         }
                     }
                     return { odds, volume };
                 }
 
-                // Safest parsing: split backs and lays explicitly
-                const backs = Array.from(oddsDiv.querySelectorAll('[class*="backBtnBg"]'));
-                const lays = Array.from(oddsDiv.querySelectorAll('[class*="layBtnBg"]'));
+                // Check buttons inside oddsDiv
+                const buttons = Array.from(oddsDiv.querySelectorAll('button[data-odd-type]'));
+                if (buttons.length >= 6) {
+                    // Modern lotusbook.cc grid:
+                    // buttons[0..2] = Back Home, Back Draw, Back Away
+                    // buttons[3..5] = Lay Home, Lay Draw, Lay Away
+                    const bH = parseBtn(buttons[0]);
+                    const bD = parseBtn(buttons[1]);
+                    const bA = parseBtn(buttons[2]);
+                    const lH = parseBtn(buttons[3]);
+                    const lD = parseBtn(buttons[4]);
+                    const lA = parseBtn(buttons[5]);
 
-                if (backs.length > 0 && lays.length > 0) {
-                    let rCount = 2; // Default to Home, Away
-                    let cCount = 1; // Default to 1 col per runner
-                    
-                    // Heuristics for LotusBook layouts
-                    if (backs.length === 3 || backs.length === 9) rCount = 3;
-                    if (backs.length === 6 || backs.length === 9) cCount = 3;
-                    if (backs.length >= 12) { rCount = 2; cCount = 3; } // Assume 2 teams, 3 cols, ignore rest
-                    
-                    let hIdx = 0;
-                    let aIdx = rCount === 3 ? 2 : 1; // Away is last if 3 runners
-                    let dIdx = rCount === 3 ? 1 : -1; // Draw is middle if 3 runners
-                    
-                    // Helper to safely get from array
-                    function getCellSafely(arr, idx) {
-                        return idx >= 0 && idx < arr.length ? parseCell(arr[idx]) : {odds: null, volume: null};
-                    }
-                    
-                    // In Backs: Best odds is the right-most cell (index cCount-1)
-                    // In Lays: Best odds is the left-most cell (index 0)
-                    const homeB = getCellSafely(backs, hIdx * cCount + cCount - 1);
-                    const homeL = getCellSafely(lays, hIdx * cCount);
-                    back_home = homeB.odds; volume_back_home = homeB.volume;
-                    lay_home = homeL.odds; volume_lay_home = homeL.volume;
-                    
-                    const awayB = getCellSafely(backs, aIdx * cCount + cCount - 1);
-                    const awayL = getCellSafely(lays, aIdx * cCount);
-                    back_away = awayB.odds; volume_back_away = awayB.volume;
-                    lay_away = awayL.odds; volume_lay_away = awayL.volume;
-                    
-                    if (dIdx !== -1) {
-                        const drawB = getCellSafely(backs, dIdx * cCount + cCount - 1);
-                        const drawL = getCellSafely(lays, dIdx * cCount);
-                        back_draw = drawB.odds;
-                        lay_draw = drawL.odds;
+                    back_home = bH.odds; volume_back_home = bH.volume;
+                    back_draw = bD.odds;
+                    back_away = bA.odds; volume_back_away = bA.volume;
+
+                    lay_home = lH.odds; volume_lay_home = lH.volume;
+                    lay_draw = lD.odds;
+                    lay_away = lA.odds; volume_lay_away = lA.volume;
+                } else {
+                    // Fallback to class-based query
+                    const backs = Array.from(oddsDiv.querySelectorAll('[class*="backBtnBg"]'));
+                    const lays = Array.from(oddsDiv.querySelectorAll('[class*="layBtnBg"]'));
+                    if (backs.length > 0 && lays.length > 0) {
+                        const homeB = parseBtn(backs[0]);
+                        const homeL = parseBtn(lays[0]);
+                        back_home = homeB.odds; volume_back_home = homeB.volume;
+                        lay_home = homeL.odds; volume_lay_home = homeL.volume;
+
+                        const awayB = parseBtn(backs[backs.length - 1]);
+                        const awayL = parseBtn(lays[lays.length - 1]);
+                        back_away = awayB.odds; volume_back_away = awayB.volume;
+                        lay_away = awayL.odds; volume_lay_away = awayL.volume;
+
+                        if (backs.length >= 3 && lays.length >= 3) {
+                            const drawB = parseBtn(backs[1]);
+                            const drawL = parseBtn(lays[1]);
+                            back_draw = drawB.odds;
+                            lay_draw = drawL.odds;
+                        }
                     }
                 }
             }

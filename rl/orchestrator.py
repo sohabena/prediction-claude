@@ -274,6 +274,12 @@ class Orchestrator:
         """Check if an external actor changed our state in Redis."""
         try:
             redis = await get_redis()
+            agent_ver_data = await redis.get_json(KEY_AGENT_VERSION)
+            if isinstance(agent_ver_data, dict) and "version" in agent_ver_data:
+                agent_v = int(agent_ver_data["version"])
+                if agent_v > self._model_version:
+                    self._model_version = agent_v
+                    logger.info("model_version_synchronized", model_version=self._model_version)
             state_data = await redis.get_json(KEY_ORCHESTRATOR_STATE)
             if not state_data:
                 return False
@@ -284,7 +290,7 @@ class Orchestrator:
             if redis_state != self._state:
                 old = self._state
                 self._state = redis_state
-                self._model_version = state_data.get("model_version", self._model_version)
+                self._model_version = max(self._model_version, state_data.get("model_version", self._model_version))
                 logger.info("external_state_change_detected", from_state=old, to_state=redis_state)
                 _live_states = {OrchestratorState.ONLINE_TRAINING, OrchestratorState.VIRTUAL_TRADING}
                 if old in _live_states and redis_state not in _live_states:
@@ -441,12 +447,15 @@ class Orchestrator:
     async def _restore_state(self) -> None:
         try:
             redis = await get_redis()
+            agent_ver_data = await redis.get_json(KEY_AGENT_VERSION)
+            champion_v = int(agent_ver_data["version"]) if isinstance(agent_ver_data, dict) and "version" in agent_ver_data else 0
+
             state_data = await redis.get_json(KEY_ORCHESTRATOR_STATE)
             if state_data:
                 saved_state = state_data.get("state")
                 if saved_state in [s.value for s in OrchestratorState]:
                     self._state = OrchestratorState(saved_state)
-                    self._model_version = state_data.get("model_version", 0)
+                    self._model_version = max(champion_v, state_data.get("model_version", 0))
                     logger.info("state_restored", state=self._state, model_version=self._model_version)
                     if self._state in (
                         OrchestratorState.ONLINE_TRAINING,

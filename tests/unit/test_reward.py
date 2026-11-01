@@ -60,7 +60,7 @@ class TestRewardFunction:
         step_info = {
             "bankroll": 100000,
             "odds_change": 0.0,
-            "bets_last_hour": 10,  # Over 3 threshold
+            "bets_last_hour": 35,  # Over 3 threshold
             "exposure_pct": 0.0,
             "current_drawdown": 0.0,
         }

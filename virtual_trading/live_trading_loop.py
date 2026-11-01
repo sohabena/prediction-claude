@@ -530,7 +530,7 @@ class LiveVirtualTradingLoop:
                         pnl = 0.0
                     else:
                         is_back = "BACK" in action_str
-                        team_won = (team == winner)
+                        team_won = (str(team).strip().lower() == str(winner).strip().lower())
 
                         if is_back:
                             if team_won:

@@ -40,6 +40,13 @@ param(
 $ProjectRoot = $PSScriptRoot
 $PidFile = Join-Path $ProjectRoot ".phoenix_pids.json"
 
+# Resolve Python executable reliably on Windows
+$PythonExe = "python"
+if (Test-Path "C:\Python313\python.exe") {
+    $PythonExe = "C:\Python313\python.exe"
+    $env:PYTHONHOME = "C:\Users\sohai\AppData\Local\Programs\Python\Python313"
+}
+
 # ============================================================
 # Helpers
 # ============================================================
@@ -172,7 +179,7 @@ function Invoke-Start {
     $env:POSTGRES_PASSWORD = "phoenix_secure_2026"
     $env:PYTHONPATH = $ProjectRoot
     try {
-        $null = python -m backend.db_init 2>&1
+        $null = & $PythonExe -m backend.db_init 2>&1
         Write-Ok "Database schema initialized"
     }
     catch {
@@ -197,19 +204,19 @@ function Invoke-Start {
     Get-ChildItem -Path $ProjectRoot -Filter "__pycache__" -Recurse -Directory -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
     # NOTE: No --reload flag. Reload spawns child processes that become zombies on Windows
     # when the parent is killed. For dev, restart manually: .\phoenix.ps1 restart -Service backend
-    $backendProc = Start-Process -FilePath "python" -ArgumentList "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8001" -WorkingDirectory $ProjectRoot -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logsDir "backend.out") -RedirectStandardError (Join-Path $logsDir "backend.err")
+    $backendProc = Start-Process -FilePath $PythonExe -ArgumentList "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8001" -WorkingDirectory $ProjectRoot -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logsDir "backend.out") -RedirectStandardError (Join-Path $logsDir "backend.err")
     Start-Sleep -Seconds 3
     Write-Ok "Backend API started (PID $($backendProc.Id))"
 
     # --- Scraper ---
     Write-Step "5/8" "Starting Scraper..."
     $env:SCRAPER_HEADLESS = "true"
-    $scraperProc = Start-Process -FilePath "python" -ArgumentList "-m", "scraper.manager" -WorkingDirectory $ProjectRoot -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logsDir "scraper.out") -RedirectStandardError (Join-Path $logsDir "scraper.err")
+    $scraperProc = Start-Process -FilePath $PythonExe -ArgumentList "-m", "scraper.manager" -WorkingDirectory $ProjectRoot -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logsDir "scraper.out") -RedirectStandardError (Join-Path $logsDir "scraper.err")
     Write-Ok "Scraper started (PID $($scraperProc.Id))"
 
     # --- Orchestrator ---
     Write-Step "6/8" "Starting Orchestrator (autonomous training)..."
-    $orchestratorProc = Start-Process -FilePath "python" -ArgumentList "-m", "rl.orchestrator" -WorkingDirectory $ProjectRoot -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logsDir "orchestrator.out") -RedirectStandardError (Join-Path $logsDir "orchestrator.err")
+    $orchestratorProc = Start-Process -FilePath $PythonExe -ArgumentList "-m", "rl.orchestrator" -WorkingDirectory $ProjectRoot -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logsDir "orchestrator.out") -RedirectStandardError (Join-Path $logsDir "orchestrator.err")
     Write-Ok "Orchestrator started (PID $($orchestratorProc.Id))"
 
     # --- Frontend ---
@@ -535,14 +542,14 @@ function Invoke-Restart {
             "backend" {
                 $env:PHOENIX_PROJECT_ROOT = $ProjectRoot
                 Get-ChildItem -Path $ProjectRoot -Filter "__pycache__" -Recurse -Directory -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-                $newProc = Start-Process -FilePath "python" -ArgumentList "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8001" -WorkingDirectory $ProjectRoot -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logsDir "backend.out") -RedirectStandardError (Join-Path $logsDir "backend.err")
+                $newProc = Start-Process -FilePath $PythonExe -ArgumentList "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8001" -WorkingDirectory $ProjectRoot -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logsDir "backend.out") -RedirectStandardError (Join-Path $logsDir "backend.err")
             }
             "scraper" {
                 $env:SCRAPER_HEADLESS = "true"
-                $newProc = Start-Process -FilePath "python" -ArgumentList "-m", "scraper.manager" -WorkingDirectory $ProjectRoot -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logsDir "scraper.out") -RedirectStandardError (Join-Path $logsDir "scraper.err")
+                $newProc = Start-Process -FilePath $PythonExe -ArgumentList "-m", "scraper.manager" -WorkingDirectory $ProjectRoot -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logsDir "scraper.out") -RedirectStandardError (Join-Path $logsDir "scraper.err")
             }
             "orchestrator" {
-                $newProc = Start-Process -FilePath "python" -ArgumentList "-m", "rl.orchestrator" -WorkingDirectory $ProjectRoot -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logsDir "orchestrator.out") -RedirectStandardError (Join-Path $logsDir "orchestrator.err")
+                $newProc = Start-Process -FilePath $PythonExe -ArgumentList "-m", "rl.orchestrator" -WorkingDirectory $ProjectRoot -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logsDir "orchestrator.out") -RedirectStandardError (Join-Path $logsDir "orchestrator.err")
             }
             "frontend" {
                 $port3000 = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -597,7 +604,7 @@ function Invoke-Test {
     Write-Host ""
 
     Set-Location $ProjectRoot
-    python -m pytest $testPath -v --tb=short
+    & $PythonExe -m pytest $testPath -v --tb=short
 }
 
 # ============================================================
@@ -608,7 +615,7 @@ function Invoke-DbInit {
     Write-Banner "Database Initialization"
 
     Set-Location $ProjectRoot
-    python -m backend.db_init
+    & $PythonExe -m backend.db_init
     Write-Ok "Database schema initialized"
 }
 
@@ -623,25 +630,25 @@ function Invoke-DbMigrate {
     switch ($Service.ToLower()) {
         "stamp" {
             Write-Step "1/1" "Stamping existing DB as current..."
-            python -m alembic stamp head
+            & $PythonExe -m alembic stamp head
             Write-Ok "Database stamped at HEAD"
         }
         "generate" {
             Write-Step "1/1" "Generating new migration..."
-            python -m alembic revision --autogenerate -m "auto_migration"
+            & $PythonExe -m alembic revision --autogenerate -m "auto_migration"
             Write-Ok "Migration generated in alembic/versions/"
         }
         "history" {
             Write-Step "1/1" "Migration history:"
-            python -m alembic history --verbose
+            & $PythonExe -m alembic history --verbose
         }
         "current" {
             Write-Step "1/1" "Current revision:"
-            python -m alembic current
+            & $PythonExe -m alembic current
         }
         default {
             Write-Step "1/1" "Running migrations to HEAD..."
-            python -m alembic upgrade head
+            & $PythonExe -m alembic upgrade head
             Write-Ok "Database migrated to HEAD"
         }
     }

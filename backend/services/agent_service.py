@@ -24,6 +24,13 @@ class AgentService:
         try:
             redis = await get_redis()
             orch_data = await redis.get_json(KEY_ORCHESTRATOR_STATE)
+            version_data = await redis.get_json(KEY_AGENT_VERSION)
+            active_version = "3"
+            if isinstance(version_data, dict) and "version" in version_data:
+                active_version = str(version_data["version"])
+            elif isinstance(orch_data, dict) and orch_data.get("model_version"):
+                active_version = str(orch_data["model_version"])
+
             if isinstance(orch_data, dict):
                 state_map = {
                     "accumulating": AgentState.PAUSED.value,
@@ -36,18 +43,17 @@ class AgentService:
                     "state": state_map.get(
                         orch_data.get("state", ""), AgentState.PAUSED.value,
                     ),
-                    "version": str(orch_data.get("model_version", "none")),
+                    "version": active_version,
+                    "strategy_name": version_data.get("strategy_name", "Active Two-Way Rate Trading") if isinstance(version_data, dict) else "Active Two-Way Rate Trading",
                     "orchestrator_state": orch_data.get("state", "unknown"),
                 }
             state_data = await redis.get_json(KEY_AGENT_STATE)
-            version_data = await redis.get_json(KEY_AGENT_VERSION)
             return {
                 "state": state_data.get("mode", AgentState.PAUSED.value)
                     if isinstance(state_data, dict)
                     else (state_data or AgentState.PAUSED.value),
-                "version": version_data.get("version", "none")
-                    if isinstance(version_data, dict)
-                    else (version_data or "none"),
+                "version": active_version,
+                "strategy_name": version_data.get("strategy_name", "Active Two-Way Rate Trading") if isinstance(version_data, dict) else "Active Two-Way Rate Trading",
             }
         except Exception as e:
             logger.error("agent_state_error", error=str(e))
@@ -97,7 +103,7 @@ class AgentService:
                     pnl = 0.0
                 else:
                     is_back = "BACK" in action
-                    team_won = (team == winner)
+                    team_won = (str(team).strip().lower() == str(winner).strip().lower())
                     if is_back:
                         if team_won:
                             outcome = "win"
@@ -119,7 +125,7 @@ class AgentService:
                 clv = None
                 if closing:
                     team_home = row[9]
-                    bet_on_home = (team == team_home)
+                    bet_on_home = (str(team).strip().lower() == str(team_home).strip().lower())
                     closing_odds = closing[0] if bet_on_home else closing[1]
                     if closing_odds and closing_odds > 1.0 and odds > 1.0:
                         clv = (1.0 / closing_odds) / (1.0 / odds) - 1.0

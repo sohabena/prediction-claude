@@ -168,10 +168,17 @@ class MatchDataLoader:
                             o.back_draw, o.lay_draw, o.back_away, o.lay_away,
                             o.implied_prob_home, o.implied_prob_away,
                             o.overround, o.is_live,
-                            c.score, c.wickets, c.overs, c.run_rate,
-                            c.req_run_rate, c.innings, c.balls_remaining,
-                            c.batting_team, c.bowling_team, c.status,
-                            c.match_format
+                            COALESCE(c.score, o.score, 0) AS score,
+                            COALESCE(c.wickets, o.wickets, 0) AS wickets,
+                            COALESCE(c.overs, o.overs, 0.0) AS overs,
+                            COALESCE(c.run_rate, 0.0) AS run_rate,
+                            COALESCE(c.req_run_rate, 0.0) AS req_run_rate,
+                            COALESCE(c.innings, o.innings, 1) AS innings,
+                            COALESCE(c.balls_remaining, 0) AS balls_remaining,
+                            COALESCE(c.batting_team, '') AS batting_team,
+                            COALESCE(c.bowling_team, '') AS bowling_team,
+                            COALESCE(c.status, 'in_play') AS status,
+                            COALESCE(c.match_format, 'T20') AS match_format
                         FROM odds_ticks o
                         LEFT JOIN LATERAL (
                             SELECT * FROM match_context mc

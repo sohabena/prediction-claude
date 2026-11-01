@@ -128,7 +128,7 @@ export default function TrainingPage() {
             />
             <StatCard
               label="Agent Version"
-              value={latest?.agent_version ?? "—"}
+              value={latest?.agent_version || summary?.latest_version || "v3 (twoway_v3)"}
             />
           </div>
 

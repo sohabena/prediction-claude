@@ -47,8 +47,8 @@ OBSERVATION_SIZE = 50           # Feature vector dimension (lean expert trading 
                                 #   match_stats(7) + portfolio(5) + position(4) +
                                 #   volume(4) + bookmaker(4) + format(4) + timing(2) + match_momentum(2)
 ACTION_SPACE_SIZE = 9           # Number of discrete actions (HOLD + 4 BACK + 4 LAY)
-SMALL_STAKE_PERCENT = 0.01     # 1% of bankroll
-LARGE_STAKE_PERCENT = 0.03     # 3% of bankroll
+SMALL_STAKE_PERCENT = 0.02     # 2% of bankroll ($2,000 on 100k budget)
+LARGE_STAKE_PERCENT = 0.04     # 4% of bankroll ($4,000 on 100k budget)
 
 # ============================================================
 # Graduation Criteria
@@ -115,7 +115,8 @@ SCRAPER_TARGET_LATENCY_MS = 500  # p95 target
 BET_DELAY_MIN_SECONDS = 5      # Min random delay before bet placement
 BET_DELAY_MAX_SECONDS = 15     # Max random delay before bet placement
 STAKE_NOISE_PERCENT = 0.20     # +/-20% random noise on stake (avoids robotic pattern)
-MAX_BETS_PER_MATCH = 20        # Reasonable limit per match (prevents runaway betting)
+MAX_BETS_PER_MATCH = 30        # Target 20 to 30 bets per match (active two-way rate trading)
+MAX_BETS_PER_HOUR = 30
 MIN_BET_INTERVAL_SECONDS = 15  # Baseline cooldown (shortened during high-volatility events)
 STAKE_ROUND_BUCKETS = [50, 100, 200, 500, 1000, 2000, 5000]  # Human-like round amounts
 PER_MATCH_BUDGET = 100_000     # Default budget per match (1,00,000)

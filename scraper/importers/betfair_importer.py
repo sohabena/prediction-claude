@@ -22,6 +22,7 @@ from typing import Any, Optional
 from sqlalchemy import delete, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+from backend.models.match import MatchContextRecord
 from backend.models.match_status import MatchTrainingStatus
 from backend.models.odds import OddsTick
 from backend.models.results import MatchResultRecord
@@ -29,6 +30,7 @@ from scraper.parsers.betfair_historical import (
     BetfairHistoricalParser,
     ParsedHistoricalMatch,
 )
+from scripts.generate_realistic_historical_corpus import RealisticCorpusGenerator
 from shared.db import get_session
 from shared.logging import setup_logging
 
@@ -198,9 +200,12 @@ class BetfairHistoricalImporter:
                 )
                 await session.execute(result_stmt)
 
-            # 3. Clean any existing ticks for this match to prevent duplicates
+            # 3. Clean any existing ticks and match context for this match to prevent duplicates
             await session.execute(
                 delete(OddsTick).where(OddsTick.match_id == match.match_id)
+            )
+            await session.execute(
+                delete(MatchContextRecord).where(MatchContextRecord.match_id == match.match_id)
             )
 
             # 4. Batch insert odds_ticks
@@ -226,6 +231,10 @@ class BetfairHistoricalImporter:
                     overround=t.get("overround"),
                     is_live=t.get("is_live", True),
                     source="betfair_historical",
+                    score=t.get("score"),
+                    wickets=t.get("wickets"),
+                    overs=t.get("overs"),
+                    innings=t.get("innings", 1),
                 )
                 for t in match.ticks
             ]
@@ -233,6 +242,32 @@ class BetfairHistoricalImporter:
             for i in range(0, len(tick_objects), self.batch_size):
                 chunk = tick_objects[i : i + self.batch_size]
                 session.add_all(chunk)
+
+            # 5. Batch insert match_context if overs present
+            if any("overs" in t for t in match.ticks):
+                context_objects = [
+                    MatchContextRecord(
+                        time=t["timestamp"],
+                        match_id=match.match_id,
+                        is_live=t.get("is_live", True),
+                        score=t.get("score", 0),
+                        wickets=t.get("wickets", 0),
+                        overs=t.get("overs", 0.0),
+                        run_rate=t.get("run_rate", 0.0),
+                        req_run_rate=t.get("req_run_rate", 0.0),
+                        innings=t.get("innings", 1),
+                        balls_remaining=t.get("balls_remaining", 0),
+                        batting_team=t.get("batting_team", match.team_home),
+                        bowling_team=t.get("bowling_team", match.team_away),
+                        status="in_play",
+                        match_format="T20",
+                    )
+                    for t in match.ticks
+                    if "overs" in t
+                ]
+                for i in range(0, len(context_objects), self.batch_size):
+                    chunk = context_objects[i : i + self.batch_size]
+                    session.add_all(chunk)
 
             await session.commit()
 
@@ -351,42 +386,30 @@ class BetfairHistoricalImporter:
         ticks_per_match: int = 120,
     ) -> ImportSummary:
         """
-        Generate and import a verified synthetic Betfair dataset of major matches.
-        Used to eliminate the cold-start barrier immediately.
+        Generate and import a verified synthetic Betfair dataset with full cricket context.
+        Uses 5 distinct match archetypes and full ball-by-ball match context (overs, score, wickets).
         """
-        sample_fixtures = [
-            ("India", "Australia", "ICC Champions Trophy"),
-            ("England", "South Africa", "ICC World T20"),
-            ("Pakistan", "New Zealand", "T20 International"),
-            ("Mumbai Indians", "Chennai Super Kings", "IPL"),
-            ("Royal Challengers Bengaluru", "Kolkata Knight Riders", "IPL"),
-            ("West Indies", "Sri Lanka", "ODI Series"),
-            ("Perth Scorchers", "Sydney Sixers", "BBL"),
-            ("Gujarat Titans", "Rajasthan Royals", "IPL"),
-            ("Afghanistan", "Bangladesh", "Asia Cup"),
-            ("Sunrisers Hyderabad", "Delhi Capitals", "IPL"),
-            ("Lahore Qalandars", "Karachi Kings", "PSL"),
-            ("Australia", "England", "The Ashes T20"),
-            ("South Africa", "India", "T20 Bilateral"),
-            ("Melbourne Stars", "Adelaide Strikers", "BBL"),
-            ("Ireland", "Scotland", "T20 World Cup Qualifier"),
-        ]
-
         summary = ImportSummary()
-        now = datetime.now(timezone.utc)
+        generator = RealisticCorpusGenerator(seed=42)
+        simulated_matches = generator.generate_corpus(match_count=match_count)
 
-        for i in range(min(match_count, len(sample_fixtures))):
-            team_h, team_a, comp = sample_fixtures[i]
-            match_id = f"bf_demo_{team_h[:3].lower()}_{team_a[:3].lower()}_{i+1}"
-            start_time = now - timedelta(days=match_count - i, hours=random.randint(1, 10))
-
-            match = self.generate_synthetic_match(
-                match_id=match_id,
-                team_home=team_h,
-                team_away=team_a,
-                competition=comp,
-                start_time=start_time,
-                ticks_count=ticks_per_match,
+        for sim_m in simulated_matches:
+            last_tick = sim_m.ticks[-1]
+            match = ParsedHistoricalMatch(
+                match_id=sim_m.match_id,
+                team_home=sim_m.team_home,
+                team_away=sim_m.team_away,
+                competition=sim_m.competition,
+                start_time=sim_m.start_time,
+                completed_at=sim_m.completed_at,
+                winner=sim_m.winner,
+                loser=sim_m.loser,
+                result_type="win",
+                ticks=sim_m.ticks,
+                closing_back_home=last_tick.get("back_home"),
+                closing_back_away=last_tick.get("back_away"),
+                closing_lay_home=last_tick.get("lay_home"),
+                closing_lay_away=last_tick.get("lay_away"),
             )
 
             try:
@@ -397,7 +420,7 @@ class BetfairHistoricalImporter:
                     summary.results_recorded += 1
                     summary.training_episodes_approved += 1
             except Exception as e:
-                summary.errors.append(f"Demo match {match_id} error: {e}")
+                summary.errors.append(f"Demo match {sim_m.match_id} error: {e}")
 
         logger.info(
             "demo_dataset_imported",
@@ -405,3 +428,4 @@ class BetfairHistoricalImporter:
             ticks=summary.ticks_imported,
         )
         return summary
+

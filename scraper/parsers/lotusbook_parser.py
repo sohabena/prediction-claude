@@ -38,7 +38,7 @@ class LotusBookParser:
         self._match_id_cache: dict[str, str] = {}
         self._last_events: dict[str, str] = {}  # fingerprint dedup
 
-    def parse_dom_data(self, raw_matches: list[dict[str, Any]]) -> list[OddsEvent]:
+    def parse_dom_data(self, raw_matches: list[dict[str, Any]], dedup: bool = False) -> list[OddsEvent]:
         """
         Parse DOM-scraped match data into OddsEvent list.
 
@@ -103,11 +103,12 @@ class LotusBookParser:
                 if not self.validate_event(event):
                     continue
 
-                # Dedup: skip if identical to last event for this match
-                fingerprint = self._fingerprint(event)
-                if self._last_events.get(match_id) == fingerprint:
-                    continue
-                self._last_events[match_id] = fingerprint
+                # Dedup: skip if identical to last event for this match (only when dedup=True)
+                if dedup:
+                    fingerprint = self._fingerprint(event)
+                    if self._last_events.get(match_id) == fingerprint:
+                        continue
+                    self._last_events[match_id] = fingerprint
 
                 events.append(event)
 

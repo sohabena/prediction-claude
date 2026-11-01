@@ -56,7 +56,8 @@ class ScraperManager:
         self._live_match_tracker = LiveMatchTracker()
         self._seen_match_ids: set[str] = set()
         self._scrape_approved_ids: set[str] = set()  # cached from DB
-        self._completed_match_ids: set[str] = set()  # matches with results
+        self._completed_match_ids: set[str] = set()
+        self._last_stored_fingerprint: dict[str, str] = {}  # matches with results
         self._quality_stats = {"stored": 0, "warnings": 0, "rejected": 0}
         self._result_detector = LotusResultDetector()
         self._last_approved_refresh: datetime | None = None
@@ -443,6 +444,11 @@ class ScraperManager:
 
     async def _store_odds_tick(self, event: OddsEvent) -> None:
         """Store an odds event to TimescaleDB with volume + context data."""
+        # Dedup: skip storing if prices/score haven't changed
+        fp = f"{event.back_home}|{event.lay_home}|{event.back_away}|{event.lay_away}|{event.score_text}"
+        if self._last_stored_fingerprint.get(event.match_id) == fp:
+            return
+        self._last_stored_fingerprint[event.match_id] = fp
         import re as _re
         from backend.models.odds import OddsTick
 

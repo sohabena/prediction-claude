@@ -118,7 +118,7 @@ export default function TradingPage() {
           label="Total P&L"
           value={
             perf && perf.settled_bets > 0
-              ? `${perf.total_pnl >= 0 ? "+" : ""}${perf.total_pnl.toFixed(0)}`
+              ? `${perf.total_pnl >= 0 ? "+$" : "-$"}${Math.abs(Math.round(perf.total_pnl)).toLocaleString()}`
               : perf && perf.pending_bets > 0
                 ? "Awaiting results"
                 : "—"
@@ -166,7 +166,7 @@ export default function TradingPage() {
                       href={`/matches/${bet.match_id}/watch`}
                       className="text-cyan-500 hover:text-cyan-400 text-xs underline-offset-2 hover:underline"
                     >
-                      {bet.match_id.replace("lb_", "")}
+                      {bet.match_id}
                     </Link>
                   </td>
                   <td className="py-2 pr-4">
@@ -181,7 +181,7 @@ export default function TradingPage() {
                     {bet.odds?.toFixed(2)}
                   </td>
                   <td className="py-2 pr-4 font-mono">
-                    {bet.stake?.toFixed(0)}
+                    ${Math.round(bet.stake ?? 0).toLocaleString()}
                   </td>
                    <td className="py-2 pr-4">
                     <span
@@ -214,7 +214,7 @@ export default function TradingPage() {
                     }`}
                   >
                     {bet.outcome === "win" || bet.outcome === "loss"
-                      ? `${bet.profit_loss > 0 ? "+" : ""}${bet.profit_loss?.toFixed(0) ?? "0"}`
+                      ? `${bet.profit_loss >= 0 ? "+$" : "-$"}${Math.abs(Math.round(bet.profit_loss)).toLocaleString()}`
                       : bet.outcome === "void"
                         ? "0"
                         : "—"}

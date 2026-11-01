@@ -81,7 +81,8 @@ class PhoenixAgent:
         self,
         total_timesteps: int,
         callback: Optional[BaseCallback] = None,
-        progress_bar: bool = True,
+        progress_bar: bool = False,
+        reset_num_timesteps: bool = False,
     ) -> None:
         """Train the agent."""
         logger.info("training_started", total_timesteps=total_timesteps)
@@ -89,6 +90,7 @@ class PhoenixAgent:
             total_timesteps=total_timesteps,
             callback=callback,
             progress_bar=progress_bar,
+            reset_num_timesteps=reset_num_timesteps,
         )
         logger.info("training_completed", total_timesteps=total_timesteps)
 

@@ -48,11 +48,21 @@ class TrainingHandler:
 
             stats["matches_trained_on"] = len(episodes)
 
-            trainer = Trainer(data=episodes)
-            await asyncio.get_running_loop().run_in_executor(
-                None, trainer.train_offline,
-                settings.rl.total_timesteps, "models/checkpoints",
-            )
+            n_train = max(1, int(len(episodes) * 0.70))
+            train_episodes = episodes[:n_train]
+            val_episodes = episodes[n_train:] if len(episodes) > n_train else train_episodes
+
+            trainer = Trainer(data=train_episodes)
+            if getattr(settings.rl, "use_curriculum", True) and len(episodes) >= 10:
+                await asyncio.get_running_loop().run_in_executor(
+                    None, trainer.train_curriculum,
+                    None, None, "models/checkpoints", val_episodes,
+                )
+            else:
+                await asyncio.get_running_loop().run_in_executor(
+                    None, trainer.train_offline,
+                    settings.rl.total_timesteps, "models/checkpoints",
+                )
 
             trainer_ref[0] = trainer
             stats["training_runs"] += 1

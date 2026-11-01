@@ -578,3 +578,4 @@ class BetfairHistoricalParser:
         except (ValueError, TypeError):
             pass
         return None
+

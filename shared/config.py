@@ -59,7 +59,7 @@ class RedisConfig(BaseSettings):
 class ScraperConfig(BaseSettings):
     """LotusBook scraper settings."""
 
-    betting_site_url: str = "https://lotusbook.site/cricket"
+    betting_site_url: str = "https://lotusbook.cc/cricket"
     headless: bool = True
     poll_interval: int = 3
     max_retries: int = 3
@@ -87,6 +87,7 @@ class RLConfig(BaseSettings):
     live_retrain_threshold: int = 5  # Settled matches before triggering live retrain
     live_retrain_steps: int = 5000  # Training steps per live retrain
     auto_advance_curriculum: bool = True  # Auto-advance curriculum stages
+    use_curriculum: bool = True  # Use progressive multi-stage curriculum learning
     data_lookback_days: int = 90  # How far back to load training data
     min_ticks_per_match: int = 50  # Minimum odds ticks for a match to be usable
     algorithm: str = "ppo"  # ppo | dqn -- algorithm selection for agent training

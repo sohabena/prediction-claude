@@ -55,7 +55,8 @@ class CricketBettingEnv(gym.Env):
         initial_bankroll: float = 100_000.0,
         render_mode: Optional[str] = None,
         settlement_mode: str = "real",
-        max_bets_per_episode: int = 10,
+        max_bets_per_episode: int = 30,
+        exchange_commission: float = 0.0,
     ) -> None:
         """
         Args:
@@ -76,6 +77,7 @@ class CricketBettingEnv(gym.Env):
         self.render_mode = render_mode
         self.initial_bankroll = initial_bankroll
         self.settlement_mode = settlement_mode
+        self.exchange_commission = exchange_commission
 
         # Spaces
         self.action_space = spaces.Discrete(ACTION_SPACE_SIZE)
@@ -106,6 +108,7 @@ class CricketBettingEnv(gym.Env):
         # State
         self._portfolio: Optional[PortfolioState] = None
         self._open_bets: list[VirtualBet] = []
+        self._settled_bets_history: list[VirtualBet] = []
         self._episode_returns: list[float] = []
         self._bets_this_hour: int = 0
         self._bets_this_episode: int = 0
@@ -408,6 +411,7 @@ class CricketBettingEnv(gym.Env):
                 self._portfolio.open_positions -= 1  # type: ignore[union-attr]
                 self._portfolio.total_exposure -= bet.stake  # type: ignore[union-attr]
             self._open_bets.clear()
+            self._settled_bets_history = []
             return 0.0
 
         total_pnl = 0.0
@@ -448,9 +452,13 @@ class CricketBettingEnv(gym.Env):
             self._portfolio.open_positions -= 1  # type: ignore[union-attr]
             self._portfolio.total_exposure -= bet.stake  # type: ignore[union-attr]
 
-        # Remove settled bets
+        # Remove settled bets and record history
         for i in reversed(settled):
-            self._open_bets.pop(i)
+            b = self._open_bets.pop(i)
+            self._settled_bets_history.append(b)
+
+        if self.exchange_commission > 0 and total_pnl > 0:
+            total_pnl *= (1.0 - self.exchange_commission)
 
         return total_pnl
 
@@ -704,9 +712,20 @@ class CricketBettingEnv(gym.Env):
 
     def _tick_to_event(self, tick: dict[str, Any]) -> OddsEvent:
         """Convert a raw tick dict to OddsEvent."""
+        raw_ts = tick.get("timestamp") or tick.get("time")
+        if isinstance(raw_ts, str):
+            try:
+                ts = datetime.fromisoformat(raw_ts)
+            except Exception:
+                ts = datetime.now(timezone.utc)
+        elif isinstance(raw_ts, datetime):
+            ts = raw_ts
+        else:
+            ts = datetime.now(timezone.utc)
+
         return OddsEvent(
             match_id=tick.get("match_id", "unknown"),
-            timestamp=tick.get("timestamp", datetime.now(timezone.utc)),
+            timestamp=ts,
             team_home=tick.get("team_home", "Home"),
             team_away=tick.get("team_away", "Away"),
             competition=tick.get("competition", ""),
@@ -723,9 +742,21 @@ class CricketBettingEnv(gym.Env):
         """Convert tick dict to MatchContext if data available."""
         if "overs" not in tick:
             return None
+
+        raw_ts = tick.get("timestamp") or tick.get("time")
+        if isinstance(raw_ts, str):
+            try:
+                ts = datetime.fromisoformat(raw_ts)
+            except Exception:
+                ts = datetime.now(timezone.utc)
+        elif isinstance(raw_ts, datetime):
+            ts = raw_ts
+        else:
+            ts = datetime.now(timezone.utc)
+
         return MatchContext(
             match_id=tick.get("match_id", "unknown"),
-            timestamp=tick.get("timestamp", datetime.now(timezone.utc)),
+            timestamp=ts,
             is_live=tick.get("is_live", True),
             score=tick.get("score", 0),
             wickets=tick.get("wickets", 0),

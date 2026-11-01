@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useApi } from "@/hooks/useApi";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { API_BASE } from "@/lib/api";
@@ -81,8 +81,7 @@ interface ActiveMatchesResponse {
 }
 
 type ViewTab = "scrape" | "training";
-
-// ─── Helpers ────────────────────────────────────────────────
+type FormatFilter = "all" | "t20" | "odi" | "test";
 
 const SCRAPE_COLORS: Record<string, string> = {
   discovered: "bg-blue-500/20 text-blue-400 border-blue-500/30",
@@ -103,7 +102,6 @@ const SCRAPE_LABELS: Record<string, string> = {
 };
 
 function ScrapeStatusBadge({ status, auto, isLive }: { status: string; auto: boolean; isLive?: boolean }) {
-  // For approved matches: show "Scraping" only when live, otherwise "Approved"
   let label = SCRAPE_LABELS[status] ?? status;
   let colorClass = SCRAPE_COLORS[status] ?? "bg-zinc-700 text-zinc-300";
   if (status === "scrape_approved" && !isLive) {
@@ -136,12 +134,30 @@ function TrainingStatusBadge({ status, auto }: { status: string; auto: boolean }
   );
 }
 
-// ─── Page ───────────────────────────────────────────────────
+function getFormatLabel(matchId: string): { label: string; badgeClass: string } {
+  if (matchId.includes("t20")) {
+    return { label: "T20 International", badgeClass: "bg-indigo-500/15 text-indigo-400 border-indigo-500/30" };
+  }
+  if (matchId.includes("odi")) {
+    return { label: "One Day International", badgeClass: "bg-blue-500/15 text-blue-400 border-blue-500/30" };
+  }
+  if (matchId.includes("test")) {
+    return { label: "Test Match", badgeClass: "bg-purple-500/15 text-purple-400 border-purple-500/30" };
+  }
+  return { label: "Official International", badgeClass: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" };
+}
+
+// ─── Page Component ─────────────────────────────────────────
+
+const ITEMS_PER_PAGE = 24;
 
 export default function MatchesPage() {
   const [viewTab, setViewTab] = useState<ViewTab>("scrape");
   const [scrapeFilter, setScrapeFilter] = useState<string>("all");
   const [trainingFilter, setTrainingFilter] = useState<string>("all");
+  const [formatFilter, setFormatFilter] = useState<FormatFilter>("all");
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [currentPage, setCurrentPage] = useState<number>(1);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [validating, setValidating] = useState<string | null>(null);
   const [validationResults, setValidationResults] = useState<Record<string, ValidationResult>>({});
@@ -159,23 +175,104 @@ export default function MatchesPage() {
 
   const { isConnected } = useWebSocket();
 
-  const liveIds = new Set(
-    activeData?.matches?.filter((m) => m.is_live).map((m) => m.match_id) ?? [],
-  );
-
-  // ── Filtered matches ──────────────────────────────────────
+  const liveIds = useMemo(() => {
+    return new Set(activeData?.matches?.filter((m) => m.is_live).map((m) => m.match_id) ?? []);
+  }, [activeData]);
 
   const allMatches = data?.matches ?? [];
 
-  const scrapeMatches = allMatches.filter((m) =>
-    scrapeFilter === "all" ? true : m.scrape_status === scrapeFilter,
-  );
+  // ── Scrape Tab: Strictly Live LotusBook Matches (lb_*) ────
+  const liveLotusMatches = useMemo(() => {
+    return allMatches.filter((m) => m.match_id.startsWith("lb_"));
+  }, [allMatches]);
 
-  const trainingMatches = allMatches.filter((m) => {
-    if (m.scrape_status !== "scrape_approved") return false;
-    if (trainingFilter === "all") return true;
-    return m.training_status === trainingFilter;
-  });
+  const liveLotusSummary = useMemo(() => {
+    let discovered = 0;
+    let approved = 0;
+    let rejected = 0;
+    for (const m of liveLotusMatches) {
+      if (m.scrape_status === "discovered") discovered++;
+      else if (m.scrape_status === "scrape_approved") approved++;
+      else if (m.scrape_status === "scrape_rejected") rejected++;
+    }
+    return { discovered, approved, rejected, total: liveLotusMatches.length };
+  }, [liveLotusMatches]);
+
+  const filteredScrapeMatches = useMemo(() => {
+    return liveLotusMatches.filter((m) => {
+      if (scrapeFilter !== "all" && m.scrape_status !== scrapeFilter) return false;
+      if (!searchQuery) return true;
+      const q = searchQuery.toLowerCase();
+      return (
+        m.team_home.toLowerCase().includes(q) ||
+        m.team_away.toLowerCase().includes(q) ||
+        m.match_id.toLowerCase().includes(q) ||
+        (m.competition && m.competition.toLowerCase().includes(q))
+      );
+    });
+  }, [liveLotusMatches, scrapeFilter, searchQuery]);
+
+  // ── Training Tab: Official Harmonized Training Corpus (Excludes live lb_*) ──
+  const trainingCorpusMatches = useMemo(() => {
+    return allMatches.filter((m) => !m.match_id.startsWith("lb_"));
+  }, [allMatches]);
+
+  const formatCounts = useMemo(() => {
+    let t20 = 0;
+    let odi = 0;
+    let test = 0;
+    for (const m of trainingCorpusMatches) {
+      if (m.match_id.includes("t20")) t20++;
+      else if (m.match_id.includes("odi")) odi++;
+      else if (m.match_id.includes("test")) test++;
+    }
+    return { t20, odi, test, total: trainingCorpusMatches.length };
+  }, [trainingCorpusMatches]);
+
+  const filteredTrainingMatches = useMemo(() => {
+    return trainingCorpusMatches.filter((m) => {
+      // Format filter
+      if (formatFilter === "t20" && !m.match_id.includes("t20")) return false;
+      if (formatFilter === "odi" && !m.match_id.includes("odi")) return false;
+      if (formatFilter === "test" && !m.match_id.includes("test")) return false;
+
+      // Status filter
+      if (trainingFilter !== "all" && m.training_status !== trainingFilter) return false;
+
+      // Search query
+      if (!searchQuery) return true;
+      const q = searchQuery.toLowerCase();
+      return (
+        m.team_home.toLowerCase().includes(q) ||
+        m.team_away.toLowerCase().includes(q) ||
+        m.match_id.toLowerCase().includes(q) ||
+        (m.competition && m.competition.toLowerCase().includes(q))
+      );
+    });
+  }, [trainingCorpusMatches, formatFilter, trainingFilter, searchQuery]);
+
+  // Pagination calculation
+  const totalPages = Math.ceil(filteredTrainingMatches.length / ITEMS_PER_PAGE) || 1;
+  const paginatedTrainingMatches = useMemo(() => {
+    const start = (currentPage - 1) * ITEMS_PER_PAGE;
+    return filteredTrainingMatches.slice(start, start + ITEMS_PER_PAGE);
+  }, [filteredTrainingMatches, currentPage]);
+
+  // Reset page when filter or search changes
+  const handleSearchChange = (val: string) => {
+    setSearchQuery(val);
+    setCurrentPage(1);
+  };
+
+  const handleFormatFilterChange = (val: FormatFilter) => {
+    setFormatFilter(val);
+    setCurrentPage(1);
+  };
+
+  const handleTrainingFilterChange = (val: string) => {
+    setTrainingFilter(val);
+    setCurrentPage(1);
+  };
 
   // ── Actions ───────────────────────────────────────────────
 
@@ -183,10 +280,9 @@ export default function MatchesPage() {
     async (matchId: string, action: "approve-scrape" | "reject-scrape") => {
       setActionLoading(matchId);
       try {
-        const res = await fetch(
-          `${API_BASE}/matches/${matchId}/${action}`,
-          { method: "PATCH" },
-        );
+        const res = await fetch(`${API_BASE}/matches/${matchId}/${action}`, {
+          method: "PATCH",
+        });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         refresh();
       } catch (err) {
@@ -202,10 +298,9 @@ export default function MatchesPage() {
     async (matchId: string, action: "approve" | "reject") => {
       setActionLoading(matchId);
       try {
-        const res = await fetch(
-          `${API_BASE}/matches/${matchId}/${action}`,
-          { method: "PATCH" },
-        );
+        const res = await fetch(`${API_BASE}/matches/${matchId}/${action}`, {
+          method: "PATCH",
+        });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         refresh();
       } catch (err) {
@@ -223,8 +318,8 @@ export default function MatchesPage() {
       try {
         const res = await fetch(`${API_BASE}/matches/${matchId}/validate`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data: ValidationResult = await res.json();
-        setValidationResults((prev) => ({ ...prev, [matchId]: data }));
+        const resultData: ValidationResult = await res.json();
+        setValidationResults((prev) => ({ ...prev, [matchId]: resultData }));
       } catch (err) {
         console.error("Validation failed", err);
       } finally {
@@ -264,129 +359,127 @@ export default function MatchesPage() {
     [refresh],
   );
 
-  // ── Summary ───────────────────────────────────────────────
-
-  const summary = data?.summary ?? { pending: 0, approved: 0, rejected: 0 };
-  const scrapeSummary = data?.scrape_summary ?? { discovered: 0, scrape_approved: 0, scrape_rejected: 0 };
-
   // ── Render ────────────────────────────────────────────────
 
   return (
     <div>
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-6">
+      <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4 mb-6">
         <div>
           <h1 className="text-3xl font-bold mb-1">Match Management</h1>
           <p className="text-zinc-400 text-sm">
-            Two-phase approval: first approve which matches to scrape, then approve collected data for training.
+            Live bookmaker scraping approval &amp; historical training corpus management.
           </p>
-          <p className="text-xs text-zinc-600 mt-1">
-            WebSocket:{" "}
-            <span className={isConnected ? "text-emerald-500" : "text-red-500"}>
+          <p className="text-xs text-zinc-500 mt-1 flex items-center gap-2">
+            <span>WebSocket Feed:</span>
+            <span className={`inline-flex items-center gap-1 font-semibold ${isConnected ? "text-emerald-400" : "text-red-400"}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? "bg-emerald-400" : "bg-red-400"}`} />
               {isConnected ? "Connected" : "Disconnected"}
             </span>
           </p>
         </div>
 
-        {/* Summary pills */}
-        <div className="flex flex-col gap-1.5 text-xs font-medium">
-          <div className="flex gap-2">
-            <span className="px-2.5 py-1 rounded-full bg-blue-500/15 text-blue-400">
-              {scrapeSummary.discovered} Discovered
-            </span>
-            <span className="px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-400">
-              {scrapeSummary.scrape_approved} Scraping
-            </span>
-            <span className="px-2.5 py-1 rounded-full bg-zinc-500/15 text-zinc-400">
-              {scrapeSummary.scrape_rejected} Skipped
-            </span>
+        {/* Global summary badges */}
+        <div className="flex flex-wrap gap-2 text-xs font-medium">
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-800">
+            <span className="text-zinc-400">Live LotusBook:</span>
+            <span className="text-blue-400 font-bold">{liveLotusSummary.discovered} Discovered</span>
+            <span className="text-zinc-600">/</span>
+            <span className="text-emerald-400 font-bold">{liveLotusSummary.approved} Scraping</span>
+            <span className="text-zinc-600">/</span>
+            <span className="text-zinc-500">{liveLotusSummary.rejected} Skipped</span>
           </div>
-          <div className="flex gap-2">
-            <span className="px-2.5 py-1 rounded-full bg-amber-500/15 text-amber-400">
-              {summary.pending} Train Pending
-            </span>
-            <span className="px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-400">
-              {summary.approved} Train Approved
-            </span>
-            <span className="px-2.5 py-1 rounded-full bg-red-500/15 text-red-400">
-              {summary.rejected} Train Rejected
-            </span>
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-800">
+            <span className="text-zinc-400">Training Corpus:</span>
+            <span className="text-emerald-400 font-bold">{trainingCorpusMatches.length.toLocaleString()} Approved</span>
+            <span className="text-zinc-600">/</span>
+            <span className="text-indigo-400 font-semibold">100% Official International</span>
           </div>
         </div>
       </div>
 
-      {/* View tabs and actions */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
-        <div className="flex gap-1 bg-zinc-800/50 p-1 rounded-lg w-fit">
+      {/* Top Navigation Tabs */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6 border-b border-zinc-800/80 pb-4">
+        <div className="flex gap-2 bg-zinc-900 p-1 rounded-xl border border-zinc-800">
           <button
-            onClick={() => setViewTab("scrape")}
-            className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+            onClick={() => {
+              setViewTab("scrape");
+              setSearchQuery("");
+            }}
+            className={`px-4 py-2 text-sm font-semibold rounded-lg transition-all ${
               viewTab === "scrape"
-                ? "bg-blue-600 text-white"
+                ? "bg-blue-600 text-white shadow-md shadow-blue-500/20"
                 : "text-zinc-400 hover:text-zinc-200"
             }`}
           >
-            Step 1: Scrape Approval
+            🏏 Live LotusBook Matches ({liveLotusMatches.length})
           </button>
           <button
-            onClick={() => setViewTab("training")}
-            className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+            onClick={() => {
+              setViewTab("training");
+              setSearchQuery("");
+              setCurrentPage(1);
+            }}
+            className={`px-4 py-2 text-sm font-semibold rounded-lg transition-all ${
               viewTab === "training"
-                ? "bg-indigo-600 text-white"
+                ? "bg-indigo-600 text-white shadow-md shadow-indigo-500/20"
                 : "text-zinc-400 hover:text-zinc-200"
             }`}
           >
-            Step 2: Training Approval
+            🧠 Training Corpus ({trainingCorpusMatches.length.toLocaleString()})
           </button>
         </div>
-        
-        <button
-          onClick={async () => {
-            if (!confirm("Delete all old matches that have 0 collected ticks? This will not delete matches scheduled for today.")) return;
-            try {
-              const res = await fetch(`${API_BASE}/matches/cleanup/empty`, { method: "DELETE" });
-              if (!res.ok) throw new Error("Failed to cleanup matches");
-              const data = await res.json();
-              alert(`Successfully deleted ${data.deleted_count} empty matches.`);
-              refresh();
-            } catch (err) {
-              console.error(err);
-              alert("Error cleaning up matches.");
-            }
-          }}
-          className="px-4 py-2 text-sm font-medium bg-zinc-800 hover:bg-red-900/50 text-red-400 rounded-md transition-colors border border-red-500/20"
-        >
-          Cleanup Empty Matches
-        </button>
+
+        {/* Global Search Box */}
+        <div className="relative w-full sm:w-72">
+          <input
+            type="text"
+            placeholder="Search teams, tournament, ID..."
+            value={searchQuery}
+            onChange={(e) => handleSearchChange(e.target.value)}
+            className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-indigo-500"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => handleSearchChange("")}
+              className="absolute right-2.5 top-2 text-xs text-zinc-500 hover:text-zinc-300"
+            >
+              ✕
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* ═══ SCRAPE APPROVAL TAB ═══ */}
+      {/* ═══ TAB 1: LIVE LOTUSBOOK MATCHES ═══ */}
       {viewTab === "scrape" && (
         <>
-          <p className="text-zinc-500 text-sm mb-3">
-            Matches discovered on LotusBook. Approve matches to collect odds data when they go live.
-          </p>
-          <div className="flex gap-1 mb-6 bg-zinc-800/50 p-1 rounded-lg w-fit">
-            {(["all", "discovered", "scrape_approved", "scrape_rejected"] as const).map((f) => (
-              <button
-                key={f}
-                onClick={() => setScrapeFilter(f)}
-                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                  scrapeFilter === f
-                    ? "bg-zinc-700 text-white"
-                    : "text-zinc-400 hover:text-zinc-200"
-                }`}
-              >
-                {f === "all" ? "All" : SCRAPE_LABELS[f] ?? f}
-              </button>
-            ))}
+          <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 mb-4">
+            <p className="text-zinc-400 text-xs">
+              Matches discovered in real time from <code className="text-zinc-300">https://lotusbook.cc/cricket</code>.
+              Approve matches to capture live odds ticks and in-play scorecard context.
+            </p>
+            <div className="flex gap-1 bg-zinc-900 p-1 rounded-lg border border-zinc-800 w-fit">
+              {(["all", "discovered", "scrape_approved", "scrape_rejected"] as const).map((f) => (
+                <button
+                  key={f}
+                  onClick={() => setScrapeFilter(f)}
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                    scrapeFilter === f
+                      ? "bg-zinc-800 text-white"
+                      : "text-zinc-400 hover:text-zinc-200"
+                  }`}
+                >
+                  {f === "all" ? "All" : SCRAPE_LABELS[f] ?? f}
+                </button>
+              ))}
+            </div>
           </div>
 
           {loading && !data ? (
-            <p className="text-zinc-500">Loading matches...</p>
-          ) : scrapeMatches.length ? (
+            <p className="text-zinc-500 text-sm py-8 text-center">Loading live LotusBook matches...</p>
+          ) : filteredScrapeMatches.length ? (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {scrapeMatches.map((match) => {
+              {filteredScrapeMatches.map((match) => {
                 const isLive = liveIds.has(match.match_id);
                 const isDiscovered = match.scrape_status === "discovered";
                 const isScraping = match.scrape_status === "scrape_approved";
@@ -397,19 +490,21 @@ export default function MatchesPage() {
                   <div
                     key={match.match_id}
                     className={`stat-card flex flex-col gap-3 relative overflow-hidden ${
-                      isDiscovered ? "border-l-2 border-l-blue-500/50" :
-                      isScraping ? "border-l-2 border-l-emerald-500/50" :
-                      "border-l-2 border-l-zinc-700/50 opacity-60"
+                      isDiscovered
+                        ? "border-l-2 border-l-blue-500/70"
+                        : isScraping
+                          ? "border-l-2 border-l-emerald-500/70"
+                          : "border-l-2 border-l-zinc-700/50 opacity-75"
                     }`}
                   >
-                    {/* Top row */}
+                    {/* Top Row: Competition & Status Badges */}
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs text-zinc-500 truncate max-w-[60%]">
-                        {match.competition || "Unknown"}
+                      <span className="text-xs text-zinc-400 font-medium truncate max-w-[60%]">
+                        {match.competition || "Live Cricket"}
                       </span>
                       <div className="flex items-center gap-2">
                         {isLive && (
-                          <span className="flex items-center gap-1 text-xs text-red-400">
+                          <span className="flex items-center gap-1 text-xs text-red-400 font-bold">
                             <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse" />
                             LIVE
                           </span>
@@ -418,78 +513,82 @@ export default function MatchesPage() {
                       </div>
                     </div>
 
-                    {/* Teams */}
+                    {/* Team Names */}
                     <div>
-                      <p className="text-lg font-semibold leading-tight">{match.team_home}</p>
-                      <p className="text-xs text-zinc-500 my-0.5">vs</p>
-                      <p className="text-lg font-semibold leading-tight">{match.team_away}</p>
+                      <p className="text-base font-bold text-zinc-100">{match.team_home}</p>
+                      <p className="text-xs text-zinc-500 my-0.5 font-medium">vs</p>
+                      <p className="text-base font-bold text-zinc-100">{match.team_away}</p>
                     </div>
 
-                    {/* Meta */}
-                    <div className="flex items-center justify-between text-xs text-zinc-600">
+                    {/* Match Metadata & Start Times */}
+                    <div className="flex items-center justify-between text-xs text-zinc-500 pt-1 border-t border-zinc-800/60">
                       <span>
                         {isScraping && isLive
                           ? `${match.tick_count.toLocaleString()} ticks collected`
                           : isScraping && !isLive
                             ? match.tick_count > 0
                               ? `${match.tick_count.toLocaleString()} ticks collected`
-                              : "Waiting for live match"
+                              : "Active in scraper queue"
                           : isDiscovered
-                            ? "Awaiting approval"
-                            : "Skipped"}
+                            ? "Awaiting your approval"
+                            : "Filtered out (SRL/Non-Intl)"}
                       </span>
-                      <div className="flex flex-col items-end">
-                        {match.match_start_time && (
-                          <span suppressHydrationWarning className="text-amber-500/80 mb-0.5">
-                            Starts: {new Date(match.match_start_time).toLocaleDateString('en-GB', {
-                              day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'
-                            })}
+                      <div className="text-right">
+                        {match.match_start_time ? (
+                          <span className="text-amber-400/90 font-medium">
+                            Starts: {new Date(match.match_start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                           </span>
+                        ) : (
+                          <span>{match.match_id}</span>
                         )}
-                        <span suppressHydrationWarning>
-                          {match.created_at
-                            ? new Date(match.created_at).toLocaleDateString()
-                            : "—"}
-                        </span>
                       </div>
                     </div>
 
-                    {/* Action buttons */}
+                    {/* Action Buttons */}
                     <div className="flex gap-2 mt-auto pt-2 border-t border-zinc-800">
                       {isDiscovered && (
                         <>
                           <button
                             disabled={busy}
                             onClick={() => handleScrapeAction(match.match_id, "approve-scrape")}
-                            className="flex-1 text-xs font-medium py-1.5 rounded-md bg-emerald-600/80 hover:bg-emerald-600 text-white transition-colors disabled:opacity-50"
+                            className="flex-1 text-xs font-semibold py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white transition-colors disabled:opacity-50"
                           >
-                            {busy ? "..." : "Approve Match"}
+                            {busy ? "..." : "Approve Scraping"}
                           </button>
                           <button
                             disabled={busy}
                             onClick={() => handleScrapeAction(match.match_id, "reject-scrape")}
-                            className="flex-1 text-xs font-medium py-1.5 rounded-md bg-zinc-700 hover:bg-red-600/80 text-zinc-300 hover:text-white transition-colors disabled:opacity-50"
+                            className="flex-1 text-xs font-medium py-1.5 rounded-md bg-zinc-800 hover:bg-red-600/80 text-zinc-300 hover:text-white transition-colors disabled:opacity-50"
                           >
                             {busy ? "..." : "Skip"}
                           </button>
                         </>
                       )}
                       {isScraping && (
-                        <button
-                          disabled={busy}
-                          onClick={() => handleScrapeAction(match.match_id, "reject-scrape")}
-                          className="flex-1 text-xs font-medium py-1.5 rounded-md bg-zinc-700 hover:bg-red-600/80 text-zinc-300 hover:text-white transition-colors disabled:opacity-50"
-                        >
-                          {busy ? "..." : "Revoke Approval"}
-                        </button>
+                        <div className="flex gap-2 w-full">
+                          <Link
+                            href={`/matches/${match.match_id}/watch`}
+                            className="flex-1 text-xs font-semibold py-1.5 text-center rounded-md bg-blue-600/80 hover:bg-blue-600 text-white transition-colors"
+                          >
+                            📺 Watch Live Ticks
+                          </Link>
+                          <button
+                            disabled={busy}
+                            onClick={() => handleScrapeAction(match.match_id, "reject-scrape")}
+                            className="px-3 text-xs font-medium py-1.5 rounded-md bg-zinc-800 hover:bg-red-600/80 text-zinc-400 hover:text-white transition-colors disabled:opacity-50"
+                            title="Stop scraping this match"
+                          >
+                            {busy ? "..." : "Stop"}
+                          </button>
+                        </div>
                       )}
                       {isSkipped && (
                         <button
                           disabled={busy}
                           onClick={() => handleScrapeAction(match.match_id, "approve-scrape")}
-                          className="flex-1 text-xs font-medium py-1.5 rounded-md bg-zinc-700 hover:bg-emerald-600/80 text-zinc-300 hover:text-white transition-colors disabled:opacity-50"
+                          className="flex-1 text-xs font-medium py-1.5 rounded-md bg-zinc-800 hover:bg-emerald-600/80 text-zinc-400 hover:text-white transition-colors disabled:opacity-50"
                         >
-                          {busy ? "..." : "Approve Match"}
+                          {busy ? "..." : "Approve Scraping"}
                         </button>
                       )}
                     </div>
@@ -499,61 +598,132 @@ export default function MatchesPage() {
             </div>
           ) : (
             <div className="stat-card text-center py-12">
-              <p className="text-zinc-500 text-lg">No matches found</p>
-              <p className="text-zinc-600 text-sm mt-2">
-                Matches will appear here once the scraper detects events on LotusBook.
+              <p className="text-zinc-400 text-base font-semibold">No LotusBook matches match your filter</p>
+              <p className="text-zinc-500 text-xs mt-1">
+                The live scraper monitors LotusBook constantly. Matches will appear when detected.
               </p>
             </div>
           )}
         </>
       )}
 
-      {/* ═══ TRAINING APPROVAL TAB ═══ */}
+      {/* ═══ TAB 2: TRAINING CORPUS ═══ */}
       {viewTab === "training" && (
         <>
-          <p className="text-zinc-500 text-sm mb-3">
-            Matches with collected data. Validate quality and approve for RL training.
-          </p>
-          <div className="flex gap-1 mb-6 bg-zinc-800/50 p-1 rounded-lg w-fit">
-            {(["all", "pending", "approved", "rejected"] as const).map((f) => (
-              <button
-                key={f}
-                onClick={() => setTrainingFilter(f)}
-                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                  trainingFilter === f
-                    ? "bg-zinc-700 text-white"
-                    : "text-zinc-400 hover:text-zinc-200"
-                }`}
-              >
-                {f.charAt(0).toUpperCase() + f.slice(1)}
-              </button>
-            ))}
+          {/* Subheader and Filters */}
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 mb-4">
+            <p className="text-zinc-400 text-xs">
+              Official harmonized international cricket corpus (1,000 matches across T20I, ODI, and Test — 190,254 ticks).
+            </p>
+
+            <div className="flex flex-wrap gap-2 items-center">
+              {/* Format Filter */}
+              <div className="flex gap-1 bg-zinc-900 p-1 rounded-lg border border-zinc-800 text-xs">
+                <button
+                  onClick={() => handleFormatFilterChange("all")}
+                  className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
+                    formatFilter === "all" ? "bg-zinc-800 text-white font-bold" : "text-zinc-400 hover:text-zinc-200"
+                  }`}
+                >
+                  All Formats ({formatCounts.total})
+                </button>
+                <button
+                  onClick={() => handleFormatFilterChange("t20")}
+                  className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
+                    formatFilter === "t20" ? "bg-indigo-600/40 text-indigo-300 font-bold" : "text-zinc-400 hover:text-zinc-200"
+                  }`}
+                >
+                  T20I ({formatCounts.t20})
+                </button>
+                <button
+                  onClick={() => handleFormatFilterChange("odi")}
+                  className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
+                    formatFilter === "odi" ? "bg-blue-600/40 text-blue-300 font-bold" : "text-zinc-400 hover:text-zinc-200"
+                  }`}
+                >
+                  ODI ({formatCounts.odi})
+                </button>
+                <button
+                  onClick={() => handleFormatFilterChange("test")}
+                  className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
+                    formatFilter === "test" ? "bg-purple-600/40 text-purple-300 font-bold" : "text-zinc-400 hover:text-zinc-200"
+                  }`}
+                >
+                  Test ({formatCounts.test})
+                </button>
+              </div>
+
+              {/* Status Filter */}
+              <div className="flex gap-1 bg-zinc-900 p-1 rounded-lg border border-zinc-800 text-xs">
+                {(["all", "approved", "pending", "rejected"] as const).map((f) => (
+                  <button
+                    key={f}
+                    onClick={() => handleTrainingFilterChange(f)}
+                    className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
+                      trainingFilter === f ? "bg-zinc-800 text-white font-bold" : "text-zinc-400 hover:text-zinc-200"
+                    }`}
+                  >
+                    {f.charAt(0).toUpperCase() + f.slice(1)}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
 
+          {/* Pagination Controls Top */}
+          <div className="flex items-center justify-between text-xs text-zinc-400 bg-zinc-900/60 px-4 py-2 rounded-lg border border-zinc-800 mb-4">
+            <span>
+              Showing <b className="text-zinc-200">{Math.min(filteredTrainingMatches.length, (currentPage - 1) * ITEMS_PER_PAGE + 1)}</b> to{" "}
+              <b className="text-zinc-200">{Math.min(filteredTrainingMatches.length, currentPage * ITEMS_PER_PAGE)}</b> of{" "}
+              <b className="text-zinc-200">{filteredTrainingMatches.length.toLocaleString()}</b> matches
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                disabled={currentPage <= 1}
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                className="px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 transition-colors"
+              >
+                ◀ Prev
+              </button>
+              <span>
+                Page <b className="text-zinc-100">{currentPage}</b> of <b>{totalPages}</b>
+              </span>
+              <button
+                disabled={currentPage >= totalPages}
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                className="px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 transition-colors"
+              >
+                Next ▶
+              </button>
+            </div>
+          </div>
+
+          {/* Cards Grid */}
           {loading && !data ? (
-            <p className="text-zinc-500">Loading matches...</p>
-          ) : trainingMatches.length ? (
+            <p className="text-zinc-500 text-sm py-8 text-center">Loading training matches...</p>
+          ) : paginatedTrainingMatches.length ? (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {trainingMatches.map((match) => {
+              {paginatedTrainingMatches.map((match) => {
                 const isLive = liveIds.has(match.match_id);
                 const isPending = match.training_status === "pending";
                 const isApproved = match.training_status === "approved";
                 const isRejected = match.training_status === "rejected";
                 const busy = actionLoading === match.match_id;
+                const format = getFormatLabel(match.match_id);
 
                 return (
                   <div
                     key={match.match_id}
                     className="stat-card flex flex-col gap-3 relative overflow-hidden"
                   >
-                    {/* Top row */}
+                    {/* Top Row: Format Pill & Status */}
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs text-zinc-500 truncate max-w-[60%]">
-                        {match.competition || "Unknown"}
+                      <span className={`text-[11px] font-semibold px-2 py-0.5 rounded border ${format.badgeClass}`}>
+                        {format.label}
                       </span>
                       <div className="flex items-center gap-2">
                         {isLive && (
-                          <span className="flex items-center gap-1 text-xs text-red-400">
+                          <span className="flex items-center gap-1 text-xs text-red-400 font-bold">
                             <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse" />
                             LIVE
                           </span>
@@ -565,26 +735,33 @@ export default function MatchesPage() {
                       </div>
                     </div>
 
-                    {/* Teams */}
+                    {/* Tournament / Competition */}
+                    {match.competition && (
+                      <p className="text-xs text-zinc-400 font-medium truncate -mb-1">
+                        🏆 {match.competition}
+                      </p>
+                    )}
+
+                    {/* Team Names */}
                     <div>
-                      <p className="text-lg font-semibold leading-tight">{match.team_home}</p>
-                      <p className="text-xs text-zinc-500 my-0.5">vs</p>
-                      <p className="text-lg font-semibold leading-tight">{match.team_away}</p>
+                      <p className="text-base font-bold text-zinc-100 leading-tight">{match.team_home}</p>
+                      <p className="text-xs text-zinc-500 my-0.5 font-medium">vs</p>
+                      <p className="text-base font-bold text-zinc-100 leading-tight">{match.team_away}</p>
                     </div>
 
                     {/* Meta */}
-                    <div className="flex items-center justify-between text-xs text-zinc-600">
-                      <span>{match.tick_count.toLocaleString()} ticks</span>
-                      <span>
-                        {match.created_at
-                          ? new Date(match.created_at).toLocaleDateString()
-                          : "—"}
+                    <div className="flex items-center justify-between text-xs text-zinc-500 pt-1 border-t border-zinc-800/60">
+                      <span className="font-medium text-zinc-400">
+                        {match.tick_count.toLocaleString()} ticks
+                      </span>
+                      <span className="text-zinc-500 font-mono text-[11px]">
+                        {match.match_id}
                       </span>
                     </div>
 
-                    {/* Validation result panel */}
+                    {/* Validation Result Diagnostic Panel */}
                     {validationResults[match.match_id] && (
-                      <div className="bg-zinc-900/80 rounded-lg p-3 text-xs space-y-2 border border-zinc-700/50">
+                      <div className="bg-zinc-900/90 rounded-lg p-3 text-xs space-y-2 border border-zinc-700/60">
                         {(() => {
                           const v = validationResults[match.match_id];
                           const q = v.quality_report;
@@ -600,24 +777,20 @@ export default function MatchesPage() {
                                   {(q.quality_score * 100).toFixed(0)}%
                                 </span>
                               </div>
-                              <div className={`px-2 py-1 rounded text-center font-medium ${REC_COLORS[v.recommendation] ?? ""}`}>
+                              <div className={`px-2 py-1 rounded text-center font-semibold text-xs ${REC_COLORS[v.recommendation] ?? ""}`}>
                                 {v.recommendation.toUpperCase()}: {v.recommendation_reason}
                               </div>
-                              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-zinc-400">
+                              <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-zinc-400 text-[11px]">
                                 <span>Live ticks: <b className="text-zinc-200">{s.live_ticks}</b></span>
-                                <span>Pre-match: <b className="text-zinc-200">{s.prematch_ticks}</b></span>
                                 <span>Duration: <b className="text-zinc-200">{s.duration_minutes}m</b></span>
                                 <span>Completeness: <b className="text-zinc-200">{(q.completeness * 100).toFixed(0)}%</b></span>
-                                <span>Missing lay H: <b className="text-zinc-200">{s.missing_lay_home}</b></span>
-                                <span>Missing lay A: <b className="text-zinc-200">{s.missing_lay_away}</b></span>
                                 <span>Odds jumps: <b className="text-zinc-200">{q.odds_jump_count}</b></span>
-                                <span>Duplicates: <b className="text-zinc-200">{q.duplicate_count}</b></span>
-                                <span>Home odds: <b className="text-zinc-200">{s.home_odds_range.min ?? "?"}-{s.home_odds_range.max ?? "?"} ({s.home_odds_range.unique_prices})</b></span>
-                                <span>Away odds: <b className="text-zinc-200">{s.away_odds_range.min ?? "?"}-{s.away_odds_range.max ?? "?"} ({s.away_odds_range.unique_prices})</b></span>
+                                <span>Home odds: <b className="text-zinc-200">{s.home_odds_range.min ?? "?"}-{s.home_odds_range.max ?? "?"}</b></span>
+                                <span>Away odds: <b className="text-zinc-200">{s.away_odds_range.min ?? "?"}-{s.away_odds_range.max ?? "?"}</b></span>
                               </div>
                               {q.issues.length > 0 && (
-                                <div className="text-red-400">
-                                  {q.issues.map((issue, i) => <div key={i}>{issue}</div>)}
+                                <div className="text-red-400 text-[11px] pt-1 border-t border-zinc-800">
+                                  {q.issues.map((issue, i) => <div key={i}>• {issue}</div>)}
                                 </div>
                               )}
                             </>
@@ -626,21 +799,22 @@ export default function MatchesPage() {
                       </div>
                     )}
 
-                    {/* Action buttons */}
+                    {/* Action Buttons */}
                     <div className="flex gap-2 mt-auto pt-2 border-t border-zinc-800">
                       <button
                         disabled={validating === match.match_id}
                         onClick={() => handleValidate(match.match_id)}
-                        className="flex-1 text-xs font-medium py-1.5 rounded-md bg-indigo-600/80 hover:bg-indigo-600 text-white transition-colors disabled:opacity-50"
+                        className="flex-1 text-xs font-semibold py-1.5 rounded-md bg-indigo-600/80 hover:bg-indigo-600 text-white transition-colors disabled:opacity-50"
                       >
                         {validating === match.match_id ? "Validating..." : "Validate"}
                       </button>
+
                       {isPending && (
                         <>
                           <button
                             disabled={busy}
                             onClick={() => handleTrainingAction(match.match_id, "approve")}
-                            className="flex-1 text-xs font-medium py-1.5 rounded-md bg-emerald-600/80 hover:bg-emerald-600 text-white transition-colors disabled:opacity-50"
+                            className="flex-1 text-xs font-semibold py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white transition-colors disabled:opacity-50"
                           >
                             {busy ? "..." : "Approve"}
                           </button>
@@ -653,43 +827,44 @@ export default function MatchesPage() {
                           </button>
                         </>
                       )}
+
                       {isApproved && (
-                        <button
-                          disabled={busy}
-                          onClick={() => handleTrainingAction(match.match_id, "reject")}
-                          className="flex-1 text-xs font-medium py-1.5 rounded-md bg-zinc-700 hover:bg-red-600/80 text-zinc-300 hover:text-white transition-colors disabled:opacity-50"
-                        >
-                          {busy ? "..." : "Revoke"}
-                        </button>
+                        <>
+                          <Link
+                            href={`/matches/${match.match_id}/watch`}
+                            className="text-xs font-medium py-1.5 px-2.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition-colors"
+                            title="Inspect virtual bets on this match"
+                          >
+                            Trades
+                          </Link>
+                          <button
+                            onClick={() => setManualResultMatch(match)}
+                            className="text-xs font-medium py-1.5 px-2 rounded-md bg-amber-600/80 hover:bg-amber-600 text-white transition-colors"
+                            title="Submit match result manually"
+                          >
+                            📝 Result
+                          </button>
+                        </>
                       )}
+
                       {isRejected && (
                         <>
                           <button
                             disabled={busy}
                             onClick={() => handleTrainingAction(match.match_id, "approve")}
-                            className="flex-1 text-xs font-medium py-1.5 rounded-md bg-zinc-700 hover:bg-emerald-600/80 text-zinc-300 hover:text-white transition-colors disabled:opacity-50"
+                            className="flex-1 text-xs font-medium py-1.5 rounded-md bg-zinc-800 hover:bg-emerald-600/80 text-zinc-300 hover:text-white transition-colors disabled:opacity-50"
                           >
                             {busy ? "..." : "Re-approve"}
                           </button>
                           <button
                             disabled={busy}
                             onClick={() => handleDelete(match.match_id)}
-                            className="flex-1 text-xs font-medium py-1.5 rounded-md bg-zinc-700 hover:bg-red-600/80 text-zinc-300 hover:text-red-300 transition-colors disabled:opacity-50"
+                            className="flex-1 text-xs font-medium py-1.5 rounded-md bg-zinc-800 hover:bg-red-600/80 text-zinc-400 hover:text-red-300 transition-colors disabled:opacity-50"
                             title="Permanently delete match data"
                           >
                             {busy ? "..." : "Delete"}
                           </button>
                         </>
-                      )}
-                      {/* Manual result submission for approved matches */}
-                      {isApproved && (
-                        <button
-                          onClick={() => setManualResultMatch(match)}
-                          className="text-xs font-medium py-1.5 px-2 rounded-md bg-amber-600/80 hover:bg-amber-600 text-white transition-colors"
-                          title="Submit match result manually"
-                        >
-                          📝 Result
-                        </button>
                       )}
                     </div>
                   </div>
@@ -698,10 +873,39 @@ export default function MatchesPage() {
             </div>
           ) : (
             <div className="stat-card text-center py-12">
-              <p className="text-zinc-500 text-lg">No matches with collected data</p>
-              <p className="text-zinc-600 text-sm mt-2">
-                Approve matches for scraping in Step 1 first. They will appear here once data is collected.
+              <p className="text-zinc-400 text-base font-semibold">No training matches match your query</p>
+              <p className="text-zinc-500 text-xs mt-1">
+                Try selecting &quot;All Sources&quot; or clearing your search term.
               </p>
+            </div>
+          )}
+
+          {/* Pagination Controls Bottom */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-center gap-3 mt-6 text-xs text-zinc-400">
+              <button
+                disabled={currentPage <= 1}
+                onClick={() => {
+                  setCurrentPage((p) => Math.max(1, p - 1));
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                className="px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 transition-colors font-medium"
+              >
+                ◀ Previous Page
+              </button>
+              <span>
+                Page <b className="text-zinc-100">{currentPage}</b> of <b>{totalPages}</b>
+              </span>
+              <button
+                disabled={currentPage >= totalPages}
+                onClick={() => {
+                  setCurrentPage((p) => Math.min(totalPages, p + 1));
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                className="px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 transition-colors font-medium"
+              >
+                Next Page ▶
+              </button>
             </div>
           )}
         </>

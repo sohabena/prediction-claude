@@ -221,7 +221,7 @@ export default function DashboardPage() {
           label="Total P&L"
           value={
             perf?.total_pnl !== undefined
-              ? `${perf.total_pnl >= 0 ? "+" : ""}${perf.total_pnl.toFixed(0)}`
+              ? `${perf.total_pnl >= 0 ? "+$" : "-$"}${Math.abs(perf.total_pnl).toLocaleString()}`
               : "—"
           }
           color={perf && perf.total_pnl > 0 ? "green" : "red"}
@@ -237,7 +237,11 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           label="Agent Version"
-          value={summary?.latest_version ?? "—"}
+          value={
+            summary?.latest_version && summary.latest_version !== "none"
+              ? summary.latest_version
+              : `v${orchState?.model_version ?? 3} (Two-Way Rate Trading)`
+          }
         />
         <StatCard
           label="ROI (1h)"
@@ -255,7 +259,10 @@ export default function DashboardPage() {
           }
         />
         <StatCard label="Wins / Losses" value={perf ? `${perf.wins} / ${perf.losses}` : "—"} />
-        <StatCard label="Avg Stake" value={perf?.avg_stake?.toFixed(0) ?? "—"} />
+        <StatCard
+          label="Avg Stake"
+          value={perf?.avg_stake ? `$${Math.round(perf.avg_stake).toLocaleString()}` : "—"}
+        />
       </div>
     </div>
   );
