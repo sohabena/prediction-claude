@@ -520,6 +520,7 @@ def enrich(
         "safety_lag_s": lag.seconds,
         "lag_source": lag.source,
         "cricsheet_file": cricket.rel,
+        "cricsheet_match_id": Path(cricket.rel).stem,  # S38 evaluator join key (file stem)
     }
     first_meta = dict(ticks[0].get("_meta") or {})
     first_meta["alignment_quality"] = quality
@@ -768,6 +769,7 @@ def align_corpus(
             "match_id": ep["match_id"],
             "family": ep["family"],
             "cricsheet_file": entry.rel,
+            "cricsheet_match_id": Path(entry.rel).stem,
             "file": rel,
             "sha1": hashlib.sha1(payload).hexdigest(),
             "n_ticks": len(aligned["ticks"]),

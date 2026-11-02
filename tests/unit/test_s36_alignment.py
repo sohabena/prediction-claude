@@ -388,6 +388,7 @@ class TestEnrichAndCorpus:
         assert manifest["counts"]["matched"] == 1
         row = manifest["matched"][0]
         assert row["cricsheet_file"] == "1000001.json"
+        assert row["cricsheet_match_id"] == "1000001"  # S38 evaluator join key
         ticks = json.loads(gzip.decompress((out / row["file"]).read_bytes()).decode("utf-8"))
         assert len(ticks) == len(fx["ticks"])
         assert ticks[-1]["score"] is not None
