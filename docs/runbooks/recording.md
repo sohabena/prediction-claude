@@ -127,3 +127,25 @@ With no qualifying matches it prints "No recorded matches" and exits 0.
 |----------|---------|---------|
 | `SCRAPER_RECORD_ALL` | `1` | Record every qualifying live match, regardless of approval. Set `0` to restore approval-gated recording. |
 | `SCRAPER_STALL_MINUTES` | `10` | Restart the scraper when a live match has no processed event for this long. |
+| `SCRAPER_MARKET_PAGES` | `1` | S47: open one read-only match page per live recorded match and store Bookmaker and session markets to `market_ticks`. Set `0` to turn off. |
+
+## 6. Bookmaker and session markets (S47)
+
+Table `market_ticks` (migration `003_market_ticks`, hypertable in `backend/db_init.py`). The migration is
+not applied by the story. Apply it with the operator's usual step only after checking the table is empty
+or the change is intended. Rows are written only when a market's content changes.
+
+- `market_type`: `bookmaker`, `session` (names like `session:6_over:India`), or `other`.
+- `status`: `open`, `suspended`, or `ball_running`.
+- Selectors are UNVERIFIED for Bookmaker and session blocks. See the header of
+  `scraper/parsers/lotusbook_markets.py`.
+
+Health query to add to `scripts/recording_health.py` (not edited by S47):
+
+```sql
+SELECT match_id, market_type, COUNT(*) AS rows, MAX(time) AS last_seen
+FROM market_ticks
+WHERE time > NOW() - INTERVAL '1 day'
+GROUP BY match_id, market_type
+ORDER BY last_seen DESC;
+```

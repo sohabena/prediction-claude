@@ -43,6 +43,7 @@ HYPERTABLE_STATEMENTS = [
     "SELECT create_hypertable('virtual_bets', 'placed_at', if_not_exists => TRUE)",
     "SELECT create_hypertable('training_metrics', 'time', if_not_exists => TRUE)",
     "SELECT create_hypertable('graduation_snapshots', 'time', if_not_exists => TRUE)",
+    "SELECT create_hypertable('market_ticks', 'time', if_not_exists => TRUE, chunk_time_interval => INTERVAL '1 day')",
 ]
 
 # create_hypertable(if_not_exists) never changes an existing table's interval;

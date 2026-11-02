@@ -20,6 +20,8 @@ from features.extractors.category_features import MatchCategoryClassifier, Match
 from scraper.live_match_tracker import LiveMatchTracker
 from scraper.match_filter import MatchClassifier
 from scraper.lotus_result_detector import LotusResultDetector
+from scraper.market_pages import MarketPageWorker, build_match_url, eligibility, open_match_page, resolve_match_href
+from scraper.parsers.lotusbook_markets import MarketRecord
 from scraper.worker import ScraperWorker
 from shared.config import get_settings
 from shared.constants import CHANNEL_MATCH_CONTEXT, CHANNEL_MATCH_EVENTS, KEY_ACTIVE_MATCHES, KEY_MATCH_CONTEXT
@@ -32,6 +34,7 @@ logger = setup_logging("scraper_manager")
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 FEED_STATE_PATH = ROOT_DIR / "logs" / "scraper_feed.json"
+MARKET_WORKER_CAP = 4  # S47: max extra match pages open at once (politeness)
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -100,6 +103,11 @@ class ScraperManager:
         # S37: record every qualifying live match. Approval only controls live publishing.
         self._record_all = _env_flag("SCRAPER_RECORD_ALL", default=True)
         self._last_live_event_at: str | None = None
+        # S47: one read-only market-page worker per eligible live match.
+        self._listing_page: Any = None
+        self._market_attempted: set[str] = set()
+        self._market_tasks: dict[str, asyncio.Task] = {}
+        self._market_stops: dict[str, asyncio.Event] = {}
 
     async def start(self) -> None:
         """Start the scraper manager: launch browser, begin scraping."""
@@ -123,6 +131,7 @@ class ScraperManager:
         )
 
         page = await self._context.new_page()
+        self._listing_page = page
         await page.goto(
             self.settings.scraper.betting_site_url,
             wait_until="domcontentloaded",
@@ -417,6 +426,7 @@ class ScraperManager:
             # Store to DB (recording, independent of approval)
             self._quality_stats["stored"] += 1
             await self._store_odds_tick(event)
+            await self._ensure_market_worker(event)
 
             # Publish MatchContext for other consumers (channel + cache + DB)
             if context is not None:
@@ -543,6 +553,101 @@ class ScraperManager:
 
         except Exception as e:
             logger.debug("context_publish_error", match_id=context.match_id, error=str(e))
+
+    # ── S47: Bookmaker / session markets via one read-only page per live match ──
+
+    async def _ensure_market_worker(self, event: OddsEvent) -> None:
+        """Start one read-only market-page worker for an eligible live match.
+
+        Never clicks, never inputs, never logs in. Simulated matches never start a worker.
+        Workers stop when the match completes or on shutdown.
+        """
+        self._sweep_market_workers()
+        mid = event.match_id
+        if mid in self._market_attempted or not _env_flag("SCRAPER_MARKET_PAGES", default=True):
+            return
+        eligible, reason = eligibility(
+            is_live=event.is_live,
+            team_home=event.team_home,
+            team_away=event.team_away,
+            competition=event.competition,
+        )
+        if not eligible:
+            if reason == "simulated":
+                self._market_attempted.add(mid)
+            return
+        if not mid.startswith("lb_") or self._listing_page is None or self._context is None:
+            return
+        if len(self._market_tasks) >= MARKET_WORKER_CAP:
+            logger.warning("market_worker_cap_reached", cap=MARKET_WORKER_CAP, match_id=mid)
+            return
+        self._market_attempted.add(mid)
+        try:
+            href = await resolve_match_href(self._listing_page, mid[len("lb_"):])
+            if not href:
+                logger.warning("market_href_not_found", match_id=mid)
+                return
+            url = build_match_url(self.settings.scraper.betting_site_url, href)
+            page = await open_match_page(self._context, url)
+        except Exception as e:
+            logger.warning("market_page_open_failed", match_id=mid, error=str(e))
+            return
+        stop = asyncio.Event()
+        worker = MarketPageWorker(
+            match_id=mid,
+            page=page,
+            store=self._store_market_records,
+            poll_interval=self.settings.scraper.poll_interval,
+        )
+        self._market_stops[mid] = stop
+        self._market_tasks[mid] = asyncio.create_task(self._run_market_worker(mid, worker, page, stop))
+        logger.info("market_worker_started", match_id=mid, url=url)
+
+    async def _run_market_worker(self, mid: str, worker: MarketPageWorker, page: Any, stop: asyncio.Event) -> None:
+        try:
+            await worker.run(stop)
+        finally:
+            try:
+                await page.close()
+            except Exception:
+                pass
+            self._market_tasks.pop(mid, None)
+            self._market_stops.pop(mid, None)
+            logger.info("market_worker_stopped", match_id=mid, snapshots=worker.stored_snapshots)
+
+    def _sweep_market_workers(self) -> None:
+        for mid in list(self._market_stops):
+            if mid in self._completed_match_ids:
+                self._market_stops[mid].set()
+
+    async def _store_market_records(self, match_id: str, records: list[MarketRecord]) -> None:
+        """Write changed market records to market_ticks (storage call only)."""
+        from backend.models.market_ticks import MarketTick
+
+        try:
+            async with get_session() as session:
+                session.add_all(
+                    [
+                        MarketTick(
+                            time=r.time,
+                            match_id=r.match_id,
+                            market_type=r.market_type,
+                            market_name=r.market_name,
+                            selection=r.selection,
+                            back=r.back,
+                            lay=r.lay,
+                            line_no=r.line_no,
+                            rate_no=r.rate_no,
+                            line_yes=r.line_yes,
+                            rate_yes=r.rate_yes,
+                            status=r.status,
+                            source=r.source,
+                        )
+                        for r in records
+                    ]
+                )
+        except Exception as e:
+            logger.error("market_db_store_error", match_id=match_id, error=str(e))
 
     async def _store_odds_tick(self, event: OddsEvent) -> None:
         """Store an odds event to TimescaleDB with volume + context data."""
@@ -718,6 +823,11 @@ class ScraperManager:
         """Gracefully stop scraping."""
         logger.info("scraper_stopping")
         self._running = False
+
+        for mid in list(self._market_stops):
+            self._market_stops[mid].set()
+        if self._market_tasks:
+            await asyncio.wait(list(self._market_tasks.values()), timeout=10)
 
         # Clean up result detector memory
         if self._result_detector:
