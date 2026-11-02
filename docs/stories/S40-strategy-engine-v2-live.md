@@ -38,6 +38,8 @@ backtested, so I can trust it and act on it in under a minute.
 ## Owned files
 
 - `strategy/value_policy.py` (implement the interface; keep `predict` for the evaluator)
+- `strategy/ratings.py` (add `pre_match_live` only; see the S38 integration notes)
+- `virtual_trading/engine.py` (the one `register_match` call only; see the wave-11 notes)
 - New: `strategy/runner.py`, `strategy/signals.py`
 - `virtual_trading/live_trading_loop.py` (decision section of `_handle_match_event`, `_schedule_placement` delay source)
 - `shared/constants.py` (new `STRATEGY_*`, `SIGNAL_*`, `MANUAL_LATENCY_SECONDS` constants only)
@@ -101,3 +103,21 @@ python -m pytest tests/unit tests/rl -q
   off price, in-play bets the price 10 minutes after placement. Paper bets need no extra columns: `scripts/audit_clv.py`
   computes `clv_10m` from `odds_ticks`.
 - S32 changed the daily breaker to realised loss only (open worst-case liability is bounded by the liability caps).
+
+## Integration notes from S38 (binding)
+
+- The fair model to use is v2 (`strategy/fair_value.py`, `version="v2"`, files resolved by `model_path(family, key, "v2")`;
+  two-stage: logistic pre-match prior + monotonic in-play GBM). It reads pre-match fields `pm_elo_home`, `pm_elo_away`,
+  `pm_xi_home`, `pm_xi_away`, `pm_toss_home`, `pm_toss_bat`, `pm_venue_chase_pct`, `pm_venue_n`, `pm_tier` from each
+  tick. Missing fields fall back to neutral values (`prematch_features`), which degrades the model to state-only.
+- Live ticks have none of these, and `strategy/ratings.py CricketRatings.pre_match(match_id, as_of)` needs a
+  **Cricsheet** match id that a live match does not have yet. Add to `strategy/ratings.py` (you may edit **only** to add
+  this method) `pre_match_live(team_home, team_away, family, gender, as_of, *, venue=None, city=None, players=None,
+  toss_winner=None, toss_decision=None, tier=None) -> dict` returning the same `pm_*` keys. Use Elo by team name
+  (normalised with `canonicalize_team(n) or n.strip()` semantics, passed in, not imported from the harmonizer).
+  Use venue priors only when a venue is known (LotusBook gives none: use neutral) and XI strength only when players
+  are known (else 0 difference). Compute once per match per day and cache it; never on every tick.
+- Tests: a live lookup for two known teams returns the same Elo difference as `pre_match` for a historical Cricsheet
+  match between them on the same date; unknown teams give neutral values and are logged once.
+- `strategy/fair_value.py:family_of("ODM")` is fixed (odi). Gender for live matches: LotusBook names ending in
+  `W`/`Women` mean female (see `scraper/match_filter.py _strip_womens_suffix`).
