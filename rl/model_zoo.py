@@ -1,8 +1,12 @@
 """
 PHOENIX Specialist Model Zoo & Dynamic Format Router.
 
-Manages format-specialized RL agent models (T20I, ODI, Test, IPL) and provides
-intelligent routing based on match format, tournament name, and tier.
+Manages format, league, and gender-specialized RL agent models:
+- Men & Women separated (T20I Men, T20I Women, ODI Men, ODI Women, BBL Men, WBBL Women)
+- Top leagues separated (IPL, BBL, WBBL, T20 Blast, Franchise T20)
+- Multi-day & 50-over separated (Test Men, First-Class, ODI Men, ODI Women, List A)
+
+Provides strictly causal zero-lookahead routing based on match format, tournament name, and tier.
 """
 
 from __future__ import annotations
@@ -10,7 +14,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -28,16 +32,58 @@ SPECIALISTS_DIR = Path("models/specialists")
 METADATA_FILE = SPECIALISTS_DIR / "metadata.json"
 DEFAULT_MODEL_PATH = Path("models/best_model.zip")
 
+ALL_SPECIALIST_DEFS: List[Tuple[str, str]] = [
+    ("ipl", "IPL (Indian Premier League)"),
+    ("bbl_men", "BBL (Men's Big Bash League)"),
+    ("wbbl_women", "WBBL (Women's Big Bash League)"),
+    ("t20i_men", "T20I (Men's International)"),
+    ("t20i_women", "T20I (Women's International)"),
+    ("odi_men", "ODI (Men's International)"),
+    ("odi_women", "ODI (Women's International)"),
+    ("test_men", "Test Matches (Men)"),
+    ("t20_blast", "T20 Blast & Domestic T20"),
+    ("franchise_t20", "Global Franchise T20 (CPL, PSL, etc.)"),
+    ("first_class", "First-Class Multi-Day"),
+    ("list_a", "List A (50-Over Domestic)"),
+]
+
+KEY_ALIASES: Dict[str, str] = {
+    "t20i": "t20i_men",
+    "odi": "odi_men",
+    "test": "test_men",
+    "bbl": "bbl_men",
+    "wbbl": "wbbl_women",
+}
+
+
+def _match_team_name(text: str, candidates: Any) -> bool:
+    for c in candidates:
+        if len(c) <= 3:
+            if re.search(r"\b" + re.escape(c) + r"\b", text):
+                return True
+        else:
+            if c in text:
+                return True
+    return False
+
 
 class ModelZoo:
     """
     Registry, router, and lifecycle manager for format-specialist trading agents.
     
-    Supports:
-    - T20I Specialist: Optimized for rapid rate fluctuations, early boundary hedging.
-    - ODI Specialist: Optimized for 50-over pacing, middle-over accumulation, DLS chases.
-    - Test Specialist: Optimized for multi-day session decay, pitch wear, 3-way draw markets.
-    - IPL Specialist: Optimized for high-liquidity order books, tight tick spreads, death-over volatility.
+    Supports 12 distinct format, league, and gender specialists:
+    - IPL: Ultra high liquidity, tight tick spreads, death-over volatility, ~188 par.
+    - BBL (Men): Australian drop-in pitches, Power Surge mechanics, ~168 par.
+    - WBBL (Women): High wicket-decay sensitivity, ~138 par.
+    - T20I (Men): Men's international pacing, boundary rate momentum, ~168 par.
+    - T20I (Women): Women's international rate strategy, 1.35x wicket sensitivity, ~136 par.
+    - ODI (Men): 50-over middle-over accumulation and death acceleration, ~285 par.
+    - ODI (Women): Women's 50-over pacing, ~215 par.
+    - Test (Men): Multi-day session decay, pitch wear, 3-way draw markets, ~340 par.
+    - T20 Blast: English county conditions, early swing bias, ~172 par.
+    - Franchise T20: Global franchise dynamics (CPL, PSL, BPL), ~165 par.
+    - First-Class: County Championship / domestic multi-day red-ball cricket, ~310 par.
+    - List A: Domestic 50-over tournaments (Royal London, Vijay Hazare), ~265 par.
     """
 
     def __init__(self, models_dir: Path = SPECIALISTS_DIR) -> None:
@@ -52,16 +98,10 @@ class ModelZoo:
 
     def _load_metadata(self) -> None:
         """Load specialist metadata if available."""
-        if self.metadata_file.exists():
+        target_file = self.metadata_file if self.metadata_file.exists() else METADATA_FILE
+        if target_file.exists():
             try:
-                with open(self.metadata_file, "r", encoding="utf-8") as f:
-                    self._metadata = json.load(f)
-            except Exception as e:
-                logger.warning("failed_to_load_metadata", error=str(e))
-                self._metadata = {}
-        elif METADATA_FILE.exists() and self.models_dir == SPECIALISTS_DIR:
-            try:
-                with open(METADATA_FILE, "r", encoding="utf-8") as f:
+                with open(target_file, "r", encoding="utf-8") as f:
                     self._metadata = json.load(f)
             except Exception as e:
                 logger.warning("failed_to_load_metadata", error=str(e))
@@ -99,6 +139,9 @@ class ModelZoo:
         # Invalidate in-memory cache to force reload on next query
         if key in self._models:
             del self._models[key]
+        for alias_k, target_k in KEY_ALIASES.items():
+            if target_k == key and alias_k in self._models:
+                del self._models[alias_k]
 
     def resolve_specialist_key(
         self,
@@ -112,33 +155,94 @@ class ModelZoo:
         Determine the appropriate specialist key from format or tournament details.
         
         Resolution Priority:
-        1. Event/Tournament specific (e.g. 'ipl' if Indian Premier League)
-        2. Format specific: 't20i' (T20), 'odi' (ODI), 'test' (Test / Multi-Day)
-        3. MatchCategoryClassifier structural fallback
-        4. Fallback: 'default'
+        1. Women's tournament / match detection (WBBL, Women's T20I, Women's ODI)
+        2. Distinct league identification (IPL, BBL, T20 Blast, First-Class, List A, Franchise T20)
+        3. Men's international formats (Test Men, ODI Men, T20I Men)
+        4. MatchCategoryClassifier structural fallback
+        5. Fallback: 'default'
         """
         combined = f"{format_name} {event_name} {match_name} {team_home} {team_away}".lower()
 
-        # Check for IPL / Franchise
+        # Check gender markers
+        is_women = (
+            "women" in combined
+            or "female" in combined
+            or "w-t20" in combined
+            or "wt20" in combined
+            or "w-odi" in combined
+            or "wodi" in combined
+            or "wbbl" in combined
+            or "wpl" in combined
+        )
+
+        # 1. WBBL / Women's BBL
+        bbl_teams = [t.lower() for t in FRANCHISE_TEAMS.get("BBL", [])]
+        if (
+            "wbbl" in combined
+            or (("big bash" in combined or "bbl" in combined or _match_team_name(combined, bbl_teams)) and is_women)
+        ):
+            return "wbbl_women"
+
+        # 2. Men's BBL
+        if "bbl" in combined or "big bash" in combined or _match_team_name(combined, bbl_teams):
+            return "bbl_men"
+
+        # 3. IPL / Indian Premier League
         ipl_teams = [t.lower() for t in FRANCHISE_TEAMS.get("IPL", [])]
         if (
             "ipl" in combined
             or "indian premier league" in combined
-            or any(t in combined for t in ipl_teams)
+            or _match_team_name(combined, ipl_teams)
         ):
             return "ipl"
 
-        # Check for Test / First Class
+        # 4. T20 Blast & Domestic T20 (Syed Mushtaq Ali)
         if (
-            "test" in combined
-            or "first-class" in combined
-            or "county" in combined
+            "blast" in combined
+            or "vitality" in combined
+            or "mushtaq ali" in combined
+            or "t20 blast" in combined
+        ):
+            return "t20_blast"
+
+        # 5. First-Class Multi-Day / County Championship
+        if (
+            "first-class" in combined
+            or "first class" in combined
+            or "county championship" in combined
             or "sheffield" in combined
             or "plunket" in combined
+            or "ranji" in combined
         ):
-            return "test"
+            return "first_class"
 
-        # Check for ODI / List A / 50-over
+        # 6. List A Domestic 50-Over
+        if (
+            "list a" in combined
+            or "list-a" in combined
+            or "royal london" in combined
+            or "marsh one-day" in combined
+            or "vijay hazare" in combined
+            or "ford trophy" in combined
+            or "one-day cup" in combined
+            or "one day cup" in combined
+        ):
+            return "list_a"
+
+        # 7. Other Franchise T20 leagues (PSL, CPL, BPL, Super Smash, MLC, SA20, ILT20)
+        franchise_signals = [
+            "psl", "pakistan super league", "cpl", "caribbean premier",
+            "bpl", "bangladesh premier", "super smash", "sa20",
+            "major league cricket", "mlc", "ilt20", "lpl", "lanka premier"
+        ]
+        if any(fs in combined for fs in franchise_signals):
+            return "franchise_t20"
+
+        # 8. Test Matches (Men)
+        if "test" in combined:
+            return "test_men"
+
+        # 9. ODI / One-Day / 50-over
         if (
             "odi" in combined
             or "one-day" in combined
@@ -149,19 +253,15 @@ class ModelZoo:
             or ("world cup" in combined and "t20" not in combined)
             or "champions trophy" in combined
         ):
-            return "odi"
+            return "odi_women" if is_women else "odi_men"
 
-        # Check for T20 / 20-over
+        # 10. T20 / 20-over
         if (
             "t20" in combined
             or "twenty20" in combined
             or "hundred" in combined
-            or "bbl" in combined
-            or "psl" in combined
-            or "cpl" in combined
-            or "blast" in combined
         ):
-            return "t20i"
+            return "t20i_women" if is_women else "t20i_men"
 
         # Structural classification fallback using existing classifier
         th = team_home
@@ -177,16 +277,15 @@ class ModelZoo:
                 team_home=th,
                 team_away=ta,
             )
-            # Only map if classifier recognized a distinct cricket tier or non-empty signal
-            if cat.tier in (MatchTier.ICC_MEN, MatchTier.MAJOR_FRANCHISE, MatchTier.TOP_DOMESTIC):
+            if cat.tier in (MatchTier.ICC_MEN, MatchTier.ICC_WOMEN, MatchTier.MAJOR_FRANCHISE, MatchTier.TOP_DOMESTIC):
                 if cat.tier == MatchTier.MAJOR_FRANCHISE:
                     return "ipl"
                 if cat.format == MatchFormat.TEST:
-                    return "test"
+                    return "test_men"
                 if cat.format == MatchFormat.ODI:
-                    return "odi"
+                    return "odi_women" if is_women else "odi_men"
                 if cat.format == MatchFormat.T20:
-                    return "t20i"
+                    return "t20i_women" if is_women else "t20i_men"
         except Exception:
             pass
 
@@ -197,16 +296,30 @@ class ModelZoo:
         Retrieve agent for a specific specialist key, loading on-demand.
         Falls back to default champion if the specialist is not trained yet.
         """
+        # Check alias if given
+        resolved_key = KEY_ALIASES.get(key, key)
+        if resolved_key in self._models:
+            return self._models[resolved_key]
         if key in self._models:
             return self._models[key]
 
-        # Check specialist path
+        # Check candidate file paths
         candidate_paths = [
+            self.models_dir / f"{resolved_key}_v1.zip",
+            self.models_dir / f"{resolved_key}.zip",
             self.models_dir / f"{key}_v1.zip",
             self.models_dir / f"{key}.zip",
         ]
-        
+
+        # Reverse check aliases
+        for alias_k, target_k in KEY_ALIASES.items():
+            if target_k == resolved_key or target_k == key:
+                candidate_paths.append(self.models_dir / f"{alias_k}_v1.zip")
+                candidate_paths.append(self.models_dir / f"{alias_k}.zip")
+
         # Check metadata for path
+        if resolved_key in self._metadata and "path" in self._metadata[resolved_key]:
+            candidate_paths.insert(0, Path(self._metadata[resolved_key]["path"]))
         if key in self._metadata and "path" in self._metadata[key]:
             candidate_paths.insert(0, Path(self._metadata[key]["path"]))
 
@@ -214,11 +327,13 @@ class ModelZoo:
             if path.exists():
                 try:
                     agent = PhoenixAgent.load(path, env=None)
-                    self._models[key] = agent
-                    logger.info("loaded_specialist_agent", key=key, path=str(path))
+                    self._models[resolved_key] = agent
+                    if key != resolved_key:
+                        self._models[key] = agent
+                    logger.info("loaded_specialist_agent", key=resolved_key, path=str(path))
                     return agent
                 except Exception as e:
-                    logger.error("error_loading_specialist", key=key, path=str(path), error=str(e))
+                    logger.error("error_loading_specialist", key=resolved_key, path=str(path), error=str(e))
 
         # Fallback to default champion model
         if self._default_agent is None and DEFAULT_MODEL_PATH.exists():
@@ -252,6 +367,9 @@ class ModelZoo:
         agent = self.get_agent(key)
         if key in self._models:
             return self._models[key], key
+        resolved = KEY_ALIASES.get(key, key)
+        if resolved in self._models:
+            return self._models[resolved], resolved
         return agent, ("default" if agent is self._default_agent else key)
 
     def predict(
@@ -308,18 +426,34 @@ class ModelZoo:
     def list_specialists(self) -> Dict[str, Any]:
         """List all available specialists and their metadata status."""
         self._load_metadata()
-        result = {}
-        for key in ["t20i", "odi", "test", "ipl"]:
+        result: Dict[str, Any] = {}
+
+        for key, default_name in ALL_SPECIALIST_DEFS:
             model_path = self.models_dir / f"{key}_v1.zip"
+            # Fallback check for aliases (e.g. t20i_v1.zip for t20i_men)
+            if not model_path.exists():
+                for alias_k, target_k in KEY_ALIASES.items():
+                    if target_k == key:
+                        cand = self.models_dir / f"{alias_k}_v1.zip"
+                        if cand.exists():
+                            model_path = cand
+                            break
+
             meta = self._metadata.get(key, {})
             result[key] = {
                 "key": key,
-                "format": meta.get("format", key.upper()),
+                "format": meta.get("format", default_name),
                 "available": model_path.exists(),
                 "path": str(model_path) if model_path.exists() else None,
                 "matches_trained_on": meta.get("matches_trained_on", 0),
                 "metrics": meta.get("metrics", {}),
             }
+
+        # Backwards compatibility: add alias keys for consumers expecting legacy names
+        for alias_k, target_k in KEY_ALIASES.items():
+            if alias_k not in result and target_k in result:
+                result[alias_k] = result[target_k]
+
         return result
 
 

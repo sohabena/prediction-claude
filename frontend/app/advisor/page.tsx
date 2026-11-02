@@ -264,14 +264,19 @@ export default function AdvisorPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
             {Object.values(specialistsData.specialists).map((spec) => {
               const m = spec.metrics;
+              const isWomen = spec.key.includes("women") || spec.key.includes("wbbl");
               const formatColor =
                 spec.key === "ipl"
                   ? "border-amber-500/30 bg-amber-500/5 text-amber-400"
-                  : spec.key === "t20i"
-                  ? "border-purple-500/30 bg-purple-500/5 text-purple-400"
-                  : spec.key === "test"
+                  : isWomen
+                  ? "border-fuchsia-500/30 bg-fuchsia-500/5 text-fuchsia-400"
+                  : spec.key.includes("bbl")
+                  ? "border-orange-500/30 bg-orange-500/5 text-orange-400"
+                  : spec.key.includes("test") || spec.key.includes("first_class")
                   ? "border-rose-500/30 bg-rose-500/5 text-rose-400"
-                  : "border-blue-500/30 bg-blue-500/5 text-blue-400";
+                  : spec.key.includes("odi") || spec.key.includes("list_a")
+                  ? "border-blue-500/30 bg-blue-500/5 text-blue-400"
+                  : "border-purple-500/30 bg-purple-500/5 text-purple-400";
 
               return (
                 <div

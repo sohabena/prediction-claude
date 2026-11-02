@@ -229,17 +229,21 @@ async def manual_demote() -> dict[str, Any]:
 @router.get("/specialists")
 async def get_specialists_catalog() -> dict[str, Any]:
     """
-    Get the catalog of format-specialized trading models (T20I, ODI, Test, IPL).
-    Returns training status, corpus sizes, and validation performance metrics.
+    Get the catalog of format, league, and gender-specialized trading models:
+    - Men & Women separated (T20I, ODI, BBL, WBBL)
+    - Major leagues separated (IPL, BBL, WBBL, T20 Blast, Franchise T20)
+    - Multi-day & 50-over separated (Test Men, First-Class, ODI Men, ODI Women, List A)
     """
     try:
-        from rl.model_zoo import get_model_zoo
+        from rl.model_zoo import ALL_SPECIALIST_DEFS, get_model_zoo
         zoo = get_model_zoo()
-        specialists = zoo.list_specialists()
+        all_specs = zoo.list_specialists()
+        canonical_keys = [k for k, _ in ALL_SPECIALIST_DEFS]
+        specialists = {k: all_specs[k] for k in canonical_keys if k in all_specs}
         return {
             "specialists": specialists,
             "total_available": sum(1 for s in specialists.values() if s.get("available")),
-            "active_strategy": "Format Specialist Model Zoo",
+            "active_strategy": "Format & League Specialist Model Zoo (12 Models)",
         }
     except Exception as e:
         logger.error("get_specialists_error", error=str(e))

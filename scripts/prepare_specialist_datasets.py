@@ -40,11 +40,13 @@ class CricketWinProbModel:
         target: Optional[int],
         batting_is_home: bool,
         winner_is_home: bool,
+        is_women: bool = False,
+        specialist_key: str = "",
     ) -> float:
         fmt_upper = fmt.upper()
         is_t20 = "T20" in fmt_upper or "IPL" in fmt_upper
         is_odi = "ODI" in fmt_upper
-        
+
         max_overs = 20.0 if is_t20 else (50.0 if is_odi else 100.0)
         max_balls = int(max_overs * 6)
 
@@ -54,10 +56,23 @@ class CricketWinProbModel:
         balls_remaining = max(0, max_balls - balls_bowled)
         wickets_left = max(0, 10 - wickets)
 
-        par_rr = 8.5 if is_t20 else (5.6 if is_odi else 3.2)
+        # Calibrated par score run rates per format, league, and gender:
+        if is_women:
+            par_rr = 6.8 if is_t20 else (4.5 if is_odi else 2.8)
+            wicket_decay = 1.35  # Wickets more punishing in women's matches
+        else:
+            if "IPL" in fmt_upper or specialist_key == "ipl":
+                par_rr = 9.4  # ~188 in IPL
+            elif is_t20:
+                par_rr = 8.6  # ~172 in Men's T20
+            elif is_odi:
+                par_rr = 5.8  # ~290 in Men's ODI
+            else:
+                par_rr = 3.4  # ~340 in Men's Test
+            wicket_decay = 1.05
 
         if innings == 1:
-            projected_score = score + (balls_remaining / 6.0) * par_rr * (wickets_left / 10.0) ** 0.65
+            projected_score = score + (balls_remaining / 6.0) * par_rr * ((wickets_left / 10.0) ** (0.65 * wicket_decay))
             par_total = max_overs * par_rr
             diff = max(-500.0, min(500.0, projected_score - par_total))
             div = 15.0 if is_t20 else 30.0
@@ -74,7 +89,7 @@ class CricketWinProbModel:
             else:
                 req_rr = (runs_needed / max(1, balls_remaining)) * 6.0
                 rr_pressure = req_rr / max(par_rr, 1.0)
-                wickets_factor = (wickets_left / 10.0) ** 1.1
+                wickets_factor = (wickets_left / 10.0) ** (1.1 * wicket_decay)
 
                 z = max(-50.0, min(50.0, (2.2 * wickets_factor) - (1.4 * rr_pressure)))
                 p_batting = 1.0 / (1.0 + math.exp(-z))
@@ -122,6 +137,7 @@ def parse_cricsheet_json(
     filepath: Path,
     fmt_category: str,
     match_index: int,
+    specialist_key: str = "",
 ) -> Optional[Dict[str, Any]]:
     try:
         with open(filepath, "r", encoding="utf-8") as f:
@@ -149,6 +165,10 @@ def parse_cricsheet_json(
 
     loser = team_away if winner == team_home else team_home
     winner_is_home = (winner == team_home)
+
+    info_gender = str(info.get("gender", "male")).lower()
+    is_women = ("female" in info_gender) or ("women" in specialist_key.lower())
+    gender_str = "female" if is_women else "male"
 
     dates = info.get("dates", [])
     date_str = dates[0] if dates else "2023-01-01"
@@ -218,6 +238,8 @@ def parse_cricsheet_json(
                     target=first_inn_target,
                     batting_is_home=batting_is_home,
                     winner_is_home=winner_is_home,
+                    is_women=is_women,
+                    specialist_key=specialist_key,
                 )
 
                 b_home, l_home, b_away, l_away, ovr = synthesize_exchange_ticks(
@@ -229,16 +251,28 @@ def parse_cricsheet_json(
                 if innings_num == 2 and first_inn_target:
                     rrr = round((max(0, first_inn_target - total_runs) / max(1, balls_rem)) * 6.0, 2)
 
-                vol_base = 250000.0 if "IPL" in fmt_category.upper() else 120000.0
+                if "ipl" in specialist_key.lower():
+                    vol_base = 350000.0
+                elif is_women:
+                    vol_base = 80000.0
+                elif "test" in specialist_key.lower() or "first_class" in specialist_key.lower():
+                    vol_base = 220000.0
+                elif "odi" in specialist_key.lower() or "list_a" in specialist_key.lower():
+                    vol_base = 150000.0
+                else:
+                    vol_base = 180000.0
+
                 vol_jitter = random.Random(match_index * 500 + tick_idx).uniform(0.7, 1.4)
 
                 tick = {
                     "time": tick_time.isoformat(),
-                    "match_id": f"cric_{fmt_category.lower()}_{match_index:04d}",
+                    "match_id": f"cric_{specialist_key or fmt_category.lower()}_{match_index:04d}",
                     "team_home": team_home,
                     "team_away": team_away,
                     "competition": comp_name,
                     "match_format": fmt_category,
+                    "gender": gender_str,
+                    "specialist_key": specialist_key,
                     "back_home": b_home,
                     "lay_home": l_home,
                     "back_away": b_away,
@@ -266,6 +300,7 @@ def parse_cricsheet_json(
                         "winner": winner,
                         "loser": loser,
                         "winner_is_home": winner_is_home,
+                        "gender": gender_str,
                     },
                 }
                 ticks.append(tick)
@@ -279,11 +314,13 @@ def parse_cricsheet_json(
         return None
 
     return {
-        "match_id": f"cric_{fmt_category.lower()}_{match_index:04d}",
+        "match_id": f"cric_{specialist_key or fmt_category.lower()}_{match_index:04d}",
         "team_home": team_home,
         "team_away": team_away,
         "competition": comp_name,
         "match_format": fmt_category,
+        "gender": gender_str,
+        "specialist_key": specialist_key,
         "winner": winner,
         "loser": loser,
         "start_time": match_date.isoformat(),
@@ -296,13 +333,21 @@ from concurrent.futures import ProcessPoolExecutor
 
 
 def index_cricsheet_catalog(source_dir: Path) -> Dict[str, List[Path]]:
-    """Index all 23,193 JSON files using README.txt into specialist format buckets."""
+    """Index all 23,193 JSON files using README.txt into specialist format, league, and gender buckets."""
     readme = source_dir / "README.txt"
     buckets: Dict[str, List[Path]] = {
         "ipl": [],
-        "test": [],
-        "odi": [],
-        "t20i": [],
+        "bbl_men": [],
+        "wbbl_women": [],
+        "t20i_men": [],
+        "t20i_women": [],
+        "odi_men": [],
+        "odi_women": [],
+        "test_men": [],
+        "t20_blast": [],
+        "first_class": [],
+        "list_a": [],
+        "franchise_t20": [],
     }
 
     if readme.exists():
@@ -312,6 +357,7 @@ def index_cricsheet_catalog(source_dir: Path) -> Dict[str, List[Path]]:
                     parts = [p.strip() for p in line.split(" - ")]
                     if len(parts) >= 6:
                         m_type = parts[2]
+                        m_gender = parts[3].lower()
                         m_id = parts[4]
                         fpath = source_dir / f"{m_id}.json"
                         if not fpath.exists():
@@ -319,16 +365,31 @@ def index_cricsheet_catalog(source_dir: Path) -> Dict[str, List[Path]]:
 
                         if m_type == "IPL":
                             buckets["ipl"].append(fpath)
+                        elif m_type == "BBL" and m_gender == "male":
+                            buckets["bbl_men"].append(fpath)
+                        elif m_type == "WBB" or (m_type == "BBL" and m_gender == "female"):
+                            buckets["wbbl_women"].append(fpath)
+                        elif m_type == "T20" and m_gender == "male":
+                            buckets["t20i_men"].append(fpath)
+                        elif m_type == "T20" and m_gender == "female":
+                            buckets["t20i_women"].append(fpath)
+                        elif m_type == "ODI" and m_gender == "male":
+                            buckets["odi_men"].append(fpath)
+                        elif m_type == "ODI" and m_gender == "female":
+                            buckets["odi_women"].append(fpath)
                         elif m_type in ("Test", "MDM"):
-                            buckets["test"].append(fpath)
-                        elif m_type in ("ODI", "ODM"):
-                            buckets["odi"].append(fpath)
-                        elif m_type in ("T20", "IT20"):
-                            buckets["t20i"].append(fpath)
+                            buckets["test_men"].append(fpath)
+                        elif m_type in ("NTB", "SMA"):
+                            buckets["t20_blast"].append(fpath)
+                        elif m_type == "CCH":
+                            buckets["first_class"].append(fpath)
+                        elif m_type in ("CPL", "PSL", "BPL", "PKS", "CTC"):
+                            buckets["franchise_t20"].append(fpath)
+                        elif m_type in ("RLC", "ODM"):
+                            buckets["list_a"].append(fpath)
     else:
-        # Fallback to direct directory scan
         for fpath in source_dir.glob("*.json"):
-            buckets["t20i"].append(fpath)
+            buckets["t20i_men"].append(fpath)
 
     return buckets
 
@@ -346,13 +407,14 @@ def build_specialist_dataset(
     if target_count > 0:
         candidate_files = candidate_files[:target_count]
 
-    print(f"\n[HARMONIZE] Building {specialist_key.upper()} Specialist Corpus ({format_label})...")
+    gender_label = "Women" if "women" in specialist_key else "Men"
+    print(f"\n[HARMONIZE] Building {specialist_key.upper()} Specialist Corpus ({format_label} - {gender_label})...")
     print(f"            Parallel extracting from {len(candidate_files)} candidate files...")
 
     matches = []
     with ProcessPoolExecutor(max_workers=6) as executor:
         futures = [
-            executor.submit(parse_cricsheet_json, fpath, format_label, idx + 1)
+            executor.submit(parse_cricsheet_json, fpath, format_label, idx + 1, specialist_key)
             for idx, fpath in enumerate(candidate_files)
         ]
         for f in futures:
@@ -387,6 +449,7 @@ def main():
 
     print("=" * 80)
     print(" PHOENIX - High-Throughput Format-Specialist Dataset Harmonization Pipeline")
+    print(" Architecture: Top Formats & Leagues Separated | Men & Women Separated")
     print(f" Source Catalog: {source_dir}")
     print(f" Target Quota: {'ALL qualifying matches' if target_count == 0 else f'{target_count} matches per format'}")
     print("=" * 80)
@@ -394,21 +457,36 @@ def main():
     print("[INDEX] Indexing catalog via README manifest...")
     buckets = index_cricsheet_catalog(source_dir)
     for k, files in buckets.items():
-        print(f"        - {k.upper():<5}: {len(files):,} qualifying files identified")
+        gender = "Women" if "women" in k else "Men"
+        print(f"        - {k:<15} ({gender:<5}): {len(files):,} qualifying files identified")
 
     configs = [
         ("ipl", "IPL"),
-        ("test", "Test"),
-        ("odi", "ODI"),
-        ("t20i", "T20"),
+        ("t20i_men", "T20"),
+        ("t20i_women", "T20"),
+        ("bbl_men", "T20"),
+        ("wbbl_women", "T20"),
+        ("odi_men", "ODI"),
+        ("odi_women", "ODI"),
+        ("test_men", "Test"),
+        ("t20_blast", "T20"),
+        ("franchise_t20", "T20"),
+        ("first_class", "Test"),
+        ("list_a", "ODI"),
     ]
+
+    total_harmonized = 0
+    total_ticks = 0
 
     for key, fmt_label in configs:
         candidates = buckets.get(key, [])
-        build_specialist_dataset(key, fmt_label, candidates, target_count=target_count)
+        if len(candidates) >= 100:
+            out = build_specialist_dataset(key, fmt_label, candidates, target_count=target_count)
+            total_harmonized += len(candidates) if target_count == 0 else min(target_count, len(candidates))
 
     print("\n" + "=" * 80)
-    print(" All Format-Specialist Datasets Prepared and Verified Successfully!")
+    print(" All Format, League, and Gender Specialist Datasets Prepared Successfully!")
+    print(f" Total Catalog Coverage: {total_harmonized:,} matches processed")
     print("=" * 80)
 
 

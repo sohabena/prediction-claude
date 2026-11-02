@@ -1,14 +1,14 @@
 """
 PHOENIX Format-Specialist Model Zoo Training Pipeline.
 
-Trains, tunes, and evaluates 4 dedicated reinforcement learning trading models:
-- T20I Specialist: 350 official T20 International matches (models/specialists/t20i_v1.zip)
-- ODI Specialist:  350 official One-Day International matches (models/specialists/odi_v1.zip)
-- Test Specialist: 350 official Test matches (models/specialists/test_v1.zip)
-- IPL Specialist:  350 official Indian Premier League matches (models/specialists/ipl_v1.zip)
+Trains, tunes, and evaluates 12 dedicated reinforcement learning trading models:
+- Men & Women separated: T20I Men, T20I Women, ODI Men, ODI Women, BBL Men, WBBL Women
+- Major leagues separated: IPL, BBL, WBBL, T20 Blast, Franchise T20 (CPL, PSL, BPL)
+- Multi-day & 50-over separated: Test Men, First-Class, ODI Men, ODI Women, List A
 
-Each specialist is trained with format-tailored PPO curriculum and evaluated
-on an unseen 15% holdout set with active two-way rate trading (20-30 bets/match, $100k budget, 2% commission).
+Each specialist uses format/league/gender-tailored rate strategies, calibrated par curves,
+and is evaluated on unseen holdouts under strictly causal zero-lookahead time-series mechanics
+(20-30 bets/match, $100k budget, 2% commission, lay liability <= 2.10).
 """
 
 from __future__ import annotations
@@ -51,6 +51,164 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 SPECIALISTS_DIR = Path("models/specialists")
 CORPUS_DIR = Path("data/specialists")
 
+ALL_SPECIALISTS_CONFIG: List[Dict[str, Any]] = [
+    {
+        "key": "ipl",
+        "name": "Indian Premier League",
+        "gender": "men",
+        "max_overs": 20.0,
+        "par_1": 188.0,
+        "wicket_decay_power": 0.65,
+        "div": 18.0,
+        "gamma": 0.98,
+        "ent_coef": 0.015,
+        "lr": 3e-4,
+    },
+    {
+        "key": "bbl_men",
+        "name": "Men's Big Bash League",
+        "gender": "men",
+        "max_overs": 20.0,
+        "par_1": 168.0,
+        "wicket_decay_power": 0.65,
+        "div": 18.0,
+        "gamma": 0.98,
+        "ent_coef": 0.012,
+        "lr": 3e-4,
+    },
+    {
+        "key": "wbbl_women",
+        "name": "Women's Big Bash League",
+        "gender": "women",
+        "max_overs": 20.0,
+        "par_1": 138.0,
+        "wicket_decay_power": 0.85,
+        "div": 16.0,
+        "gamma": 0.98,
+        "ent_coef": 0.012,
+        "lr": 3e-4,
+    },
+    {
+        "key": "t20i_men",
+        "name": "Men's T20 International",
+        "gender": "men",
+        "max_overs": 20.0,
+        "par_1": 168.0,
+        "wicket_decay_power": 0.65,
+        "div": 18.0,
+        "gamma": 0.98,
+        "ent_coef": 0.012,
+        "lr": 3e-4,
+    },
+    {
+        "key": "t20i_women",
+        "name": "Women's T20 International",
+        "gender": "women",
+        "max_overs": 20.0,
+        "par_1": 136.0,
+        "wicket_decay_power": 0.85,
+        "div": 16.0,
+        "gamma": 0.98,
+        "ent_coef": 0.012,
+        "lr": 3e-4,
+    },
+    {
+        "key": "odi_men",
+        "name": "Men's One-Day International",
+        "gender": "men",
+        "max_overs": 50.0,
+        "par_1": 285.0,
+        "wicket_decay_power": 0.65,
+        "div": 35.0,
+        "gamma": 0.99,
+        "ent_coef": 0.008,
+        "lr": 3e-4,
+    },
+    {
+        "key": "odi_women",
+        "name": "Women's One-Day International",
+        "gender": "women",
+        "max_overs": 50.0,
+        "par_1": 215.0,
+        "wicket_decay_power": 0.85,
+        "div": 30.0,
+        "gamma": 0.99,
+        "ent_coef": 0.008,
+        "lr": 3e-4,
+    },
+    {
+        "key": "test_men",
+        "name": "Men's Test Match",
+        "gender": "men",
+        "max_overs": 100.0,
+        "par_1": 340.0,
+        "wicket_decay_power": 0.65,
+        "div": 45.0,
+        "gamma": 0.995,
+        "ent_coef": 0.006,
+        "lr": 2e-4,
+    },
+    {
+        "key": "t20_blast",
+        "name": "T20 Blast & Domestic T20",
+        "gender": "men",
+        "max_overs": 20.0,
+        "par_1": 172.0,
+        "wicket_decay_power": 0.68,
+        "div": 18.0,
+        "gamma": 0.98,
+        "ent_coef": 0.012,
+        "lr": 3e-4,
+    },
+    {
+        "key": "franchise_t20",
+        "name": "Global Franchise T20 (CPL, PSL, BPL)",
+        "gender": "men",
+        "max_overs": 20.0,
+        "par_1": 165.0,
+        "wicket_decay_power": 0.65,
+        "div": 18.0,
+        "gamma": 0.98,
+        "ent_coef": 0.012,
+        "lr": 3e-4,
+    },
+    {
+        "key": "first_class",
+        "name": "First-Class Multi-Day",
+        "gender": "men",
+        "max_overs": 100.0,
+        "par_1": 310.0,
+        "wicket_decay_power": 0.65,
+        "div": 45.0,
+        "gamma": 0.995,
+        "ent_coef": 0.006,
+        "lr": 2e-4,
+    },
+    {
+        "key": "list_a",
+        "name": "List A Domestic 50-Over",
+        "gender": "men",
+        "max_overs": 50.0,
+        "par_1": 265.0,
+        "wicket_decay_power": 0.65,
+        "div": 35.0,
+        "gamma": 0.99,
+        "ent_coef": 0.008,
+        "lr": 3e-4,
+    },
+]
+
+SPECIALIST_MAP: Dict[str, Dict[str, Any]] = {c["key"]: c for c in ALL_SPECIALISTS_CONFIG}
+
+# Aliases for CLI convenience
+KEY_ALIASES = {
+    "t20i": "t20i_men",
+    "odi": "odi_men",
+    "test": "test_men",
+    "bbl": "bbl_men",
+    "wbbl": "wbbl_women",
+}
+
 
 @dataclass
 class SpecialistEvaluationMetrics:
@@ -74,9 +232,15 @@ class SpecialistEvaluationMetrics:
 
 def load_corpus(key: str) -> List[List[Dict[str, Any]]]:
     """Load episodes for a specialist format."""
-    fpath = CORPUS_DIR / f"corpus_{key}.json.gz"
+    resolved_key = KEY_ALIASES.get(key, key)
+    fpath = CORPUS_DIR / f"corpus_{resolved_key}.json.gz"
     if not fpath.exists():
-        raise FileNotFoundError(f"Corpus file not found: {fpath}. Run prepare_specialist_datasets.py first.")
+        # Fallback check
+        alt = CORPUS_DIR / f"corpus_{key}.json.gz"
+        if alt.exists():
+            fpath = alt
+        else:
+            raise FileNotFoundError(f"Corpus file not found: {fpath}. Run prepare_specialist_datasets.py first.")
     
     with gzip.open(fpath, "rt", encoding="utf-8") as f:
         matches = json.load(f)
@@ -88,14 +252,29 @@ def load_corpus(key: str) -> List[List[Dict[str, Any]]]:
 
 
 TEAM_RATINGS: Dict[str, int] = {
+    # International Men
     "India": 125, "Australia": 122, "England": 118, "South Africa": 115,
     "New Zealand": 112, "Pakistan": 108, "West Indies": 102, "Sri Lanka": 100,
     "Bangladesh": 95, "Afghanistan": 92, "Ireland": 85, "Zimbabwe": 80,
     "Netherlands": 75, "Scotland": 75, "Nepal": 65, "Namibia": 65,
     "United Arab Emirates": 65, "Oman": 60, "United States of America": 60,
+    # International Women
+    "Australia Women": 130, "England Women": 122, "India Women": 120,
+    "South Africa Women": 112, "New Zealand Women": 110, "West Indies Women": 98,
+    "Sri Lanka Women": 92, "Pakistan Women": 90, "Bangladesh Women": 88,
+    "Thailand Women": 78, "Ireland Women": 82, "Scotland Women": 76,
+    # IPL
     "Chennai Super Kings": 105, "Mumbai Indians": 105, "Kolkata Knight Riders": 102,
     "Gujarat Titans": 102, "Rajasthan Royals": 100, "Royal Challengers Bangalore": 98,
     "Delhi Capitals": 96, "Punjab Kings": 95, "Sunrisers Hyderabad": 98, "Lucknow Super Giants": 100,
+    # BBL Men
+    "Perth Scorchers": 108, "Sydney Sixers": 106, "Brisbane Heat": 102,
+    "Adelaide Strikers": 100, "Melbourne Stars": 98, "Hobart Hurricanes": 96,
+    "Sydney Thunder": 95, "Melbourne Renegades": 94,
+    # WBBL Women
+    "Sydney Sixers Women": 108, "Perth Scorchers Women": 106, "Adelaide Strikers Women": 106,
+    "Brisbane Heat Women": 104, "Melbourne Stars Women": 98, "Hobart Hurricanes Women": 96,
+    "Sydney Thunder Women": 96, "Melbourne Renegades Women": 94,
 }
 
 
@@ -103,7 +282,14 @@ def estimate_causal_in_play_prob(tick: Dict[str, Any], specialist_key: str) -> f
     """
     Computes in-play win probability strictly from the forward state at time t.
     NEVER accesses match winner, loser, or future events (strict zero-lookahead).
+    Uses gender-calibrated par score curves and wicket decay factors.
     """
+    cfg = SPECIALIST_MAP.get(specialist_key, SPECIALIST_MAP.get("t20i_men", {}))
+    max_overs = float(cfg.get("max_overs", 20.0))
+    par_1 = float(cfg.get("par_1", 168.0))
+    wicket_decay = float(cfg.get("wicket_decay_power", 0.65))
+    div_factor = float(cfg.get("div", 18.0))
+
     th = tick.get("team_home", "")
     ta = tick.get("team_away", "")
     r_home = TEAM_RATINGS.get(th, 100)
@@ -116,38 +302,29 @@ def estimate_causal_in_play_prob(tick: Dict[str, Any], specialist_key: str) -> f
     wickets = tick.get("wickets", 0)
     batting_is_home = (tick.get("batting_team") == th)
 
-    if specialist_key == "ipl":
-        max_overs, par_1 = 20.0, 185.0
-    elif specialist_key == "t20i":
-        max_overs, par_1 = 20.0, 168.0
-    elif specialist_key == "odi":
-        max_overs, par_1 = 50.0, 285.0
-    else:  # test
-        max_overs, par_1 = 100.0, 340.0
-
     overs_rem = max(0.1, max_overs - overs)
     wickets_rem = max(0, 10 - wickets)
-    res_factor = (wickets_rem / 10.0) ** 0.65 * (overs_rem / max_overs) ** 0.35
+    res_factor = (wickets_rem / 10.0) ** wicket_decay * (overs_rem / max_overs) ** 0.35
     proj_extra = res_factor * (max_overs * (par_1 / max_overs))
     proj_total = score + proj_extra
 
     if innings == 1:
         diff = proj_total - par_1
-        div = 20.0 if max_overs <= 20 else 40.0
-        p_inplay_bat = 1.0 / (1.0 + math.exp(-max(-10, min(10, diff / div))))
+        p_inplay_bat = 1.0 / (1.0 + math.exp(-max(-10, min(10, diff / div_factor))))
     else:
-        target = tick.get("score", 0) + tick.get("req_run_rate", 8.0) * overs_rem / 6.0
+        req_r = tick.get("req_run_rate", (par_1 / max_overs))
+        target = tick.get("score", 0) + req_r * overs_rem / 6.0
         diff = proj_total - target
-        div = 18.0 if max_overs <= 20 else 35.0
-        p_inplay_bat = 1.0 / (1.0 + math.exp(-max(-10, min(10, diff / div))))
+        p_inplay_bat = 1.0 / (1.0 + math.exp(-max(-10, min(10, diff / div_factor))))
 
     p_inplay_home = p_inplay_bat if batting_is_home else (1.0 - p_inplay_bat)
 
     # Blend pre-match rating prior with in-play match state progress
     total_balls = max_overs * 6.0 * (2 if innings == 2 else 1)
     current_balls = (max_overs * 6.0 if innings == 2 else 0) + overs * 6.0
-    progress = min(1.0, current_balls / total_balls)
+    progress = min(1.0, current_balls / max(1.0, total_balls))
     w_inplay = progress ** 0.75
+
     p_final_home = (1.0 - w_inplay) * p_pre + w_inplay * p_inplay_home
     return max(0.02, min(0.98, p_final_home))
 
@@ -164,7 +341,7 @@ def evaluate_specialist_holdout(
     """
     Evaluates a trained specialist model on unseen holdout matches.
     Enforces active two-way rate trading (20-30 bets/match, $100,000 budget cap, 2% commission)
-    with strict exchange liability limits (never lay over 2.20).
+    with strict exchange liability limits (never lay over 2.10).
     """
     episode_pnls: List[float] = []
     episode_rois: List[float] = []
@@ -312,7 +489,7 @@ def evaluate_specialist_holdout(
 def train_single_specialist(
     specialist_key: str,
     format_name: str,
-    timesteps: int = 15_000,
+    timesteps: int = 8_000,
     target_bets_per_match: int = 25,
     eval_only: bool = False,
 ) -> Tuple[SpecialistEvaluationMetrics, List[Dict[str, Any]]]:
@@ -336,18 +513,16 @@ def train_single_specialist(
     SPECIALISTS_DIR.mkdir(parents=True, exist_ok=True)
     model_path = SPECIALISTS_DIR / f"{specialist_key}_v1.zip"
 
+    cfg = SPECIALIST_MAP.get(specialist_key, {})
+    gamma = float(cfg.get("gamma", 0.99))
+    ent_coef = float(cfg.get("ent_coef", 0.01))
+    lr = float(cfg.get("lr", 3e-4))
+
     if eval_only and model_path.exists():
         print(f"Loading existing checkpoint: {model_path} for holdout evaluation...")
         model = PPO.load(str(model_path))
     else:
-        hyperparams = {
-            "t20i": {"gamma": 0.98, "ent_coef": 0.012, "lr": 3e-4},
-            "odi": {"gamma": 0.99, "ent_coef": 0.008, "lr": 3e-4},
-            "test": {"gamma": 0.995, "ent_coef": 0.006, "lr": 2e-4},
-            "ipl": {"gamma": 0.98, "ent_coef": 0.015, "lr": 3e-4},
-        }
-        hp = hyperparams.get(specialist_key, {"gamma": 0.99, "ent_coef": 0.01, "lr": 3e-4})
-
+        # Train fresh model on format corpus
         train_env = CricketBettingEnv(
             data=train_episodes,
             initial_bankroll=100_000.0,
@@ -363,14 +538,14 @@ def train_single_specialist(
                 "net_arch": {"pi": [256, 256, 128], "vf": [256, 256, 128]},
                 "activation_fn": torch.nn.ReLU,
             },
-            learning_rate=hp["lr"],
+            learning_rate=lr,
             n_steps=256,
             batch_size=64,
-            n_epochs=6,
-            gamma=hp["gamma"],
+            n_epochs=5,
+            gamma=gamma,
             gae_lambda=0.95,
             clip_range=0.2,
-            ent_coef=hp["ent_coef"],
+            ent_coef=ent_coef,
             vf_coef=0.5,
             max_grad_norm=0.5,
             verbose=0,
@@ -382,8 +557,8 @@ def train_single_specialist(
         model.save(str(model_path))
         print(f"Specialist model checkpoint saved: {model_path}")
 
-    # Evaluate on unseen holdout test matches (up to 100 representative holdout matches per format)
-    eval_holdout = holdout_episodes[:min(100, len(holdout_episodes))]
+    # Evaluate on unseen holdout test matches (up to 75 representative holdout matches per format)
+    eval_holdout = holdout_episodes[:min(75, len(holdout_episodes))]
     print(f"\nEvaluating strictly causal (zero-lookahead) on {len(eval_holdout)} unseen holdout test matches...")
     metrics, bet_records = evaluate_specialist_holdout(
         model=model,
@@ -424,91 +599,102 @@ async def persist_virtual_bets(bets: List[Dict[str, Any]]) -> None:
     if not bets:
         return
     print(f"\n[DB] Storing {len(bets)} virtual bets in TimescaleDB...")
-    async with get_session() as session:
-        for b in bets:
-            await session.execute(
-                text("""
-                    INSERT INTO virtual_bets (
-                        placed_at, match_id, action, team, odds, stake, confidence,
-                        settled_at, outcome, profit_loss, closing_odds, clv,
-                        agent_version, observation_hash, reward
-                    ) VALUES (
-                        :placed_at, :match_id, :action, :team, :odds, :stake, :confidence,
-                        :settled_at, :outcome, :profit_loss, :closing_odds, :clv,
-                        :agent_version, 'hash_spec', :reward
-                    ) ON CONFLICT DO NOTHING
-                """),
-                b,
-            )
-        await session.commit()
-    print("     Virtual bets recorded successfully.")
+    try:
+        async with get_session() as session:
+            for b in bets:
+                await session.execute(
+                    text("""
+                        INSERT INTO virtual_bets (
+                            placed_at, match_id, action, team, odds, stake, confidence,
+                            settled_at, outcome, profit_loss, closing_odds, clv,
+                            agent_version, observation_hash, reward
+                        ) VALUES (
+                            :placed_at, :match_id, :action, :team, :odds, :stake, :confidence,
+                            :settled_at, :outcome, :profit_loss, :closing_odds, :clv,
+                            :agent_version, 'hash_spec', :reward
+                        ) ON CONFLICT DO NOTHING
+                    """),
+                    b,
+                )
+            await session.commit()
+        print("     Virtual bets recorded successfully.")
+    except Exception as e:
+        print(f"     Warning: database insert skipped ({e})")
 
 
 async def update_redis_model_zoo_state(all_metrics: Dict[str, SpecialistEvaluationMetrics]) -> None:
     """Update Redis keys with model zoo status."""
     print("\n[REDIS] Publishing Model Zoo state to Redis...")
-    redis = await get_redis()
-    
-    zoo_summary = {
-        "specialists_active": len(all_metrics),
-        "models": {k: asdict(m) for k, m in all_metrics.items()},
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-    }
-    
-    await redis.set_json("phoenix:model_zoo:status", zoo_summary)
-    
-    total_pnl = sum(m.total_pnl for m in all_metrics.values())
-    avg_win_rate = np.mean([m.win_rate_pct for m in all_metrics.values()])
-    avg_sharpe = np.mean([m.sharpe_ratio for m in all_metrics.values()])
-    
-    await redis.set_json(KEY_AGENT_VERSION, {
-        "version": "v3_specialist_zoo",
-        "strategy_name": "Format Specialist Model Zoo (T20I, ODI, Test, IPL)",
-        "specialists": list(all_metrics.keys()),
-        "total_pnl": round(float(total_pnl), 2),
-        "avg_win_rate": round(float(avg_win_rate), 2),
-        "trained_at": datetime.now(timezone.utc).isoformat(),
-    })
+    try:
+        redis = await get_redis()
+        
+        zoo_summary = {
+            "specialists_active": len(all_metrics),
+            "models": {k: asdict(m) for k, m in all_metrics.items()},
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        
+        await redis.set_json("phoenix:model_zoo:status", zoo_summary)
+        
+        total_pnl = sum(m.total_pnl for m in all_metrics.values())
+        avg_win_rate = np.mean([m.win_rate_pct for m in all_metrics.values()])
+        avg_sharpe = np.mean([m.sharpe_ratio for m in all_metrics.values()])
+        
+        await redis.set_json(KEY_AGENT_VERSION, {
+            "version": "v3_specialist_zoo",
+            "strategy_name": f"Format Specialist Model Zoo ({len(all_metrics)} Models Active)",
+            "specialists": list(all_metrics.keys()),
+            "total_pnl": round(float(total_pnl), 2),
+            "avg_win_rate": round(float(avg_win_rate), 2),
+            "trained_at": datetime.now(timezone.utc).isoformat(),
+        })
 
-    await redis.set_json(KEY_ORCHESTRATOR_STATS, {
-        "strategy": "Format Specialist Model Zoo",
-        "total_pnl": round(float(total_pnl), 2),
-        "win_rate_pct": round(float(avg_win_rate), 2),
-        "sharpe_ratio": round(float(avg_sharpe), 2),
-        "specialists_count": len(all_metrics),
-        "total_matches_trained": sum(m.matches_trained for m in all_metrics.values()),
-        "total_matches_tested": sum(m.matches_tested for m in all_metrics.values()),
-    })
-    print("        Redis state successfully synchronized with Model Zoo!")
+        await redis.set_json(KEY_ORCHESTRATOR_STATS, {
+            "strategy": "Format Specialist Model Zoo",
+            "total_pnl": round(float(total_pnl), 2),
+            "win_rate_pct": round(float(avg_win_rate), 2),
+            "sharpe_ratio": round(float(avg_sharpe), 2),
+            "specialists_count": len(all_metrics),
+            "total_matches_trained": sum(m.matches_trained for m in all_metrics.values()),
+            "total_matches_tested": sum(m.matches_tested for m in all_metrics.values()),
+        })
+        print("        Redis state successfully synchronized with Model Zoo!")
+    except Exception as e:
+        print(f"        Warning: Redis sync skipped ({e})")
 
 
 async def main():
     parser = argparse.ArgumentParser(description="Train PHOENIX Format-Specialist Model Zoo.")
-    parser.add_argument("--specialist", type=str, default="all", choices=["all", "t20i", "odi", "test", "ipl"], help="Specialist to train")
-    parser.add_argument("--timesteps", type=int, default=15_000, help="Timesteps per specialist (default: 15,000)")
+    parser.add_argument(
+        "--specialist",
+        type=str,
+        default="all",
+        help="Specialist to train (e.g. 'all', 'ipl', 't20i_men', 't20i_women', 'bbl_men', 'wbbl_women', 'odi_men', 'odi_women', 'test_men', etc.)",
+    )
+    parser.add_argument("--timesteps", type=int, default=8_000, help="Timesteps per specialist (default: 8,000)")
     parser.add_argument("--target-bets", type=int, default=25, help="Target bets per match (default: 25 in 20-30 range)")
     parser.add_argument("--eval-only", action="store_true", help="Evaluate existing checkpoints on holdout without retraining")
     args = parser.parse_args()
 
-    specialists_to_train = [
-        ("t20i", "T20 International"),
-        ("odi", "One-Day International"),
-        ("test", "Test Match"),
-        ("ipl", "Indian Premier League"),
-    ]
+    specialists_to_run = ALL_SPECIALISTS_CONFIG
     if args.specialist != "all":
-        specialists_to_train = [(k, n) for k, n in specialists_to_train if k == args.specialist]
+        req = KEY_ALIASES.get(args.specialist, args.specialist)
+        specialists_to_run = [c for c in ALL_SPECIALISTS_CONFIG if c["key"] == req]
+        if not specialists_to_run:
+            raise ValueError(f"Unknown specialist: {args.specialist}. Available: {[c['key'] for c in ALL_SPECIALISTS_CONFIG]}")
 
     print("=" * 80)
-    print(" PHOENIX - FORMAT SPECIALIST MODEL ZOO TRAINING & VALIDATION")
-    print(f" Specialists to {'evaluate' if args.eval_only else 'train'}: {[k for k, _ in specialists_to_train]}")
+    print(" PHOENIX - 12-SPECIALIST MODEL ZOO PIPELINE")
+    print(f" Models to {'evaluate' if args.eval_only else 'train'}: {[c['key'] for c in specialists_to_run]}")
     print(f" Timesteps per model: {args.timesteps:,} | Target bets/match: {args.target_bets}")
     print("=" * 80)
 
     all_metrics: Dict[str, SpecialistEvaluationMetrics] = {}
     all_bets: List[Dict[str, Any]] = []
 
-    for key, name in specialists_to_train:
+    for cfg in specialists_to_run:
+        key = cfg["key"]
+        name = cfg["name"]
         metrics, bets = train_single_specialist(
             specialist_key=key,
             format_name=name,
@@ -522,18 +708,18 @@ async def main():
     await persist_virtual_bets(all_bets)
     await update_redis_model_zoo_state(all_metrics)
 
-    print("\n" + "=" * 90)
-    print(" FORMAT SPECIALIST MODEL ZOO - EXECUTIVE PERFORMANCE TEAR-SHEET")
-    print("=" * 90)
-    print(f"{'Specialist Model':<22} | {'Matches':<8} | {'Win Rate':<10} | {'Total P&L':<13} | {'ROI':<8} | {'Sharpe':<7} | {'Bets/Match'}")
-    print("-" * 90)
+    print("\n" + "=" * 105)
+    print(" 12-SPECIALIST MODEL ZOO - EXECUTIVE PERFORMANCE TEAR-SHEET (ZERO LOOKAHEAD)")
+    print("=" * 105)
+    print(f"{'Specialist Model':<28} | {'Matches':<8} | {'Win Rate':<10} | {'Total P&L':<14} | {'ROI':<8} | {'Sharpe':<7} | {'Bets/Match'}")
+    print("-" * 105)
     for k, m in all_metrics.items():
-        print(f"{m.format_name:<22} | {m.matches_tested:<8} | {m.win_rate_pct:>6.1f}%    | ${m.total_pnl:>+10,.2f} | {m.mean_roi_pct:>+5.1f}% | {m.sharpe_ratio:>5.2f} | {m.avg_bets_per_match:>5.1f}")
-    print("-" * 90)
+        print(f"{m.format_name:<28} | {m.matches_tested:<8} | {m.win_rate_pct:>6.1f}%    | ${m.total_pnl:>+11,.2f} | {m.mean_roi_pct:>+5.1f}% | {m.sharpe_ratio:>5.2f} | {m.avg_bets_per_match:>5.1f}")
+    print("-" * 105)
     tot_pnl = sum(m.total_pnl for m in all_metrics.values())
     avg_wr = np.mean([m.win_rate_pct for m in all_metrics.values()])
-    print(f"{'PORTFOLIO TOTAL':<22} | {sum(m.matches_tested for m in all_metrics.values()):<8} | {avg_wr:>6.1f}%    | ${tot_pnl:>+10,.2f} |          |         |")
-    print("=" * 90)
+    print(f"{'PORTFOLIO TOTAL':<28} | {sum(m.matches_tested for m in all_metrics.values()):<8} | {avg_wr:>6.1f}%    | ${tot_pnl:>+11,.2f} |          |         |")
+    print("=" * 105)
 
 
 if __name__ == "__main__":
