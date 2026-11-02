@@ -17,8 +17,8 @@ Breakdowns are by ``agent_version`` and by the closing-price source
 (``agent_version LIKE 'holdout_eval:%'``) and ticks not from ``lotusbook`` or
 ``betfair`` are excluded in SQL. The session runs in a READ ONLY transaction.
 
-Usage: ``python -m scripts.audit_clv --limit 100 [--source betfair|lotusbook|all]``. The default
-``betfair`` prices CLV from Betfair ticks only (the binding definition); ``all`` is the S33 behaviour.
+Usage: ``python -m scripts.audit_clv --limit 100 [--source betfair|lotusbook|all]``. The default is
+``CLV_REFERENCE_SOURCE`` (S45: ``lotusbook``, since Betfair is blocked); ``all`` is the S33 behaviour.
 """
 
 from __future__ import annotations
@@ -33,6 +33,7 @@ from typing import Any, Mapping, Optional, Sequence
 from sqlalchemy import text
 
 from scraper.match_filter import is_simulated_name
+from shared.constants import CLV_REFERENCE_SOURCE
 from shared.logging import setup_logging
 from shared.metrics import bet_clv, clv_prob, portfolio_clv, selection_of, side_of
 
@@ -275,8 +276,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Read-only CLV audit of settled virtual bets.")
     parser.add_argument("--limit", type=int, default=100,
                         help="most recent settled bets to audit (default 100)")
-    parser.add_argument("--source", choices=SOURCES, default="betfair",
-                        help="price feed for the 60 s and 10 m CLV: betfair (default, binding), lotusbook, or all")
+    parser.add_argument("--source", choices=SOURCES, default=CLV_REFERENCE_SOURCE,
+                        help="price feed for the 60 s and 10 m CLV: betfair or lotusbook (default: CLV_REFERENCE_SOURCE), or all")
     args = parser.parse_args(argv)
     if args.limit < 1:
         parser.error("--limit must be >= 1")

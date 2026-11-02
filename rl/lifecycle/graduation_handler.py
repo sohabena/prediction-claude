@@ -16,7 +16,7 @@ from typing import Any, Optional
 from backtesting.report import bootstrap_ci
 from rl.graduation import GraduationEvaluator
 from shared.config import get_settings
-from shared.constants import KEY_GRADUATION_STATUS
+from shared.constants import CLV_REFERENCE_SOURCE, KEY_GRADUATION_STATUS
 from shared.db import get_session
 from shared.logging import setup_logging
 from shared.metrics import daily_series, max_drawdown, sharpe
@@ -39,13 +39,14 @@ SIGNAL_BETS_SQL = """
     ORDER BY vb.placed_at
 """
 
-# S42: Betfair prices only (odds_ticks.source = 'betfair', written by S41). LotusBook ticks are never CLV evidence here.
+# S42/S45: reference-price ticks only. The source is CLV_REFERENCE_SOURCE (default 'lotusbook', or 'betfair').
+# Ticks of any other source are never CLV evidence for trust.
 SIGNAL_TICKS_SQL = """
-    SELECT match_id, time, competition, team_home, team_away, is_live,
+    SELECT match_id, time, source, competition, team_home, team_away, is_live,
            back_home, lay_home, back_away, lay_away
     FROM odds_ticks
     WHERE match_id = ANY(:match_ids)
-      AND source = 'betfair'
+      AND source = :source
     ORDER BY match_id, time
 """
 
@@ -167,9 +168,9 @@ class GraduationHandler:
 
 # ---------------------------------------------------------------- S42 signal trust
 async def load_signal_evidence(session: Any, strategy_version: str) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
-    """Signal bets of one strategy version and the Betfair ticks of their matches.
+    """Signal bets of one strategy version and the reference-price ticks of their matches.
 
-    Returns ``(bets, ticks_by_match)`` shaped for ``strategy.trust.annotate_betfair``. ``profit_loss`` is
+    Returns ``(bets, ticks_by_match)`` shaped for ``strategy.trust.annotate_reference``. ``profit_loss`` is
     None for unsettled bets. Read-only: the caller owns the session.
     """
     from sqlalchemy import text
@@ -185,7 +186,9 @@ async def load_signal_evidence(session: Any, strategy_version: str) -> tuple[lis
     ticks_by_match: dict[str, list[dict[str, Any]]] = defaultdict(list)
     match_ids = sorted({str(b["match_id"]) for b in bets})
     if match_ids:
-        tick_result = await session.execute(text(SIGNAL_TICKS_SQL), {"match_ids": match_ids})
+        tick_result = await session.execute(
+            text(SIGNAL_TICKS_SQL), {"match_ids": match_ids, "source": CLV_REFERENCE_SOURCE}
+        )
         for tick in tick_result.mappings().all():
             ticks_by_match[str(tick["match_id"])].append(dict(tick))
     return bets, dict(ticks_by_match)

@@ -9,6 +9,8 @@ from typing import Any
 
 import pytest
 
+from shared.constants import CLV_REFERENCE_SOURCE
+
 from rl.graduation import GraduationEvaluator
 from rl.lifecycle import graduation_handler as gh
 from shared.constants import KILL_ALL_SCOPE, TRUST_CRITERIA
@@ -303,12 +305,13 @@ class TestKillSwitch:
     @pytest.mark.asyncio
     async def test_rolling_negative_clv_suspends_after_full_window(self) -> None:
         ks = KillSwitch(FakeRedis(), now_fn=lambda: NOW, clv_window=100, n_bootstrap=200)
-        ticks = {"m": [_tick(KICKOFF - timedelta(minutes=5), back_home=2.0)]}
+        # S45: the reference tick must be strictly after the fill (pre-off price at KICKOFF - 30 s)
+        ticks = {"m": [_tick(KICKOFF - timedelta(seconds=30), back_home=2.0)]}
         bets = [_bet("m", odds=1.8, placed=KICKOFF - timedelta(minutes=1)) for _ in range(99)]
         assert await ks.evaluate_version(VERSION, bets, ticks, allocated_bankroll=1000.0) is None  # window not full
         bets.append(_bet("m", odds=1.8, placed=KICKOFF - timedelta(minutes=1)))
         reason = await ks.evaluate_version(VERSION, bets, ticks, allocated_bankroll=1000.0)
-        assert reason and "rolling Betfair CLV" in reason
+        assert reason and "rolling reference CLV" in reason
         assert ks.blocked(VERSION) is not None
 
     @pytest.mark.asyncio
@@ -316,7 +319,7 @@ class TestKillSwitch:
         ks = KillSwitch(FakeRedis(), now_fn=lambda: NOW, stale_seconds=300.0)
         assert await ks.evaluate_feed({"m1": NOW - timedelta(seconds=10)}, ["m1"]) is None
         reason = await ks.evaluate_feed({"m1": NOW - timedelta(seconds=400)}, ["m1"])
-        assert reason and "no Betfair tick" in reason
+        assert reason and "no live tick" in reason
         assert ks.blocked("any:version") is not None
 
     @pytest.mark.asyncio
@@ -433,6 +436,7 @@ class TestSignalEvidenceLoader:
         assert bets[0]["profit_loss"] is None
         assert bets[1]["profit_loss"] == 12.0
         assert session.params[0] == {"agent_version": "signal:value:v1"}
-        assert session.params[1] == {"match_ids": ["m1"]}
-        assert "source = 'betfair'" in session.sql[1]
+        # S45: the reference source is configurable (default lotusbook) and passed as a parameter
+        assert session.params[1] == {"match_ids": ["m1"], "source": CLV_REFERENCE_SOURCE}
+        assert "source = :source" in session.sql[1]
         assert list(ticks) == ["m1"]

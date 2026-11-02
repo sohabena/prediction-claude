@@ -1,13 +1,15 @@
 """S42 trust gate: a trust label per strategy version for manual-bet signals.
 
-Labels: ``unproven`` (not yet proven against the Betfair close), ``trusted`` (every rung-R3 criterion met
+Labels: ``unproven`` (not yet proven against the reference price), ``trusted`` (every rung-R3 criterion met
 for ``GRADUATION_REQUIRED_DAYS`` consecutive days), ``suspended`` (the kill switch is active).
 The label only tells the person placing bets by hand how much to trust a signal. Nothing here places a bet.
 
 CLV follows the binding definition in ``docs/architecture/profit-architecture.md``: ``shared.metrics.clv_prob``
-against the **Betfair** price only (``odds_ticks.source = 'betfair'``). Pre-match bets use the last pre-off
-price. In-play bets use the same-side price ``CLV_HORIZON_SECONDS`` after placement. Bets with no Betfair
-price are excluded from CLV and never count as evidence for trust.
+against the reference price of ``CLV_REFERENCE_SOURCE`` (S45). That is LotusBook match odds by default, because
+Betfair is blocked in the operator's country; ``betfair`` remains selectable. Only ticks of the configured source
+count. Pre-match bets use the last pre-off price. In-play bets use the same-side price ``CLV_HORIZON_SECONDS``
+after placement. The reference tick is always strictly after the fill (self-reference guard). Bets with no
+reference price are excluded from CLV and never count as evidence for trust.
 """
 from __future__ import annotations
 
@@ -21,6 +23,8 @@ from rl.graduation import GraduationEvaluator
 from scraper.match_filter import is_simulated_name
 from shared.constants import (
     CLV_HORIZON_SECONDS,
+    CLV_REFERENCE_SOURCE,
+    CLV_REFERENCE_SOURCES,
     KEY_TRUST_PREFIX,
     TRUST_CRITERIA,
     TRUST_STATE_PATH,
@@ -34,7 +38,8 @@ logger = setup_logging("strategy_trust")
 LABEL_UNPROVEN = "unproven"
 LABEL_TRUSTED = "trusted"
 LABEL_SUSPENDED = "suspended"
-REASON_NO_BETFAIR = "insufficient Betfair evidence"
+REASON_NO_REFERENCE = "insufficient reference-price evidence"
+REASON_NO_BETFAIR = REASON_NO_REFERENCE  # S42 name, kept for imports
 BETFAIR_SOURCE = "betfair"
 _MIN_BOOTSTRAP_N = 5
 
@@ -50,8 +55,13 @@ def _price_on_side(tick: Mapping[str, Any], side: str, selection: str) -> Option
     return _valid_price(tick.get(f"{'lay' if side == 'LAY' else 'back'}_{selection.lower()}"))
 
 
+def _from_source(tick: Mapping[str, Any], source: str) -> bool:
+    """True when the tick belongs to ``source``. Ticks without a ``source`` key are taken as belonging to it."""
+    return tick.get("source") in (None, source)
+
+
 def in_play_at(ticks: Sequence[Mapping[str, Any]], placed_at: datetime) -> bool:
-    """True when the last Betfair tick at or before ``placed_at`` was in play. ``ticks`` sorted by time."""
+    """True when the last tick at or before ``placed_at`` was in play. ``ticks`` sorted by time."""
     state = False
     for tick in ticks:
         if tick["time"] > placed_at:
@@ -61,7 +71,7 @@ def in_play_at(ticks: Sequence[Mapping[str, Any]], placed_at: datetime) -> bool:
 
 
 def last_pre_off_price(ticks: Sequence[Mapping[str, Any]], side: str, selection: str) -> Optional[float]:
-    """Last valid pre-match Betfair price on the same side (the price before the off)."""
+    """Last valid pre-match price on the same side (the price before the off)."""
     for tick in reversed(ticks):
         if tick.get("is_live"):
             continue
@@ -78,7 +88,7 @@ def price_at_horizon(
     selection: str,
     seconds: float = CLV_HORIZON_SECONDS,
 ) -> Optional[float]:
-    """First valid same-side Betfair price at or after ``placed_at + seconds``. ``ticks`` sorted by time."""
+    """First valid same-side price at or after ``placed_at + seconds``. ``ticks`` sorted by time."""
     cutoff = placed_at + timedelta(seconds=seconds)
     for tick in ticks:
         if tick["time"] < cutoff:
@@ -89,31 +99,51 @@ def price_at_horizon(
     return None
 
 
-def betfair_clv(bet: Mapping[str, Any], ticks: Sequence[Mapping[str, Any]]) -> Optional[float]:
-    """Side-aware CLV in probability points against the Betfair price, or None when there is no Betfair price."""
+def reference_clv(
+    bet: Mapping[str, Any],
+    ticks: Sequence[Mapping[str, Any]],
+    source: str = CLV_REFERENCE_SOURCE,
+) -> Optional[float]:
+    """Side-aware CLV in probability points against the reference price of ``source``, or None when there is none.
+
+    ``ticks`` are sorted by time. Ticks of other sources are ignored. The self-reference guard (reference tick
+    strictly after the fill) is applied by :func:`annotate_reference`, which is the evaluation path.
+    """
     action = bet["action"]
     side = side_of(action)
     selection = selection_of(action)
     entry = _valid_price(bet.get("odds"))
     if entry is None or selection == "":
         return None
+    usable = [t for t in ticks if _from_source(t, source)]
     if bet.get("in_play"):
-        price = price_at_horizon(ticks, bet["placed_at"], side, selection)
+        price = price_at_horizon(usable, bet["placed_at"], side, selection)
     else:
-        price = last_pre_off_price(ticks, side, selection)
+        price = last_pre_off_price(usable, side, selection)
     if price is None:
         return None
     return clv_prob(side, entry, price)
 
 
-def annotate_betfair(
+def betfair_clv(bet: Mapping[str, Any], ticks: Sequence[Mapping[str, Any]]) -> Optional[float]:
+    """S42 name: :func:`reference_clv` against the Betfair source."""
+    return reference_clv(bet, ticks, source=BETFAIR_SOURCE)
+
+
+def annotate_reference(
     bets: Iterable[Mapping[str, Any]],
     ticks_by_match: Mapping[str, Sequence[Mapping[str, Any]]],
+    source: str = CLV_REFERENCE_SOURCE,
 ) -> list[dict[str, Any]]:
-    """Copy each bet with ``in_play``, ``is_real`` (not a simulated league) and ``betfair_clv``.
+    """Copy each bet with ``in_play``, ``is_real`` (not a simulated league) and ``reference_clv``.
 
-    ``bets`` need ``match_id``, ``placed_at``, ``action``, ``odds``. ``team_home``/``team_away`` are optional.
+    The reference price is taken from ticks of ``source`` only and must be strictly after the fill
+    (``placed_at``), so a fill can never be its own reference. ``betfair_clv`` is also written when
+    ``source`` is ``betfair``. ``bets`` need ``match_id``, ``placed_at``, ``action``, ``odds``.
+    ``team_home``/``team_away`` are optional.
     """
+    if source not in CLV_REFERENCE_SOURCES:
+        raise ValueError(f"source must be one of {CLV_REFERENCE_SOURCES}, got {source!r}")
     sorted_ticks = {
         str(m): sorted(ticks, key=lambda t: t["time"]) for m, ticks in ticks_by_match.items()
     }
@@ -123,15 +153,28 @@ def annotate_betfair(
         ticks = sorted_ticks.get(match_id, [])
         competition = next((t.get("competition") for t in ticks if t.get("competition")), "")
         tick_teams = {t.get("team_home") for t in ticks} | {t.get("team_away") for t in ticks}
+        placed_at = bet["placed_at"]
+        same_source = [t for t in ticks if _from_source(t, source)]
         row = dict(bet)
         row["match_id"] = match_id
         row["is_real"] = not is_simulated_name(
             competition, bet.get("team_home"), bet.get("team_away"), *tick_teams
         )
-        row["in_play"] = in_play_at(ticks, bet["placed_at"])
-        row["betfair_clv"] = betfair_clv(row, ticks)
+        row["in_play"] = in_play_at(same_source, placed_at)
+        after_fill = [t for t in same_source if t["time"] > placed_at]  # self-reference guard
+        row["reference_clv"] = reference_clv(row, after_fill, source=source)
+        if source == BETFAIR_SOURCE:
+            row["betfair_clv"] = row["reference_clv"]
         out.append(row)
     return out
+
+
+def annotate_betfair(
+    bets: Iterable[Mapping[str, Any]],
+    ticks_by_match: Mapping[str, Sequence[Mapping[str, Any]]],
+) -> list[dict[str, Any]]:
+    """S42 name: :func:`annotate_reference` against the Betfair source (writes ``reference_clv`` and ``betfair_clv``)."""
+    return annotate_reference(bets, ticks_by_match, source=BETFAIR_SOURCE)
 
 
 def _nan_to_none(value: Any) -> Optional[float]:
@@ -148,18 +191,18 @@ def trust_metrics(
     missed_count: Optional[int] = None,
     n_bootstrap: int = 10_000,
 ) -> dict[str, Optional[float]]:
-    """Trust criteria inputs from annotated bets (see :func:`annotate_betfair`).
+    """Trust criteria inputs from annotated bets (see :func:`annotate_reference`).
 
     Only settled bets on real matches count. ``None`` means not measured, which fails its criterion.
     ``missed_count`` is the number of signals that were not filled (None until S40 records them).
-    The returned dict also holds reporting-only fields (``betfair_clv_n``, ``lotusbook_clv_mean``); they
-    are not criteria.
+    The returned dict also holds reporting-only fields (``reference_clv_n``, ``reference_clv_mean``,
+    ``lotusbook_clv_mean``); they are not criteria.
     """
     real = [b for b in annotated if b.get("is_real", True)]
     settled = [b for b in real if b.get("settled_at") is not None and b.get("profit_loss") is not None]
 
-    clv_rows = [b for b in settled if b.get("betfair_clv") is not None]
-    clv = portfolio_clv(clv_rows, field="betfair_clv", n_bootstrap=n_bootstrap)
+    clv_rows = [b for b in settled if b.get("reference_clv") is not None]
+    clv = portfolio_clv(clv_rows, field="reference_clv", n_bootstrap=n_bootstrap)
 
     pnl_values = list(per_match_pnl(settled).values())
     pnl_ci_upper: Optional[float] = None
@@ -188,8 +231,8 @@ def trust_metrics(
         "pnl_per_match_ci_upper": pnl_ci_upper,
         "max_drawdown": drawdown,
         "missed_rate": missed_rate,
-        "betfair_clv_n": float(len(clv_rows)),
-        "betfair_clv_mean": _nan_to_none(clv["mean_clv"]),
+        "reference_clv_n": float(len(clv_rows)),
+        "reference_clv_mean": _nan_to_none(clv["mean_clv"]),
         "lotusbook_clv_mean": (sum(clv_lotus) / len(clv_lotus)) if clv_lotus else None,
     }
 
@@ -203,7 +246,7 @@ def trust_reasons(metrics: Mapping[str, Optional[float]], status: Any) -> list[s
             continue
         raw = metrics.get(name)
         if raw is None and name == "clv_ci_lower":
-            reasons.append(REASON_NO_BETFAIR)
+            reasons.append(REASON_NO_REFERENCE)
         elif raw is None:
             reasons.append(f"{name} not measured")
         else:
@@ -216,7 +259,8 @@ class TrustRegistry:
     """Per-version trust state. Reads are synchronous and cached; ``refresh`` is the nightly write.
 
     ``trust_label`` returns ``suspended`` while the kill switch is active for the version (or globally),
-    ``trusted`` once the streak is complete, and ``unproven`` otherwise.
+    ``trusted`` once the streak is complete, and ``unproven`` otherwise. ``reference_source`` names the
+    price feed used for CLV (S45).
     """
 
     def __init__(
@@ -226,9 +270,11 @@ class TrustRegistry:
         kill_switch: Any = None,
         evaluator: Optional[GraduationEvaluator] = None,
         now_fn: Any = None,
+        reference_source: str = CLV_REFERENCE_SOURCE,
     ) -> None:
         self._redis = redis
         self._kill = kill_switch
+        self._source = reference_source
         self._evaluator = evaluator or GraduationEvaluator(
             state_path=TRUST_STATE_PATH, criteria=TRUST_CRITERIA, now_fn=now_fn
         )
@@ -278,8 +324,8 @@ class TrustRegistry:
         missed_count: Optional[int] = None,
         n_bootstrap: int = 10_000,
     ) -> dict[str, Any]:
-        """Re-evaluate one version from its bets and their Betfair ticks, cache and persist the result."""
-        annotated = annotate_betfair(bets, ticks_by_match)
+        """Re-evaluate one version from its bets and their reference-price ticks, cache and persist the result."""
+        annotated = annotate_reference(bets, ticks_by_match, source=self._source)
         metrics = trust_metrics(
             annotated,
             allocated_bankroll=allocated_bankroll,
@@ -293,12 +339,13 @@ class TrustRegistry:
             reasons = trust_reasons(metrics, status)
             if not reasons:
                 reasons = [f"streak {status.consecutive_days}/{status.required_days} days"]
-            reason = "; ".join(reasons)
+            reason = "; ".join(reasons) + f" (reference: {self._source})"
         entry: dict[str, Any] = {
             "ready": bool(status.ready),
             "consecutive_days": int(status.consecutive_days),
             "required_days": int(status.required_days),
             "reason": reason,
+            "reference_source": self._source,
             "metrics": {k: v for k, v in metrics.items()},
             "evaluated_at": datetime.now().astimezone().isoformat(),
         }
@@ -312,6 +359,7 @@ class TrustRegistry:
             "trust_evaluated",
             strategy_version=strategy_version,
             label=self.trust_label(strategy_version),
+            reference_source=self._source,
             consecutive_days=entry["consecutive_days"],
             bet_volume=metrics["bet_volume"],
         )

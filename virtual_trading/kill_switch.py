@@ -5,8 +5,8 @@ blocks new (liability-adding) paper bets while the global scope is active.
 
 Trip conditions (each one is evaluated and persisted as it fires):
 - daily paper loss: realised P&L settled today on one version <= -KILL_DAILY_LOSS of the allocated bankroll;
-- rolling CLV: the last KILL_CLV_WINDOW_BETS paper bets with a Betfair price have mean CLV < 0 and a bootstrap
-  95% CI upper bound < 0 (same CLV definition as trust, see ``strategy.trust``);
+- rolling CLV: the last KILL_CLV_WINDOW_BETS paper bets with a reference price (``CLV_REFERENCE_SOURCE``, S45)
+  have mean CLV < 0 and a bootstrap 95% CI upper bound < 0 (same CLV definition as trust, see ``strategy.trust``);
 - stale data: no Betfair tick for KILL_STALE_SECONDS on a match with open paper positions (global scope,
   because a dead feed is a system fault).
 
@@ -20,6 +20,7 @@ from datetime import date, datetime, timezone
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
 from shared.constants import (
+    CLV_REFERENCE_SOURCE,
     KEY_KILL_PREFIX,
     KILL_ALL_SCOPE,
     KILL_CLV_WINDOW_BETS,
@@ -28,7 +29,7 @@ from shared.constants import (
 )
 from shared.logging import setup_logging
 from shared.metrics import portfolio_clv
-from strategy.trust import annotate_betfair
+from strategy.trust import annotate_reference
 
 logger = setup_logging("kill_switch")
 
@@ -55,6 +56,7 @@ class KillSwitch:
         clv_window: int = KILL_CLV_WINDOW_BETS,
         stale_seconds: float = KILL_STALE_SECONDS,
         n_bootstrap: int = 10_000,
+        reference_source: str = CLV_REFERENCE_SOURCE,
     ) -> None:
         self._redis = redis
         self._now = now_fn or (lambda: datetime.now(timezone.utc))
@@ -62,6 +64,7 @@ class KillSwitch:
         self._clv_window = clv_window
         self._stale_seconds = stale_seconds
         self._n_bootstrap = n_bootstrap
+        self._reference_source = reference_source
         self._active: dict[str, str] = {}  # scope -> reason
 
     @staticmethod
@@ -126,7 +129,7 @@ class KillSwitch:
         allocated_bankroll: float,
     ) -> Optional[str]:
         """Trip ``strategy_version`` on daily loss or rolling CLV. Returns the reason when it trips now."""
-        annotated = annotate_betfair(bets, ticks_by_match)
+        annotated = annotate_reference(bets, ticks_by_match, source=self._reference_source)
         today = self._now().astimezone(timezone.utc).date()
 
         todays_pnl = sum(
@@ -144,15 +147,15 @@ class KillSwitch:
                 return reason
 
         clv_rows = sorted(
-            (b for b in annotated if b.get("betfair_clv") is not None),
+            (b for b in annotated if b.get("reference_clv") is not None),
             key=lambda b: b["placed_at"],
         )[-self._clv_window:]
         if len(clv_rows) >= self._clv_window:
-            clv = portfolio_clv(clv_rows, field="betfair_clv", n_bootstrap=self._n_bootstrap)
+            clv = portfolio_clv(clv_rows, field="reference_clv", n_bootstrap=self._n_bootstrap)
             if clv["mean_clv"] < 0.0 and clv["ci95_upper"] < 0.0:
                 reason = (
-                    f"rolling Betfair CLV over {len(clv_rows)} bets: mean {clv['mean_clv']:+.4f}, "
-                    f"CI upper {clv['ci95_upper']:+.4f} < 0"
+                    f"rolling reference CLV ({self._reference_source}) over {len(clv_rows)} bets: "
+                    f"mean {clv['mean_clv']:+.4f}, CI upper {clv['ci95_upper']:+.4f} < 0"
                 )
                 if await self.trip(strategy_version, reason):
                     return reason
@@ -163,13 +166,16 @@ class KillSwitch:
         last_tick_at: Mapping[str, datetime],
         open_matches: Iterable[str],
     ) -> Optional[str]:
-        """Trip the global scope when an open match has had no Betfair tick for ``stale_seconds``."""
+        """Trip the global scope when an open match has had no live tick for ``stale_seconds``.
+
+        ``last_tick_at`` comes from the feed the live loop actually receives (LotusBook today).
+        """
         now = self._now()
         for match_id in sorted(set(open_matches)):
             last = last_tick_at.get(match_id)
             if last is None or (now - last).total_seconds() > self._stale_seconds:
                 reason = (
-                    f"no Betfair tick for match {match_id} in {self._stale_seconds:.0f}s "
+                    f"no live tick for match {match_id} in {self._stale_seconds:.0f}s "
                     f"with open paper positions"
                 )
                 if await self.trip(KILL_ALL_SCOPE, reason):

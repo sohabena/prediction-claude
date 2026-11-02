@@ -3,6 +3,8 @@ PHOENIX Shared Constants
 Central definition for Redis channels, keys, and system-wide constants.
 """
 
+import os
+
 # ============================================================
 # Redis Pub/Sub Channels
 # ============================================================
@@ -297,3 +299,13 @@ CLV_HORIZON_SECONDS = 600.0                    # in-play CLV horizon (same as sc
 KILL_DAILY_LOSS = 0.05                         # realised paper loss today, fraction of allocated bankroll (placeholder)
 KILL_CLV_WINDOW_BETS = 100                     # rolling window of paper bets that have a Betfair price
 KILL_STALE_SECONDS = 300.0                     # no Betfair tick this long on a match with open paper positions
+
+# S45: reference price for CLV and trust. Betfair is blocked in the operator's country (architecture section 7),
+# so the default is LotusBook match odds. LotusBook match odds are an exchange mirror: its lag behind the exchange
+# is unmeasured, so CLV against it only shows that we beat the price the site shows later.
+CLV_REFERENCE_SOURCES = ("lotusbook", "betfair")
+CLV_REFERENCE_SOURCE = os.getenv("CLV_REFERENCE_SOURCE", "lotusbook").strip().lower()
+if CLV_REFERENCE_SOURCE not in CLV_REFERENCE_SOURCES:
+    raise ValueError(
+        f"CLV_REFERENCE_SOURCE must be one of {CLV_REFERENCE_SOURCES}, got {CLV_REFERENCE_SOURCE!r}"
+    )

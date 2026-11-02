@@ -486,7 +486,7 @@ async def test_audit_source_betfair_excludes_lotusbook_ticks() -> None:
     assert everything["overall"]["post_60s"]["n"] == 1
 
 
-def test_audit_cli_defaults_to_betfair_and_rejects_unknown_source(monkeypatch) -> None:
+def test_audit_cli_defaults_to_reference_source_and_rejects_unknown_source(monkeypatch) -> None:
     from scripts import audit_clv
 
     seen: list[tuple[int, str]] = []
@@ -497,7 +497,8 @@ def test_audit_cli_defaults_to_betfair_and_rejects_unknown_source(monkeypatch) -
 
     monkeypatch.setattr(audit_clv, "_run_cli", fake_run_cli)
     assert audit_clv.main([]) == 0
-    assert seen == [(100, "betfair")]
+    from shared.constants import CLV_REFERENCE_SOURCE
+    assert seen == [(100, CLV_REFERENCE_SOURCE)]  # S45: default follows the reference source
     with pytest.raises(SystemExit):
         audit_clv.main(["--source", "bogus"])
 
