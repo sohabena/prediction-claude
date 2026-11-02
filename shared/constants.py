@@ -272,7 +272,8 @@ MANUAL_LATENCY_SECONDS = 60.0            # a person reads a signal and places th
 STRATEGY_MODE_ENV = "PHOENIX_STRATEGY"   # "value" (signals, default) or "ppo" (legacy paper path)
 STRATEGY_DEFAULT_MODE = "value"
 STRATEGY_MIN_EDGE = 0.02                 # net edge (fraction of stake) an entry must clear at its price limit
-STRATEGY_COMMISSION = 0.02               # exchange commission on net winnings (fraction)
+STRATEGY_COMMISSION = 0.05               # commission on net market winnings; conservative default = Betfair base rate.
+                                         # Set to your venue's actual rate. Backtests use ExecutionModel.commission.
 STRATEGY_GREEN_UP_AT = 0.5               # exit once locked profit reaches this share of the entry edge
 STRATEGY_MAX_BETS_PER_MATCH = 25
 STRATEGY_PRICE_TICK = 0.01               # price rounding for limits (conservative direction)

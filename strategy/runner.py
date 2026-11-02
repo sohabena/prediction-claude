@@ -55,9 +55,11 @@ def epoch_of(value: Any) -> float:
 
 
 def live_execution() -> ExecutionModel:
-    """Manual signal execution: a fill at the first price at or after ``created_at + MANUAL_LATENCY_SECONDS``.
+    """Manual signal execution: a fill at the first price at or after ``decision + MANUAL_LATENCY_SECONDS``.
 
-    Decision latency is zero because the signal is created at the tick; the whole delay is in ``bet_delay_s``.
+    Same ``bet_delay_s`` as ``ExecutionModel.preset("manual")`` (S43), with ``latency_s=0``: live ticks are
+    stamped at scrape time, so the 5 s processing lag that the backtest adds to exchange timestamps is already
+    in the tick. On one tick stream, a signal at exchange time T fills at T + 65 s in both paths.
     """
     return ExecutionModel(name="manual_signal", latency_s=0.0, bet_delay_s=MANUAL_LATENCY_SECONDS)
 

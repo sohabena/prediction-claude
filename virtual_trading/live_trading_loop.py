@@ -81,6 +81,17 @@ def _load_fair_models() -> dict[str, Any]:
     return models
 
 
+def _load_ratings() -> Any:
+    """Cricket ratings for the v2 pre-match fields (blocking; call via asyncio.to_thread). None when unavailable."""
+    from strategy.live_context import load_ratings
+
+    try:
+        return load_ratings()
+    except Exception as e:
+        logger.warning("ratings_unavailable", error=type(e).__name__)
+        return None
+
+
 class LiveVirtualTradingLoop:
     """
     Lives virtual trading during VIRTUAL_TRADING state.
@@ -91,6 +102,10 @@ class LiveVirtualTradingLoop:
     3. Persist bets to virtual_bets
     4. Subscribe to match_results and settle open bets
     """
+
+    # S43 class defaults so that instances built without __init__ (tests) still work
+    _ratings: Optional[Any] = None
+    _normalize_team: Optional[Callable[[str], Optional[str]]] = None
 
     def __init__(
         self,
@@ -349,13 +364,23 @@ class LiveVirtualTradingLoop:
         return context
 
     async def _get_runner(self) -> Any:
-        """Build the signal runner once. Fair models load off the event loop; a missing model skips its family."""
+        """Build the signal runner once. Fair models and ratings load off the event loop; a missing model skips its family.
+
+        The ratings supply the v2 pre-match fields (``pm_*``) that the models were trained with (S43). Without them
+        the v2 model runs on match state only, and ``self._ratings`` stays None.
+        """
         if self._runner is None:
+            from scripts.cricsheet_harmonizer import canonicalize_team
             from strategy.runner import StrategyRunner
             from strategy.signals import SignalBus
             from strategy.value_policy import ValueStrategy
 
-            models = await asyncio.to_thread(_load_fair_models)
+            models, ratings = await asyncio.gather(
+                asyncio.to_thread(_load_fair_models),
+                asyncio.to_thread(_load_ratings),
+            )
+            self._ratings = ratings
+            self._normalize_team = canonicalize_team
 
             def factory(tick: dict[str, Any]) -> Optional[Any]:
                 model = models.get(tick.get("family"))
@@ -363,7 +388,7 @@ class LiveVirtualTradingLoop:
 
             redis = await get_redis()
             self._runner = StrategyRunner(factory, self._engine, self._risk_manager, SignalBus(redis=redis))
-            logger.info("signal_runner_ready", families=sorted(models))
+            logger.info("signal_runner_ready", families=sorted(models), prematch=ratings is not None)
         return self._runner
 
     @staticmethod
@@ -426,14 +451,21 @@ class LiveVirtualTradingLoop:
                 signalled=False,
             )
         runner = await self._get_runner()
-        outcome = await runner.on_tick(self._tick_from_event(event, context), wall_now=time.time())
-        for fill in outcome.paper:
+        from strategy.live_context import attach_prematch
+
+        tick = attach_prematch(self._tick_from_event(event, context), self._ratings, normalize_team=self._normalize_team)
+        outcome = await runner.on_tick(tick, wall_now=time.time())
+        await self._record_paper(event.match_id, outcome.paper)
+
+    async def _record_paper(self, match_id: str, paper: list[Any]) -> None:
+        """Track filled paper bets for settlement and log each signal outcome. No real bet is placed here."""
+        for fill in paper:
             if fill.status == "filled" and fill.bet is not None:
-                self._open_bets.setdefault(event.match_id, []).append((fill.bet, fill.bet.placed_at))
+                self._open_bets.setdefault(match_id, []).append((fill.bet, fill.bet.placed_at))
                 await persist_bet(fill.bet, agent_version=fill.agent_version)
             logger.info(
                 "paper_signal_outcome",
-                match_id=event.match_id,
+                match_id=match_id,
                 side=fill.side,
                 selection=fill.selection,
                 status=fill.status,
@@ -580,6 +612,16 @@ class LiveVirtualTradingLoop:
         # Mark match as completed regardless of whether we have open bets
         self._completed_match_ids.add(match_id)
         self._decision_gate.reset(match_id)
+
+        # S43: release the per-match runner state. Orders not yet due lapse; fills already due are tracked
+        # so that the settlement below covers them.
+        if self._runner is not None:
+            try:
+                finished = await self._runner.finish(match_id)
+            except Exception as e:
+                logger.error("runner_finish_error", match_id=match_id, error=str(e))
+            else:
+                await self._record_paper(match_id, finished.paper)
 
         if match_id not in self._open_bets:
             return

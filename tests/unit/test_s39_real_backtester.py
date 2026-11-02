@@ -171,7 +171,8 @@ class TestExchangeMaths:
         assert bet_gross_pnl("LAY", "away", 3.0, 10.0, "home") == pytest.approx(10.0)
 
     def test_execution_presets(self) -> None:
-        assert ExecutionModel.preset("manual").latency_s == 60.0
+        assert ExecutionModel.preset("manual").latency_s == 5.0      # app decides on fresh data (S43)
+        assert ExecutionModel.preset("manual").bet_delay_s == 60.0   # a person places the bet by hand
         assert ExecutionModel.preset("automated").latency_s == 8.0
         assert ExecutionModel.preset("manual").commission == 0.05
         with pytest.raises(ValueError):
@@ -488,7 +489,8 @@ class TestWalkForward:
             n_bootstrap=200, seed=0,
         )
         assert report["execution"]["name"] == "manual"
-        assert report["execution"]["latency_s"] == 60.0
+        assert report["execution"]["latency_s"] == 5.0
+        assert report["execution"]["bet_delay_s"] == 60.0
         assert [f["test_season"] for f in report["folds"]] == [2023, 2024]
         assert set(report["r0"]["summaries"]) == {"random", "hold"}
         assert "flagged" in report["r0"]

@@ -216,7 +216,7 @@ def test_entry_is_not_repeated_while_a_bet_is_pending() -> None:
 
 
 def test_green_up_exit_locks_profit_at_a_rounded_limit() -> None:
-    strat = ValueStrategy(FixedFair(), quiet_after_change_s=0.0)
+    strat = ValueStrategy(FixedFair(), quiet_after_change_s=0.0, commission=0.02)  # expected limit assumes 2%
     entry_tick = _tick(0)
     first = _call(strat, entry_tick)
     assert first[0].side == "BACK"

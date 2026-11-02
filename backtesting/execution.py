@@ -25,9 +25,14 @@ from rl.environment import shift_price
 from shared.constants import MAX_BET_LIABILITY_PCT
 from strategy.base import OrderIntent, bet_liability
 
+# Presets. ``latency_s`` is the decision lag on exchange timestamps; ``bet_delay_s`` is the time from decision
+# to the order reaching the market. "manual" (S43): the app decides on data stamped 5 s before processing
+# (scrape and processing), then a person needs 60 s to place the bet by hand. Info-to-fill is therefore 65 s.
+# The live runner (``strategy.runner.live_execution``) has the same ``bet_delay_s`` with ``latency_s=0``,
+# because live ticks are already stamped at scrape time, which includes that 5 s.
 PRESETS: dict[str, dict[str, float]] = {
-    "manual": {"latency_s": 60.0},      # a person reads the signal and places the bet by hand
-    "automated": {"latency_s": 8.0},    # comparison only; no automated betting is planned
+    "manual": {"latency_s": 5.0, "bet_delay_s": 60.0},  # a person reads the signal and places the bet by hand
+    "automated": {"latency_s": 8.0},                    # comparison only; no automated betting is planned
 }
 
 
@@ -64,6 +69,7 @@ class ExecutionModel:
 
     @classmethod
     def preset(cls, name: str) -> "ExecutionModel":
+        """Named execution model. ``manual`` is the S43 hand-placed model (see ``PRESETS``)."""
         if name not in PRESETS:
             raise ValueError(f"unknown execution preset {name!r}; expected one of {sorted(PRESETS)}")
         return cls(name=name, **PRESETS[name])
