@@ -90,139 +90,24 @@ def canonicalize_team(name: str) -> Optional[str]:
     return CANONICAL_TEAMS.get(name.strip())
 
 
-class MarketNoise:
-    """Outcome-independent mean-reverting random walk in log-odds space.
+# Single shared definition (S13): MarketNoise / CricketWinProbModel / synthesize_exchange_ticks.
+from scripts.synthetic_market import (  # noqa: E402,F401
+    CORPUS_FORMAT_VERSION,
+    CricketWinProbModel,
+    MarketNoise,
+    market_model_tag,
+    synthesize_exchange_ticks,
+    synthesize_volumes,
+)
 
-    x_{t+1} = (1 - theta) * x_t + sigma * N(0, 1), seeded by the match index only.
-    Defaults: sigma = 0.08 per tick, theta = 0.10 (stationary std ~ 0.18 log-odds).
-    """
-
-    def __init__(self, seed: int, sigma: float = 0.08, theta: float = 0.10) -> None:
-        self._rng = random.Random(seed * 7919 + 13)
-        self._sigma = sigma
-        self._theta = theta
-        self._x = 0.0
-
-    def step(self) -> float:
-        self._x = (1.0 - self._theta) * self._x + self._rng.gauss(0.0, self._sigma)
-        return self._x
-
-
-class CricketWinProbModel:
-    """
-    Computes realistic dynamic in-play win probabilities for cricket match states.
-    Calibrated against standard Duckworth-Lewis-Stern resource decay curves.
-
-    The probability is a pure function of the match state. It never sees the result;
-    ``noise_logit`` is an optional outcome-independent offset from ``MarketNoise``.
-    """
-
-    @staticmethod
-    def calculate_win_prob(
-        fmt: str,
-        innings: int,
-        overs: float,
-        score: int,
-        wickets: int,
-        target: Optional[int],
-        batting_is_home: bool,
-        noise_logit: float = 0.0,
-    ) -> float:
-        """
-        Calculate probability that Home Team wins given current match context.
-        Returns a float in [0.025, 0.975]; depends on state only, never on the result.
-        """
-        max_overs = 20.0 if fmt == FORMAT_T20 else (50.0 if fmt == FORMAT_ODI else 100.0)
-        max_balls = int(max_overs * 6)
-        
-        over_int = int(overs)
-        balls_in_over = int(round((overs - over_int) * 10))
-        balls_bowled = min(max_balls, over_int * 6 + balls_in_over)
-        balls_remaining = max(0, max_balls - balls_bowled)
-        wickets_left = max(0, 10 - wickets)
-
-        # Baseline par run rates by format
-        par_rr = 8.5 if fmt == FORMAT_T20 else (5.6 if fmt == FORMAT_ODI else 3.2)
-        
-        is_chase = innings == 4 or (innings == 2 and max_overs < 100.0)
-        if not is_chase:
-            # First innings: batting team tries to post par or above par
-            projected_score = score + (balls_remaining / 6.0) * par_rr * (wickets_left / 10.0) ** 0.65
-            par_total = max_overs * par_rr
-            # Batting team edge
-            diff = projected_score - par_total
-            # Sigmoid response to projected score differential
-            p_batting = 1.0 / (1.0 + math.exp(-diff / (15.0 if fmt == FORMAT_T20 else 30.0)))
-            p_home = p_batting if batting_is_home else (1.0 - p_batting)
-        else:
-            # Second innings run chase
-            if target is None or target <= 0:
-                target = int(max_overs * par_rr)
-            
-            runs_needed = max(0, target - score)
-            
-            if runs_needed <= 0:
-                # Target achieved
-                p_batting = 0.99
-            elif wickets_left <= 0 or (balls_remaining <= 0 and runs_needed > 0):
-                # All out or balls exhausted without reaching target
-                p_batting = 0.01
-            else:
-                # Required Run Rate vs Current Run Rate
-                req_rr = (runs_needed / max(1, balls_remaining)) * 6.0
-                curr_rr = (score / max(1, balls_bowled)) * 6.0
-                
-                # Resource pressure metric
-                rr_pressure = req_rr / max(par_rr, 1.0)
-                wickets_factor = (wickets_left / 10.0) ** 1.1
-                
-                z = (2.2 * wickets_factor) - (1.4 * rr_pressure)
-                p_batting = 1.0 / (1.0 + math.exp(-z))
-                
-            p_home = p_batting if batting_is_home else (1.0 - p_batting)
-
-        if noise_logit:
-            p_c = max(1e-4, min(1.0 - 1e-4, p_home))
-            p_home = 1.0 / (1.0 + math.exp(-(math.log(p_c / (1.0 - p_c)) + noise_logit)))
-
-        return max(0.025, min(0.975, p_home))
-
-
-def synthesize_exchange_ticks(
-    p_home: float,
-    seed: int,
-) -> Tuple[float, float, float, float, float]:
-    """
-    Generate realistic Betfair Back/Lay price ladders from win probability:
-    - Back Home, Lay Home, Back Away, Lay Away, Overround
-    """
-    rng = random.Random(seed)
-    p_away = 1.0 - p_home
-    
-    # Realistic Betfair spread: 1 to 3 ticks (0.8% to 1.8% overround)
-    spread_prob = rng.uniform(0.008, 0.018)
-    
-    # Back is lower odds than Lay
-    p_back_home = min(0.98, p_home + spread_prob / 2.0)
-    p_lay_home = max(0.02, p_home - spread_prob / 2.0)
-    
-    back_home = round(max(1.02, min(50.0, 1.0 / p_back_home)), 2)
-    lay_home = round(max(back_home + 0.02, min(52.0, 1.0 / p_lay_home)), 2)
-    
-    p_back_away = min(0.98, p_away + spread_prob / 2.0)
-    p_lay_away = max(0.02, p_away - spread_prob / 2.0)
-    
-    back_away = round(max(1.02, min(50.0, 1.0 / p_back_away)), 2)
-    lay_away = round(max(back_away + 0.02, min(52.0, 1.0 / p_lay_away)), 2)
-    
-    overround = round((1.0 / back_home + 1.0 / back_away) - 1.0, 4)
-    return back_home, lay_home, back_away, lay_away, overround
+DEFAULT_NOISE_MODE = "martingale"
 
 
 def parse_and_harmonize_match(
     filepath: Path,
     fmt_category: str,
     match_index: int,
+    noise_mode: str = DEFAULT_NOISE_MODE,
 ) -> Optional[Dict[str, Any]]:
     """Parse a single Cricsheet JSON file into a harmonized match episode."""
     try:
@@ -290,8 +175,12 @@ def parse_and_harmonize_match(
     tick_idx = 0
     first_inn_target: Optional[int] = None
     inn_totals: List[int] = []
-    noise = MarketNoise(match_index)
+    noise = MarketNoise(match_index, noise_mode=noise_mode)  # type: ignore[arg-type]
+    market_tag = market_model_tag(noise_mode)
+    prev_p_home: Optional[float] = None
+    balls_seen = 0
     max_innings = 4 if is_multiday else 2
+    total_balls_est = sum(len(o.get("deliveries", [])) for i in innings_list[:max_innings] for o in i.get("overs", [])) or 1
 
     for inn_idx, inn_data in enumerate(innings_list[:max_innings]):
         innings_num = inn_idx + 1
@@ -364,7 +253,11 @@ def parse_and_harmonize_match(
                 bh, lh, ba, la, ovr = synthesize_exchange_ticks(p_home, seed)
 
                 # Realistic traded volumes ($10k - $80k)
-                vol_base = random.Random(seed).uniform(8000.0, 45000.0)
+                vol_base = 25000.0
+                v_bh, v_lh, v_ba, v_la = synthesize_volumes(
+                    vol_base, prev_p_home, p_home, (balls_seen + b_idx + 1) / total_balls_est
+                )
+                prev_p_home = p_home
 
                 tick_time += timedelta(seconds=random.Random(seed).randint(15, 45))
 
@@ -393,14 +286,16 @@ def parse_and_harmonize_match(
                     "batting_team": batting_team,
                     "bowling_team": bowling_team,
                     "status": "in_play",
-                    "volume_back_home": round(vol_base * p_home, 1),
-                    "volume_lay_home": round(vol_base * p_home * 1.05, 1),
-                    "volume_back_away": round(vol_base * (1.0 - p_home), 1),
-                    "volume_lay_away": round(vol_base * (1.0 - p_home) * 1.05, 1),
+                    "volume_back_home": v_bh,
+                    "volume_lay_home": v_lh,
+                    "volume_back_away": v_ba,
+                    "volume_lay_away": v_la,
                     "source": SYNTHETIC_SOURCE,
+                    "market_model": market_tag,
                 }
                 ticks.append(tick)
 
+        balls_seen += sum(len(o.get("deliveries", [])) for o in overs_data)
         inn_totals.append(total_runs)
         if innings_num == 1:
             first_inn_target = total_runs + 1
@@ -428,6 +323,8 @@ def parse_and_harmonize_match(
         "winner": winner,
         "loser": loser,
         "result_type": result_type,
+        "market_model": market_tag,
+        "corpus_format_version": CORPUS_FORMAT_VERSION,
         "start_time": match_date.isoformat(),
         "total_ticks": len(ticks),
         "ticks": ticks,

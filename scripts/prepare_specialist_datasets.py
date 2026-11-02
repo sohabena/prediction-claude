@@ -34,131 +34,17 @@ SETTLEMENT_ONLY_KEYS = ("_meta", "winner", "loser", "winner_is_home")
 SYNTHETIC_SOURCE = "synthetic_cricsheet"
 
 
-class MarketNoise:
-    """Outcome-independent mean-reverting random walk in log-odds space.
+from scripts.synthetic_market import (  # noqa: E402  (re-exported for callers)
+    CORPUS_FORMAT_VERSION,
+    CricketWinProbModel,
+    MarketNoise,
+    market_model_tag,
+    synthesize_exchange_ticks,
+    synthesize_volumes,
+)
 
-    x_{t+1} = (1 - theta) * x_t + sigma * N(0, 1), seeded by the match index only.
-    Defaults: sigma = 0.08 per tick, theta = 0.10 (stationary std ~ 0.18 log-odds).
-    """
+DEFAULT_NOISE_MODE = "martingale"
 
-    def __init__(self, seed: int, sigma: float = 0.08, theta: float = 0.10) -> None:
-        self._rng = random.Random(seed * 7919 + 13)
-        self._sigma = sigma
-        self._theta = theta
-        self._x = 0.0
-
-    def step(self) -> float:
-        self._x = (1.0 - self._theta) * self._x + self._rng.gauss(0.0, self._sigma)
-        return self._x
-
-
-class CricketWinProbModel:
-    """Computes dynamic in-play win probabilities for cricket match states.
-
-    The result is a pure function of the match state (plus an optional outcome-independent
-    ``noise_logit`` offset from ``MarketNoise``). It never sees the match result.
-    """
-
-    @staticmethod
-    def calculate_win_prob(
-        fmt: str,
-        innings: int,
-        overs: float,
-        score: int,
-        wickets: int,
-        target: Optional[int],
-        batting_is_home: bool,
-        is_women: bool = False,
-        specialist_key: str = "",
-        noise_logit: float = 0.0,
-    ) -> float:
-        fmt_upper = fmt.upper()
-        is_t20 = "T20" in fmt_upper or "IPL" in fmt_upper
-        is_odi = "ODI" in fmt_upper
-
-        max_overs = 20.0 if is_t20 else (50.0 if is_odi else 100.0)
-        max_balls = int(max_overs * 6)
-
-        over_int = int(overs)
-        balls_in_over = int(round((overs - over_int) * 10))
-        balls_bowled = min(max_balls, over_int * 6 + balls_in_over)
-        balls_remaining = max(0, max_balls - balls_bowled)
-        wickets_left = max(0, 10 - wickets)
-
-        # Calibrated par score run rates per format, league, and gender:
-        if is_women:
-            par_rr = 6.8 if is_t20 else (4.5 if is_odi else 2.8)
-            wicket_decay = 1.35  # Wickets more punishing in women's matches
-        else:
-            if "IPL" in fmt_upper or specialist_key == "ipl":
-                par_rr = 9.4  # ~188 in IPL
-            elif is_t20:
-                par_rr = 8.6  # ~172 in Men's T20
-            elif is_odi:
-                par_rr = 5.8  # ~290 in Men's ODI
-            else:
-                par_rr = 3.4  # ~340 in Men's Test
-            wicket_decay = 1.05
-
-        # Chase logic applies to the 2nd innings of limited-overs games and the 4th of a Test.
-        is_chase = innings == 4 or (innings == 2 and max_overs < 100.0)
-
-        if not is_chase:
-            projected_score = score + (balls_remaining / 6.0) * par_rr * ((wickets_left / 10.0) ** (0.65 * wicket_decay))
-            par_total = max_overs * par_rr
-            diff = max(-500.0, min(500.0, projected_score - par_total))
-            div = 15.0 if is_t20 else 30.0
-            p_batting = 1.0 / (1.0 + math.exp(-diff / div))
-            p_home = p_batting if batting_is_home else (1.0 - p_batting)
-        else:
-            effective_target = target or int(max_overs * par_rr)
-            runs_needed = max(0, effective_target - score)
-
-            if runs_needed <= 0:
-                p_batting = 0.99
-            elif balls_remaining <= 0 or wickets_left <= 0:
-                p_batting = 0.01
-            else:
-                req_rr = (runs_needed / max(1, balls_remaining)) * 6.0
-                rr_pressure = req_rr / max(par_rr, 1.0)
-                wickets_factor = (wickets_left / 10.0) ** (1.1 * wicket_decay)
-
-                z = max(-50.0, min(50.0, (2.2 * wickets_factor) - (1.4 * rr_pressure)))
-                p_batting = 1.0 / (1.0 + math.exp(-z))
-
-            p_home = p_batting if batting_is_home else (1.0 - p_batting)
-
-        if noise_logit:
-            p_c = max(1e-4, min(1.0 - 1e-4, p_home))
-            p_home = 1.0 / (1.0 + math.exp(-(math.log(p_c / (1.0 - p_c)) + noise_logit)))
-
-        return max(0.025, min(0.975, p_home))
-
-
-def synthesize_exchange_ticks(
-    p_home: float,
-    seed: int,
-) -> Tuple[float, float, float, float, float]:
-    rng = random.Random(seed)
-    p_away = 1.0 - p_home
-
-    # 1 to 3 ticks spread (0.8% to 1.8% overround)
-    spread_prob = rng.uniform(0.008, 0.018)
-
-    p_back_home = min(0.98, p_home + spread_prob / 2.0)
-    p_lay_home = max(0.02, p_home - spread_prob / 2.0)
-
-    back_home = round(max(1.02, min(50.0, 1.0 / p_back_home)), 2)
-    lay_home = round(max(back_home + 0.02, min(52.0, 1.0 / p_lay_home)), 2)
-
-    p_back_away = min(0.98, p_away + spread_prob / 2.0)
-    p_lay_away = max(0.02, p_away - spread_prob / 2.0)
-
-    back_away = round(max(1.02, min(50.0, 1.0 / p_back_away)), 2)
-    lay_away = round(max(back_away + 0.02, min(52.0, 1.0 / p_lay_away)), 2)
-
-    overround = round((1.0 / back_home + 1.0 / back_away) - 1.0, 4)
-    return back_home, lay_home, back_away, lay_away, overround
 
 
 def parse_cricsheet_json(
@@ -166,6 +52,9 @@ def parse_cricsheet_json(
     fmt_category: str,
     match_index: int,
     specialist_key: str = "",
+    noise_mode: str = DEFAULT_NOISE_MODE,
+    noise_sigma: float = 0.08,
+    noise_theta: float = 0.10,
 ) -> Optional[Dict[str, Any]]:
     try:
         with open(filepath, "r", encoding="utf-8") as f:
@@ -232,8 +121,12 @@ def parse_cricsheet_json(
     tick_idx = 0
     first_inn_target: Optional[int] = None
     inn_totals: List[int] = []
-    noise = MarketNoise(match_index)
+    noise = MarketNoise(match_index, sigma=noise_sigma, theta=noise_theta, noise_mode=noise_mode)  # type: ignore[arg-type]
+    market_tag = market_model_tag(noise_mode)
+    prev_p_home: Optional[float] = None
+    balls_seen = 0
     max_innings = 4 if is_multiday else 2
+    total_balls_est = sum(len(o.get("deliveries", [])) for i in innings_list[:max_innings] for o in i.get("overs", [])) or 1
 
     for inn_idx, inn_data in enumerate(innings_list[:max_innings]):
         innings_num = inn_idx + 1
@@ -312,7 +205,11 @@ def parse_cricsheet_json(
                 else:
                     vol_base = 180000.0
 
-                vol_jitter = random.Random(match_index * 500 + tick_idx).uniform(0.7, 1.4)
+                # Volume: deterministic time-of-match profile x |delta price| activity (no i.i.d. jitter).
+                v_bh, v_lh, v_ba, v_la = synthesize_volumes(
+                    vol_base, prev_p_home, p_home, (balls_seen + b_idx + 1) / total_balls_est
+                )
+                prev_p_home = p_home
 
                 tick = {
                     "time": tick_time.isoformat(),
@@ -341,11 +238,12 @@ def parse_cricsheet_json(
                     "batting_team": batting_team,
                     "bowling_team": bowling_team,
                     "status": "in_play",
-                    "volume_back_home": round(vol_base * vol_jitter, 2),
-                    "volume_lay_home": round(vol_base * vol_jitter * 0.9, 2),
-                    "volume_back_away": round(vol_base * vol_jitter, 2),
-                    "volume_lay_away": round(vol_base * vol_jitter * 0.9, 2),
+                    "volume_back_home": v_bh,
+                    "volume_lay_home": v_lh,
+                    "volume_back_away": v_ba,
+                    "volume_lay_away": v_la,
                     "source": SYNTHETIC_SOURCE,
+                    "market_model": market_tag,
                     "_meta": {
                         "winner": winner,
                         "loser": loser,
@@ -360,6 +258,7 @@ def parse_cricsheet_json(
                 tick_time += timedelta(seconds=random.Random(tick_idx).randint(45, 90))
                 tick_idx += 1
 
+        balls_seen += sum(len(o.get("deliveries", [])) for o in overs_data)
         inn_totals.append(total_runs)
         if innings_num == 1:
             first_inn_target = total_runs + 1
@@ -378,6 +277,8 @@ def parse_cricsheet_json(
         "winner": winner,
         "loser": loser,
         "result_type": result_type,
+        "market_model": market_tag,
+        "corpus_format_version": CORPUS_FORMAT_VERSION,
         "start_time": match_date.isoformat(),
         "total_ticks": len(ticks),
         "ticks": ticks,
@@ -454,6 +355,7 @@ def build_specialist_dataset(
     format_label: str,
     candidate_files: List[Path],
     target_count: int = DEFAULT_TARGET_MATCHES,
+    noise_mode: str = DEFAULT_NOISE_MODE,
 ) -> Path:
     """Build and save a compressed JSON dataset for a specific format specialist using parallel workers."""
     SPECIALISTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -470,7 +372,7 @@ def build_specialist_dataset(
     dropped = 0
     with ProcessPoolExecutor(max_workers=6) as executor:
         futures = [
-            executor.submit(parse_cricsheet_json, fpath, format_label, idx + 1, specialist_key)
+            executor.submit(parse_cricsheet_json, fpath, format_label, idx + 1, specialist_key, noise_mode)
             for idx, fpath in enumerate(candidate_files)
         ]
         for f in futures:
@@ -499,6 +401,8 @@ def main():
     parser = argparse.ArgumentParser(description="Prepare format-specialist datasets for PHOENIX.")
     parser.add_argument("--target", type=int, default=DEFAULT_TARGET_MATCHES, help="Target match count per format (0 = all qualifying matches)")
     parser.add_argument("--all", action="store_true", help="Process ALL qualifying matches from catalog")
+    parser.add_argument("--noise-mode", choices=["martingale", "ou", "none"], default=DEFAULT_NOISE_MODE,
+                        help="Synthetic price noise. 'ou' is mean-reverting = exploitable (experiments only).")
     args = parser.parse_args()
 
     target_count = 0 if args.all else args.target
@@ -541,7 +445,7 @@ def main():
     for key, fmt_label in configs:
         candidates = buckets.get(key, [])
         if len(candidates) >= 100:
-            out = build_specialist_dataset(key, fmt_label, candidates, target_count=target_count)
+            out = build_specialist_dataset(key, fmt_label, candidates, target_count=target_count, noise_mode=args.noise_mode)
             total_harmonized += len(candidates) if target_count == 0 else min(target_count, len(candidates))
 
     print("\n" + "=" * 80)
