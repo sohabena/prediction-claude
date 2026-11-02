@@ -5,14 +5,19 @@ All criteria must be met for 14 consecutive days.
 
 from __future__ import annotations
 
+import json
+import os
 from datetime import datetime, timezone
-from typing import Any, Optional
+from pathlib import Path
+from typing import Any, Callable, Optional
 
 from shared.constants import GRADUATION_CRITERIA, GRADUATION_REQUIRED_DAYS
 from shared.logging import setup_logging
 from shared.schemas import GraduationCriterion, GraduationStatus
 
 logger = setup_logging("rl_graduation")
+
+DEFAULT_STATE_PATH = "models/graduation_state.json"
 
 
 class GraduationEvaluator:
@@ -22,11 +27,47 @@ class GraduationEvaluator:
     All criteria must be met for 14 consecutive days.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        state_path: str | Path | None = DEFAULT_STATE_PATH,
+        now_fn: Callable[[], datetime] | None = None,
+    ) -> None:
         self.criteria = GRADUATION_CRITERIA
         self.required_days = GRADUATION_REQUIRED_DAYS
+        self.state_path = Path(state_path) if state_path else None
+        self._now_fn = now_fn or (lambda: datetime.now(timezone.utc))
         self._daily_results: list[dict[str, Any]] = []
         self._consecutive_pass_days = 0
+        self._last_pass_date: Optional[str] = None
+        self._load_state()
+
+    def _load_state(self) -> None:
+        if self.state_path is None or not self.state_path.exists():
+            return
+        try:
+            with open(self.state_path, "r", encoding="utf-8") as f:
+                state = json.load(f)
+            self._consecutive_pass_days = int(state.get("consecutive_days", 0))
+            self._last_pass_date = state.get("last_pass_date")
+            self._daily_results = list(state.get("daily_results", []))
+        except (OSError, ValueError) as e:
+            logger.warning("graduation_state_load_failed", error=str(e))
+
+    def _save_state(self) -> None:
+        if self.state_path is None:
+            return
+        try:
+            self.state_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.state_path.with_name(self.state_path.name + ".tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({
+                    "consecutive_days": self._consecutive_pass_days,
+                    "last_pass_date": self._last_pass_date,
+                    "daily_results": self._daily_results[-60:],
+                }, f, indent=2)
+            os.replace(tmp, self.state_path)
+        except OSError as e:
+            logger.warning("graduation_state_save_failed", error=str(e))
 
     def evaluate(
         self,
@@ -89,17 +130,26 @@ class GraduationEvaluator:
             if not met:
                 all_met = False
 
-        # Track consecutive days
+        # Track consecutive calendar days (UTC) on which all criteria passed.
+        today_dt = self._now_fn().astimezone(timezone.utc).date()
+        today = today_dt.isoformat()
         self._daily_results.append({
-            "date": datetime.now(timezone.utc).date().isoformat(),
+            "date": today,
             "all_met": all_met,
             "criteria": {r.name: r.met for r in results},
         })
 
-        if all_met:
-            self._consecutive_pass_days += 1
-        else:
+        if not all_met:
             self._consecutive_pass_days = 0
+            self._last_pass_date = None
+        elif self._last_pass_date != today:
+            last = datetime.fromisoformat(self._last_pass_date).date() if self._last_pass_date else None
+            if last is not None and (today_dt - last).days == 1:
+                self._consecutive_pass_days += 1
+            else:
+                self._consecutive_pass_days = 1  # first pass, or a gap in days
+            self._last_pass_date = today
+        self._save_state()
 
         ready = self._consecutive_pass_days >= self.required_days
 
