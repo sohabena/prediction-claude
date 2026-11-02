@@ -52,6 +52,24 @@ COMPETITION_BLACKLIST: list[str] = [
     r"bangladesh\s*premier", r"lanka\s*premier", r"afghanistan\s*premier",
 ]
 
+# Simulated / computer-generated cricket (S37). Token matches, case-insensitive, checked on
+# competition and team names. These are never real cricket and must never be recorded.
+SIMULATED_PATTERNS: list[str] = [
+    r"\bsrl\b", r"\bsimulated\b", r"\bvirtual\b", r"\be-?cricket\b",
+]
+_SIMULATED_RE = [re.compile(p, re.IGNORECASE) for p in SIMULATED_PATTERNS]
+
+
+def is_simulated_name(*names: str | None) -> bool:
+    """True when any name carries a simulated-league token (SRL, Simulated, Virtual, E-Cricket)."""
+    for name in names:
+        if not name:
+            continue
+        if any(p.search(name) for p in _SIMULATED_RE):
+            return True
+    return False
+
+
 # ============================================================
 # Layer 2: Team Name Database (imported from shared.constants)
 # ============================================================
@@ -77,7 +95,22 @@ class MatchClassifier:
         self.enabled = enabled
         self._whitelist_re = [re.compile(p, re.IGNORECASE) for p in COMPETITION_WHITELIST]
         self._blacklist_re = [re.compile(p, re.IGNORECASE) for p in COMPETITION_BLACKLIST]
-        self._stats = {"accepted": 0, "rejected": 0, "unknown_teams_logged": 0}
+        self._stats = {"accepted": 0, "rejected": 0, "unknown_teams_logged": 0, "simulated_rejected": 0}
+
+    def reject_if_simulated(self, event: OddsEvent) -> bool:
+        """Return True and count the event when it is a simulated (SRL/virtual) match.
+
+        Independent of ``enabled``: the recording gate calls it even when the filter is off.
+        """
+        if not is_simulated_name(event.competition, event.team_home, event.team_away):
+            return False
+        self._stats["simulated_rejected"] += 1
+        logger.debug(
+            "match_rejected_simulated",
+            competition=event.competition,
+            teams=f"{event.team_home} vs {event.team_away}",
+        )
+        return True
 
     def qualifies(self, event: OddsEvent) -> bool:
         """
@@ -87,6 +120,11 @@ class MatchClassifier:
         """
         if not self.enabled:
             return True
+
+        # Layer 0a (S37): simulated leagues are rejected and counted separately
+        if self.reject_if_simulated(event):
+            self._stats["rejected"] += 1
+            return False
 
         # Layer 0: Blacklist always wins (checks competition, team_home, and team_away)
         if (

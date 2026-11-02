@@ -6,8 +6,11 @@ Manages browser lifecycle, coordinates workers, publishes to Redis, stores to DB
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 import signal
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from playwright.async_api import Browser, BrowserContext, Playwright, async_playwright
@@ -26,6 +29,39 @@ from shared.redis_client import get_redis
 from shared.schemas import OddsEvent
 
 logger = setup_logging("scraper_manager")
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+FEED_STATE_PATH = ROOT_DIR / "logs" / "scraper_feed.json"
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    """Read a boolean environment flag ("1", "true", "yes", "on" are true)."""
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+def write_feed_state(
+    path: Path, *, updated_at: str, last_live_event_at: str | None, live_matches: int
+) -> None:
+    """Write the feed heartbeat that the watchdog (scripts/run_scraper_forever.py) reads.
+
+    Written once per scrape batch. ``last_live_event_at`` only moves when a live event was
+    processed, so a stalled scraper shows an old value while ``live_matches`` is still > 0.
+    """
+    payload = {
+        "updated_at": updated_at,
+        "last_live_event_at": last_live_event_at,
+        "live_matches": live_matches,
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(json.dumps(payload), encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError as e:
+        logger.warning("feed_state_write_error", path=str(path), error=str(e))
 
 
 class ScraperManager:
@@ -58,9 +94,12 @@ class ScraperManager:
         self._scrape_approved_ids: set[str] = set()  # cached from DB
         self._completed_match_ids: set[str] = set()
         self._last_stored_fingerprint: dict[str, str] = {}  # matches with results
-        self._quality_stats = {"stored": 0, "warnings": 0, "rejected": 0}
+        self._quality_stats = {"stored": 0, "warnings": 0, "rejected": 0, "recorded_unapproved": 0}
         self._result_detector = LotusResultDetector()
         self._last_approved_refresh: datetime | None = None
+        # S37: record every qualifying live match. Approval only controls live publishing.
+        self._record_all = _env_flag("SCRAPER_RECORD_ALL", default=True)
+        self._last_live_event_at: str | None = None
 
     async def start(self) -> None:
         """Start the scraper manager: launch browser, begin scraping."""
@@ -206,6 +245,7 @@ class ScraperManager:
         accepted_count = 0
         now = datetime.now(timezone.utc)
         current_batch_ids: set[str] = set()
+        live_batch_ids: set[str] = set()
 
         # Check runtime dynamic scraper settings from Redis
         try:
@@ -249,6 +289,8 @@ class ScraperManager:
 
             accepted_count += 1
             current_batch_ids.add(event.match_id)
+            if event.is_live:
+                live_batch_ids.add(event.match_id)
 
             # Track active matches (always, for the frontend listing)
             self._active_matches[event.match_id] = {
@@ -280,24 +322,31 @@ class ScraperManager:
                 lay_away=event.lay_away,
             )
 
+            # ── SIMULATED GATE: never register or record SRL / simulated events, whatever the filter setting ──
+            if self._match_filter.reject_if_simulated(event):
+                continue
+
             # Register first-seen matches as "discovered" (no tick storage yet)
             if event.match_id not in self._seen_match_ids:
                 self._seen_match_ids.add(event.match_id)
                 await self._upsert_training_status(event, auto_approve_enabled=auto_approve_enabled)
 
-            # ── SCRAPE GATE: only collect data for approved matches ──
-            if event.match_id not in self._scrape_approved_ids:
+            # ── RECORD GATE (S37): approval no longer decides recording ──
+            # With SCRAPER_RECORD_ALL on (default) every qualifying match is recorded while live.
+            # Approved matches additionally go to live consumers (publish + MatchContext) below.
+            approved = event.match_id in self._scrape_approved_ids
+            if not approved and not self._record_all:
                 continue
 
             # ── LIVE GATE: only collect ticks during live matches ──
-            # Approved but not-yet-live matches wait; completed matches stop.
+            # Not-yet-live matches wait; completed matches stop.
             if event.match_id in self._completed_match_ids:
                 continue
             if not event.is_live:
                 continue
 
-            # ── SCHEDULE GATE: wait for scheduled match time ──
-            if hasattr(self, "_scrape_approved_times"):
+            # ── SCHEDULE GATE: approved matches wait for their scheduled time ──
+            if approved and hasattr(self, "_scrape_approved_times"):
                 start_time = self._scrape_approved_times.get(event.match_id)
                 if start_time is not None:
                     from datetime import timedelta
@@ -353,15 +402,19 @@ class ScraperManager:
                     )
                     continue  # Skip storing this tick
 
-            # Publish to Redis for live consumers (AFTER quality gates)
+            # Publish to Redis for live consumers (AFTER quality gates, approved matches only)
             # Derive MatchContext FIRST so the odds message carries the in-sync context
-            context = self._live_match_tracker.update(event)
-            event_data = event.model_dump(mode="json")
-            if context is not None:
-                event_data["context"] = context.model_dump(mode="json")
-            await redis.publish_event(CHANNEL_MATCH_EVENTS, event_data)
+            context = None
+            if approved:
+                context = self._live_match_tracker.update(event)
+                event_data = event.model_dump(mode="json")
+                if context is not None:
+                    event_data["context"] = context.model_dump(mode="json")
+                await redis.publish_event(CHANNEL_MATCH_EVENTS, event_data)
+            else:
+                self._quality_stats["recorded_unapproved"] += 1
 
-            # Store to DB
+            # Store to DB (recording, independent of approval)
             self._quality_stats["stored"] += 1
             await self._store_odds_tick(event)
 
@@ -382,6 +435,16 @@ class ScraperManager:
                     score=context.score,
                     first_innings_total=fi_total,
                 )
+
+        # --- Feed heartbeat for the watchdog (S37) ---
+        if live_batch_ids:
+            self._last_live_event_at = now.isoformat()
+        write_feed_state(
+            FEED_STATE_PATH,
+            updated_at=now.isoformat(),
+            last_live_event_at=self._last_live_event_at,
+            live_matches=len(live_batch_ids),
+        )
 
         # --- Result detection: check if any tracked matches have completed ---
         try:

@@ -28,12 +28,14 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from scraper.match_filter import is_simulated_name  # noqa: E402
 from shared.logging import setup_logging  # noqa: E402
 
 logger = setup_logging("export_recorded_corpus")
 
 RECORDED_DIR = ROOT / "data" / "recorded"
-RECORDED_SOURCE = "recorded_lotusbook"
+RECORDED_SOURCE = "recorded_lotusbook"  # tag written on exported ticks
+RECORDED_ODDS_SOURCE = "lotusbook"  # ``source`` value of real scraped ticks in odds_ticks
 PRICE_KEYS = ("back_home", "lay_home", "back_away", "lay_away")
 VOLUME_KEYS = ("volume_back_home", "volume_lay_home", "volume_back_away", "volume_lay_away")
 CONTEXT_KEYS = (
@@ -307,6 +309,35 @@ def counts_per_key(manifest: dict[str, Any]) -> dict[str, int]:
 
 
 # --------------------------------------------------------------------------- DB layer
+def select_real_rows(rows: Iterable[Any]) -> tuple[list[dict[str, Any]], int]:
+    """Keep only real LotusBook ticks from simulated-free matches; return ``(kept, dropped)``.
+
+    Synthetic rows (``source='cricsheet_official'``) and simulated-league names (SRL, Virtual, ...)
+    are dropped even if the SQL filter let them through.
+    """
+    kept: list[dict[str, Any]] = []
+    dropped = 0
+    for row in rows:
+        d = _as_dict(row)
+        if d.get("source") != RECORDED_ODDS_SOURCE or is_simulated_name(
+            d.get("competition"), d.get("team_home"), d.get("team_away")
+        ):
+            dropped += 1
+            continue
+        kept.append(d)
+    return kept, dropped
+
+
+async def _historical_table_exists(session: Any) -> bool:
+    """True when ``odds_ticks_historical`` exists (it is created by the S08 migration)."""
+    from sqlalchemy import text
+
+    row = (await session.execute(text("SELECT to_regclass('odds_ticks_historical') AS t"))).fetchone()
+    if row is None:
+        return False
+    return _as_dict(row).get("t") is not None
+
+
 async def _fetch_matches() -> list[dict[str, Any]]:
     from sqlalchemy import text
 
@@ -315,24 +346,38 @@ async def _fetch_matches() -> list[dict[str, Any]]:
     odds_cols = (
         "time, match_id, team_home, team_away, competition, back_home, lay_home, back_draw, lay_draw, "
         "back_away, lay_away, volume_back_home, volume_lay_home, volume_back_away, volume_lay_away, "
-        "implied_prob_home, implied_prob_away, overround, score, wickets, overs, innings, is_live"
+        "implied_prob_home, implied_prob_away, overround, score, wickets, overs, innings, is_live, source"
     )
     ctx_cols = (
         "time, match_id, is_live, score, wickets, overs, run_rate, req_run_rate, innings, "
         "balls_remaining, batting_team, bowling_team, status, match_format"
     )
     matches: list[dict[str, Any]] = []
+    simulated_matches = 0
+    dropped_rows = 0
     async with get_session() as session:
+        has_historical = await _historical_table_exists(session)
+        if not has_historical:
+            logger.info("historical_table_missing", table="odds_ticks_historical", action="using odds_ticks only")
+        tables = ("odds_ticks", "odds_ticks_historical") if has_historical else ("odds_ticks",)
         results = (await session.execute(text("SELECT * FROM match_results"))).fetchall()
         for r in results:
             res = _as_dict(r)
             mid = res["match_id"]
+            if is_simulated_name(res.get("team_home"), res.get("team_away")):
+                simulated_matches += 1
+                continue
             odds: list[Any] = []
-            for table in ("odds_ticks", "odds_ticks_historical"):
+            for table in tables:
                 rows = await session.execute(
-                    text(f"SELECT {odds_cols} FROM {table} WHERE match_id = :m ORDER BY time"), {"m": mid}
+                    text(
+                        f"SELECT {odds_cols} FROM {table} WHERE match_id = :m AND source = :src ORDER BY time"
+                    ),
+                    {"m": mid, "src": RECORDED_ODDS_SOURCE},
                 )
-                odds.extend(_as_dict(x) for x in rows.fetchall())
+                kept, dropped = select_real_rows(rows.fetchall())
+                dropped_rows += dropped
+                odds.extend(kept)
             if not odds:
                 continue
             ctx = await session.execute(
@@ -340,6 +385,12 @@ async def _fetch_matches() -> list[dict[str, Any]]:
             )
             context = [_as_dict(x) for x in ctx.fetchall()]
             matches.append({"match_id": mid, "result": res, "odds": odds, "context": context})
+    logger.info(
+        "recorded_rows_filtered",
+        simulated_matches=simulated_matches,
+        dropped_rows=dropped_rows,
+        matches=len(matches),
+    )
     return matches
 
 
@@ -359,6 +410,12 @@ def _resolver() -> Callable[[dict[str, Any]], str]:
 
 async def main_async(args: argparse.Namespace) -> int:
     matches = await _fetch_matches()
+    if not matches:
+        print(
+            "No recorded matches: nothing qualified after excluding simulated (SRL/virtual) and "
+            "synthetic (cricsheet_official) rows. Nothing supports any real-edge claim yet."
+        )
+        return 0
     manifest = export_matches(
         matches, out_dir=Path(args.out_dir), key_resolver=_resolver(), cadence=args.cadence,
         min_ticks=args.min_ticks, min_coverage=args.min_coverage, force=args.force,
@@ -369,7 +426,7 @@ async def main_async(args: argparse.Namespace) -> int:
         warn = f"  WARNING: below {MIN_RELIABLE_SAMPLE}, real-edge claims are not statistically reliable" if n < MIN_RELIABLE_SAMPLE else ""
         print(f"  {key}: {n}{warn}")
     if not counts:
-        print("No recorded matches; nothing supports any real-edge claim yet.")
+        print("No recorded matches passed the quality thresholds; nothing supports any real-edge claim yet.")
     return 0
 
 
