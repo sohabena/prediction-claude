@@ -80,3 +80,12 @@ python -m pytest tests/unit tests/rl -q
 ## Out of scope
 
 - Any automated betting.
+
+## Integration notes from S41 (binding)
+
+- "Betfair price" means `odds_ticks` rows with `source='betfair'` (S41 stores them). It does **not** mean
+  `match_results.source`, which records where the *result* came from and is never overwritten by price writers.
+  Compute pre-match and 10-minute in-play CLV from those ticks, as `scripts/audit_clv.py` does (add a `source` filter
+  parameter there if needed; that file is S33's, so report it rather than edit it if it is not in your owned files).
+- S41 open item: if the `match_results` row is written after the Betfair market closes, `closing_*` stays empty. The
+  horizon-CLV path above does not depend on it.
