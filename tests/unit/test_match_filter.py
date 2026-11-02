@@ -60,3 +60,4 @@ def test_disabled_filter_allows_discovery_but_blocks_auto_approval():
     assert classifier.qualifies(ev_srl)
     # But is_international_or_major MUST STILL BE FALSE to prevent auto-approval
     assert not classifier.is_international_or_major(ev_srl)
+

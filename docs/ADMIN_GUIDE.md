@@ -96,9 +96,14 @@ All operational tasks can be managed using the root PowerShell harness:
 | **Large Stake %** | `LARGE_STAKE_PERCENT`| `0.04` | Large bet stake: 4% of budget ($4,000). |
 | **Observation Size** | `OBSERVATION_SIZE` | `50` | Exact feature vector dimension. |
 | **Scraper Target URL**| `SCRAPER_BETTING_SITE_URL` | `https://lotusbook.cc/cricket` | Live exchange scraping target. |
+| **Auto-Approve Matches**| `SCRAPER_AUTO_APPROVE_MATCHES` | `false` | Controls whether Tier-1 matches auto-approve (`false` = manual approval). |
+| **International Only** | `SCRAPER_INTERNATIONAL_ONLY` | `true` | Restricts discovery strictly to verified international & Tier-1 matches. |
 | **Min Quality Score** | `DATA_QUALITY_MIN_SCORE` | `0.70` | Threshold for approving matches into training. |
 | **Exchange Commission**| `EXCHANGE_COMMISSION`| `0.02` | 2.0% Betfair commission on gross winnings. |
 | **Max Lay Odds** | `MAX_LAY_ODDS` | `2.10` | Hard cap on Lay execution to eliminate catastrophic tail risk. |
+
+> [!NOTE]
+> Scraper auto-approval and international filtering can be dynamically toggled at runtime via Redis keys `config:scraper:auto_approve` and `config:scraper:international_only`, or via `GET/POST /api/matches/settings` without restarting daemons.
 
 ---
 
@@ -119,11 +124,16 @@ All operational tasks can be managed using the root PowerShell harness:
 - `POST /api/training/cricsheet-sync/trigger` — Manually triggers background download of `recently_added_7_json.zip` and incremental specialist fine-tuning.
 
 ### Matches & Data Validation
-- `GET /api/matches/active` — Lists all currently live cricket matches.
+- `GET /api/matches/settings` — Returns runtime scraper governance settings (`auto_approve`, `international_only`).
+- `POST /api/matches/settings` — Updates runtime scraper settings with instant propagation across scraper workers.
+- `GET /api/matches/active` — Lists all currently live cricket matches, enriched with real-time Back/Lay odds, scorecard text, and tick counts.
 - `GET /api/matches/training-status` — Lists all matches with two-phase scrape/training status.
+- `PATCH /api/matches/{id}/approve-scrape` — Approves a discovered match for live odds tick collection.
+- `PATCH /api/matches/{id}/reject-scrape` — Skips/rejects a match from live scraping.
 - `GET /api/matches/{id}/validate` — Executes `EpisodeQualityGate` validation and returns a diagnostic report.
 - `PATCH /api/matches/{id}/approve` — Approves a match for RL training (validates automatically).
 - `PATCH /api/matches/{id}/reject` — Rejects a match from training.
+- `DELETE /api/matches/{id}` — Deletes a rejected match and its associated data.
 - `POST /api/matches/{id}/result` — Manually submits a match result (winner, margin, result type).
 - `GET /api/matches/{id}/closing_odds` — Retrieves closing odds and calculates Closing Line Value (CLV).
 

@@ -33,8 +33,13 @@ graph TB
    - System health status (API, Redis, TimescaleDB, Scraper).
    - Real-time aggregate virtual P&L and active in-play match tracker.
 2. **Live Matches (`/matches`):**
-   - Discovered and in-play matches.
-   - Two-Phase Approval: Click **Validate** to view data quality score ($0.0 - 1.0$), then approve or reject matches for scraping and training.
+   - **Live LotusBook Matches Tab:** Shows currently active fixtures discovered in real time from `https://lotusbook.cc/cricket`.
+   - **Scraping Ingestion Governance Banner:**
+     - **Auto-Approve Scraping Toggle:** Default is **Manual Approval Only** (giving you 100% control over which matches scrape ticks). When toggled ON, strictly Tier-1 International and Major Franchise matches auto-approve; Simulated Reality League (SRL), virtual, and minor domestic games are **NEVER** auto-approved.
+     - **Strict International Toggle:** When enabled, immediately blocks and hides all SRL, simulated, and non-international matches. When disabled, shows all discovered matches in `Discovered` status so you can selectively approve or skip them.
+   - **Interactive Match Cards:** Display live bookmaker Back (`B`) and Lay (`L`) prices, live scorecard text (e.g. `142/3 (15.2)`), scheduled start time, pulsating `● In-Play Live` badge, and real-time tick counter.
+   - **Approval Controls:** Click **Approve Scraping** (green) to start capturing ticks into TimescaleDB, **Skip** (dark gray) to ignore, or **Stop** / **Watch Live Ticks** on active matches.
+   - **Training Corpus Tab:** Browse the 19,494-match institutional training corpus, inspect data quality metrics ($0.0 - 1.0$), and manage post-match training approvals.
    - **📝 Result Button:** Submit manual match outcome if a third-party feed is delayed.
 3. **Virtual Trading (`/trading`):**
    - Chronological log of all virtual trades (`virtual_bets`).

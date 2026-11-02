@@ -60,11 +60,96 @@ flowchart TD
 
 - **Target URL:** `https://lotusbook.cc/cricket`
 - **Primary Extraction Mode:** Chrome DevTools Protocol (CDP) WebSocket interception to capture sub-second odds feed updates before they are rendered into the DOM.
-- **Fallback Extraction Mode:** Automated DOM polling every 3–5 seconds using Playwright.
+- **Fallback Extraction Mode:** Automated DOM polling every 3–5 seconds using Playwright with auto-recovery (forced page reloads every 100 polls or 5 consecutive zero polls).
 - **Score Parsing:** In-play scorecard strings (e.g. `142/3 (15.2)`, `Target 185`) are parsed inline by [`LiveMatchTracker`](file:///c:/Users/sohai/Downloads/prediction-claude/scraper/parsers/lotusbook_parser.py), extracting:
   - Total runs, wickets lost, overs bowled
   - Current Run Rate (CRR) and Required Run Rate (RRR)
   - Current innings and active batting/bowling sides
+- **Real-Time Active Tracking:** Active matches in Redis key `active_matches` are enriched with bookmaker odds (Back/Lay), scorecard text, and scheduled start times. Stale matches are dropped after 120 seconds of inactivity.
+
+### Multi-Layer Match Filter & Governance (`scraper/match_filter.py`)
+
+To protect the trading engine and model training corpus from corrupted data, non-standard rules, and simulated markets, all incoming matches must pass multi-layer filtering before discovery or collection:
+
+1. **Layer 0: Hardened Blacklist Regex (Always Wins)**
+   - Simultaneously inspects `event.competition`, `event.team_home`, and `event.team_away`.
+   - Rejects any match matching patterns: `\bsrl\b`, `simulated`, `cyber`, `virtual`, `esport`, `electronic`, `fifa`, `t10`, `sixes`, `indoor`.
+   - Prevents Simulated Reality League (SRL) or computer-simulated matches from infiltrating the pipeline, even when competition names are omitted or blank on bookmaker sites.
+2. **Layer 1: Competition Name Whitelist**
+   - Whitelists ICC tournaments (World Cups, Champions Trophy, World Test Championship) and major Tier-1 franchise leagues (IPL, BBL, WBBL, CPL, PSL, SA20, The Hundred, MLC, ILT20, BPL, Super Smash).
+3. **Layer 2: Team Name Recognition**
+   - Matches against `ALL_KNOWN_TEAMS` (all ICC Full/Associate member national teams and recognized franchise squads).
+   - Supports feminine suffixes (`(w)`, `w`, `women`, `w.`) to recognize Women's Big Bash League (WBBL) and Women's Premier League (WPL) squads without alias duplication.
+4. **Strict Verification Guard (`is_international_or_major`)**
+   - Evaluates whether a fixture qualifies as an official international or major Tier-1 match.
+   - Non-international matches, club games, and SRL fixtures ALWAYS evaluate to `False`, guaranteeing they can never be auto-approved.
+
+### Two-Phase Gating Pipeline (`scraper/manager.py`)
+
+Collection and training are strictly isolated into distinct approval gates:
+
+```
+[Discovered on LotusBook]
+           │
+     Layer 0-2 Filter
+           │
+   ┌───────┴────────────────┐
+   ▼                        ▼
+[Blacklisted / SRL]   [Qualifying Fixture]
+ (Dropped)                  │
+               ┌────────────┴────────────┐
+               ▼                         ▼
+      [Auto-Approve: OFF]       [Auto-Approve: ON]
+     (Manual Approval Mode)    (Strict Tier-1 Only)
+               │                         │
+               │ (User Clicks Approve)   │ (is_international_or_major)
+               └────────────┬────────────┘
+                            ▼
+                    ┌───────────────┐
+                    │  SCRAPE GATE  │
+                    │scrape_approved│
+                    └───────┬───────┘
+                            │
+                    ┌───────┴───────┐
+                    │   LIVE GATE   │ ──► Waits until in-play
+                    └───────┬───────┘
+                            │
+                    ┌───────┴───────┐
+                    │ SCHEDULE GATE │ ──► Waits until 10 min before start
+                    └───────┬───────┘
+                            ▼
+                 Ingest Ticks to DB & Redis
+                            │
+                    (Match Concludes)
+                            │
+                 Data Quality Validation
+                 (Completeness ≥ 70%, Score ≥ 0.70)
+                            │
+                    ┌───────┴───────┐
+                    │ TRAINING GATE │ ──► Ingest to Specialist RL Corpus
+                    └───────────────┘
+```
+
+1. **Scrape Gate (`scrape_status`):**
+   - `discovered`: Match is detected and displayed on the dashboard for review. **Zero odds ticks are written to the database.**
+   - `scrape_approved`: Ticks are stored to TimescaleDB and streamed to Redis live trading consumers.
+   - `scrape_rejected`: Match is skipped and hidden from active tick capture.
+2. **Live & Schedule Gates:**
+   - Approved matches wait until 10 minutes prior to scheduled start and only capture ticks while `is_live=True`. Completed matches automatically stop recording.
+3. **Training Gate (`training_status`):**
+   - `pending`: Collected tick data awaits data quality scoring post-match.
+   - `approved`: Validated matches ($score \ge 0.70$) eligible for RL model training.
+
+### Runtime Governance & Dynamic API Controls
+
+PHOENIX provides real-time control toggles via Redis and the Dashboard UI:
+- **Redis Keys:**
+  - `config:scraper:auto_approve`: `"false"` (default) / `"true"`.
+  - `config:scraper:international_only`: `"false"` / `"true"` (default).
+- **REST Endpoints:**
+  - `GET /api/matches/settings`: Returns `{ auto_approve: bool, international_only: bool }`.
+  - `POST /api/matches/settings`: Updates runtime toggles with instant propagation.
+- **Memory Invalidation:** The scraper worker refreshes approved IDs every 5 seconds and immediately evicts blacklisted fixtures from memory when strict international filtering is enabled.
 
 ---
 

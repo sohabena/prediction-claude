@@ -34,9 +34,15 @@ Run this mentally before writing any code:
 - [ ] `is_live` detection uses section-aware DOM walk (not just `#inPlay` element)
 - [ ] Upcoming matches marked `is_live = false` (date patterns: DD/MM/YYYY, "Tomorrow", "Today")
 - [ ] Completed matches stop being scraped (`_completed_match_ids`)
-- [ ] Stale matches cleaned up (not seen for 2h → removed from active_matches)
-- [ ] LIVE GATE enforced: ticks only stored when `is_live=True AND approved AND not completed`
-- [ ] `active_matches` Redis key includes `updated_at` timestamp
+- [ ] Stale matches cleaned up: inactive matches removed after 120s (not 2 hours) to prevent ghost records
+- [ ] Browser auto-reloaded every 100 polls or 5 consecutive zero polls to prevent CDP websocket deadlocks
+- [ ] In-memory approved match cache refreshed every 5s so UI approvals/stops take effect immediately
+- [ ] Layer 0 Blacklist: verify competition, team_home, and team_away are all checked against `\bsrl\b`, `simulated`, `cyber`, `virtual`, `esport`
+- [ ] `is_international_or_major` guard verified: non-international matches must NEVER be auto-approved
+- [ ] SCRAPE GATE enforced: ticks only stored when `scrape_status == 'scrape_approved' AND is_live=True AND not completed`
+- [ ] SCHEDULE GATE enforced: do not record ticks earlier than 10 minutes prior to scheduled start time
+- [ ] Runtime dynamic settings: check Redis keys `config:scraper:auto_approve` and `config:scraper:international_only` with fallback to `Settings`
+- [ ] `active_matches` Redis key enriched with Back/Lay odds, scorecard text, scheduled time, and `updated_at` timestamp
 
 ### RL / Training & Model Zoo Changes
 - [ ] Observation vector is exactly 50 floats, dtype=float32 (Lean Expert Trading Set)

@@ -34,6 +34,17 @@ Rather than a single monolithic model, PHOENIX utilizes a dynamic 12-model portf
 
 Each specialist operates on calibrated par curves (Women's T20: 136 rpo vs Men's: 168 rpo vs IPL: 188 rpo) and wicket sensitivity decays (1.35x decay in Women's cricket).
 
+## Scraper Architecture & Ingestion Governance
+- **Two-Phase Gating:**
+  1. *Scrape Gate* (`scrape_status`): `discovered` (default, zero tick writes) → `scrape_approved` (user or auto) → `scrape_rejected`.
+  2. *Live Gate*: Only collect ticks while `is_live=True AND scrape_approved AND not completed`.
+  3. *Schedule Gate*: Wait until 10 minutes before match scheduled start time.
+  4. *Training Gate* (`training_status`): Post-match quality score $\ge 0.70$ before ingesting to RL corpus.
+- **Layer 0 Blacklist:** `\bsrl\b`, `simulated`, `cyber`, `virtual`, `esport` simultaneously checked against competition, home team, and away team. Simulated Reality League matches can NEVER be auto-approved.
+- **Strict Verification:** `MatchClassifier.is_international_or_major()` guards auto-approval; non-international/SRL fixtures always evaluate to `False`.
+- **Runtime Dynamic Controls:** Redis keys `config:scraper:auto_approve` (`false` by default, manual mode) and `config:scraper:international_only` (`true` by default) control dynamic filtering without service restarts.
+- **Stale Clean-up:** Inactive matches dropped after 120s; worker auto-reloads page every 100 polls or 5 consecutive zero polls; cache refreshes every 5s.
+
 ## Actual Project Structure (verified)
 ```
 shared/

@@ -13,21 +13,36 @@ Answer the user's question about how the PHOENIX system works using the informat
 
 ---
 
-## How the Scraper Detects Live Matches
+## How the Scraper Detects Live Matches & Enforces Ingestion Governance
 
-The scraper is **fully automatic and polling-based**. No manual intervention is needed.
+The scraper runs continuously in the background, combining automated discovery with strict user governance:
 
-1. **Continuous Polling**: The scraper polls `https://lotusbook.site/cricket` every 3 seconds (configurable via `SCRAPER_POLL_INTERVAL` in `shared/config.py`).
-2. **DOM Parsing**: Each cycle, Playwright loads the page and extracts ALL visible match cards -- team names, current odds (back/lay), and live/upcoming status.
-3. **Live Detection**: The scraper checks for keywords like "live", "in-play" in the DOM to determine if a match is currently in progress.
-4. **Match Filtering**: The `MatchClassifier` (in `scraper/match_filter.py`) filters events to keep only:
-   - **International matches**: National teams (e.g., India vs Australia, England vs South Africa)
-   - **Major franchise leagues**: IPL, BBL, CPL, PSL, SA20, The Hundred, MLC, ILT20, LPL, BPL
-   - Domestic/club/U19/women's matches are excluded by default (configurable)
-5. **Data Storage**: Qualifying odds events are stored in TimescaleDB (`odds_ticks` table) and published to Redis (`match_events` channel) for real-time consumption.
-6. **Active Match Tracking**: Redis key `active_matches` is continuously updated with currently live matches.
+1. **Continuous In-Play Interception**: The scraper connects to `https://lotusbook.cc/cricket` via Chrome DevTools Protocol (CDP) WebSocket interception with Playwright DOM fallback (polling every 3–5 seconds).
+2. **Multi-Layer Match Filtering (`scraper/match_filter.py`)**:
+   - **Layer 0 Blacklist (Always Wins)**: Automatically checks competition, home team, and away team for `\bsrl\b`, `simulated`, `cyber`, `virtual`, and `esports`. Simulated Reality League (SRL) matches are strictly blocked from tick collection.
+   - **Layer 1 Whitelist**: Validates ICC events and Tier-1 franchise tournaments (IPL, BBL, WBBL, CPL, PSL, SA20, The Hundred, MLC, etc.).
+   - **Layer 2 Team Database**: Matches national and franchise squads in `ALL_KNOWN_TEAMS`, recognizing women's suffixes (`(w)`, `women`, `w.`).
+3. **Two-Phase Approval Gating**:
+   - **Scrape Gate**: Newly discovered matches default to `discovered` (Manual Approval Mode). Zero odds ticks are written to the database until explicitly approved by the user or verified as Tier-1 under auto-approval.
+   - **Live & Schedule Gates**: Approved matches only record ticks when in-play (`is_live=True`) and within 10 minutes of scheduled start time. Completed matches automatically cease recording.
+   - **Training Gate**: Post-match data quality validation ensures completeness $\ge 70\%$ and score $\ge 0.70$ before data enters the RL training corpus.
+4. **Runtime Governance Controls**:
+   - The user has dynamic toggles on the **Live Matches** dashboard page (`/matches`) to switch between **Manual Approval Mode** (100% manual control) and **Tier-1 Auto-Approval**, or toggle the **Strict International Filter** to instantly hide non-international matches.
+5. **Real-Time Data Distribution**: Qualifying odds events stream to Redis (`match_events` channel) and write to TimescaleDB (`odds_ticks` table). Live odds (Back/Lay) and scorecards are cached in Redis `active_matches` with a 120s stale eviction timeout.
 
-**Key point**: The scraper runs 24/7 as a background service. It automatically discovers new matches when they appear on the site and stops tracking them when they finish.
+---
+
+## The 12-Specialist Model Zoo & Automated Cricsheet Retraining
+
+Rather than a single monolithic model that treats all cricket formats identically, PHOENIX utilizes a **12-Specialist Model Zoo** (`rl/model_zoo.py`) partitioned by format, league, and gender:
+- **T20 Specialists:** `ipl`, `bbl_men`, `wbbl_women`, `t20i_men`, `t20i_women`, `t20_blast`, `franchise_t20`
+- **ODI Specialists:** `odi_men`, `odi_women`, `list_a`
+- **Multi-Day Specialists:** `test_men`, `first_class`
+
+Each specialist is calibrated to format par rates (Women's T20: 136 rpo vs Men's: 168 rpo vs IPL: 188 rpo) and steeper wicket sensitivities in women's cricket.
+
+### Automated Weekly Retraining
+Every Monday at 03:00 UTC, the system downloads newly completed matches from Cricsheet (`recently_added_7_json.zip`), deduplicates them against canonical signatures, appends them to the specialist archives, and executes incremental PPO curriculum retraining (4,000 steps per affected specialist).
 
 ---
 
@@ -79,19 +94,21 @@ Training is **fully autonomous** -- managed by the Orchestrator (`rl/orchestrato
 ## Architecture Overview
 
 ```
-[LotusBook.site] <-- Playwright polling every 3s
-        |
-    [Scraper] -- filters international matches
-        |
-   [Redis PubSub] -----> [Frontend Dashboard] (real-time updates)
-        |
-   [TimescaleDB] <------ odds_ticks, match_context, virtual_bets
-        |
-   [Orchestrator] -- manages lifecycle, trains PPO agent
-        |
-   [Backend API] -------> [Frontend Dashboard]
-        |                     |
-   [Advisor Signals]     [Shadow Trading Metrics]
+[LotusBook Live] <── Playwright CDP WebSocket & Polling
+        │
+  [Match Filter] ───► Layer 0 Blacklist (Blocks SRL & Cyber)
+        │
+   [Scrape Gate] ───► User Approval / Tier-1 Auto-Approval
+        │
+  [Redis PubSub] ────► [Frontend Dashboard] (Real-time odds, Back/Lay ladder)
+        │
+  [TimescaleDB]  ◄──── odds_ticks, match_context, virtual_bets
+        │
+  [Orchestrator] ────► 12 Specialist Model Zoo + Weekly Retraining
+        │
+  [Backend API]  ────► [Frontend Dashboard]
+        │                     │
+  [Advisor Signals]     [Shadow Trading Metrics]
 ```
 
 All services run locally via `.\phoenix.ps1 start` or Docker Compose.
