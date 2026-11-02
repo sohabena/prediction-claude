@@ -240,6 +240,57 @@ class Orchestrator:
                     return
         await self._publish_state()
 
+    @staticmethod
+    def pick_graduation_candidate(
+        counts: dict[str, int], tradeable_keys: set[str],
+    ) -> Optional[str]:
+        """Pure: version with most settled bets whose specialist key is tradeable."""
+        eligible = {
+            v: n for v, n in counts.items()
+            if n > 0 and v.split("@", 1)[0] in tradeable_keys
+        }
+        if not eligible:
+            return None
+        return max(eligible, key=lambda v: (eligible[v], v))
+
+    async def _graduation_version_counts(self) -> dict[str, int]:
+        """Settled-bet counts per agent_version inside the graduation window."""
+        from datetime import timedelta
+        from sqlalchemy import text
+        from shared.db import get_session
+        from rl.lifecycle.graduation_handler import WINDOW_DAYS
+
+        since = datetime.now(timezone.utc) - timedelta(days=WINDOW_DAYS)
+        async with get_session() as session:
+            result = await session.execute(
+                text(
+                    "SELECT agent_version, COUNT(*) FROM virtual_bets "
+                    "WHERE placed_at > :since AND settled_at IS NOT NULL "
+                    "AND agent_version <> '' "
+                    "AND agent_version NOT LIKE 'holdout_eval:%' "
+                    "GROUP BY agent_version"
+                ),
+                {"since": since},
+            )
+            return {r[0]: int(r[1]) for r in result.fetchall()}
+
+    async def _graduation_candidate_version(self) -> Optional[str]:
+        """Choose the live model version to graduate-check; None if no candidate."""
+        try:
+            from rl.model_zoo import get_model_zoo
+
+            counts = await self._graduation_version_counts()
+            specs = get_model_zoo().list_specialists()
+            tradeable = {k for k, v in specs.items() if v.get("tradeable")}
+            chosen = self.pick_graduation_candidate(counts, tradeable)
+        except Exception as e:
+            logger.error("graduation_candidate_failed", error=str(e))
+            return None
+        if chosen is not None:
+            logger.info("graduation_candidate_chosen", agent_version=chosen,
+                        settled_bets=counts.get(chosen, 0), versions=len(counts))
+        return chosen
+
     async def _check_nightly_schedule(self, now: datetime) -> None:
         """Execute nightly tasks based on UTC schedule."""
         today = now.date().isoformat()
@@ -252,10 +303,14 @@ class Orchestrator:
         logger.info("nightly_schedule_starting", date=today)
 
         if self._state in (OrchestratorState.VIRTUAL_TRADING, OrchestratorState.ONLINE_TRAINING):
-            graduated = await self._graduation_handler.check()
-            if graduated:
-                await self._transition_to(OrchestratorState.GRADUATED)
-                return
+            candidate = await self._graduation_candidate_version()
+            if candidate is None:
+                logger.info("graduation_no_candidate")
+            else:
+                graduated = await self._graduation_handler.check(agent_version=candidate)
+                if graduated:
+                    await self._transition_to(OrchestratorState.GRADUATED)
+                    return
 
         version_ref = [self._model_version]
         await self._training_handler.run_nightly_retrain(

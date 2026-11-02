@@ -57,6 +57,7 @@ LARGE_STAKE_PERCENT = 0.04     # 4% of bankroll ($4,000 on 100k budget)
 # "op" is the comparison of metric vs threshold: ge (>=), gt (>), le (<=).
 # win_rate is deliberately absent: it is meaningless for a back/lay trading book.
 # sharpe_ratio is a NON-annualised per-calendar-day Sharpe (zero days included).
+# The 0.10 Sharpe threshold is a PLACEHOLDER: calibrate from the S18 report before real money.
 GRADUATION_CRITERIA = {
     "roi_on_turnover": {"threshold": 0.02, "op": "ge", "window_days": 30},
     "sharpe_ratio": {"threshold": 0.10, "op": "ge", "window_days": 30},
