@@ -207,8 +207,38 @@ class ScraperManager:
         now = datetime.now(timezone.utc)
         current_batch_ids: set[str] = set()
 
-        # Periodically refresh scrape-approved matches (every 60s) so UI approvals take effect
-        if self._last_approved_refresh is None or (now - self._last_approved_refresh).total_seconds() > 60:
+        # Check runtime dynamic scraper settings from Redis
+        try:
+            auto_raw = await redis.client.get("config:scraper:auto_approve")
+            if auto_raw is not None:
+                auto_approve_enabled = str(auto_raw).lower() in ("true", "1")
+            else:
+                auto_approve_enabled = bool(self.settings.scraper.auto_approve_matches)
+
+            intl_raw = await redis.client.get("config:scraper:international_only")
+            if intl_raw is not None:
+                intl_enabled = str(intl_raw).lower() in ("true", "1")
+            else:
+                intl_enabled = bool(self.settings.scraper.international_only)
+
+            self._match_filter.enabled = intl_enabled
+            if intl_enabled:
+                # Evict any active matches that fail blacklist immediately
+                to_evict = [
+                    mid for mid, m in self._active_matches.items()
+                    if (
+                        self._match_filter._is_blacklisted(m.get("competition", ""))
+                        or self._match_filter._is_blacklisted(m.get("team_home", ""))
+                        or self._match_filter._is_blacklisted(m.get("team_away", ""))
+                    )
+                ]
+                for mid in to_evict:
+                    del self._active_matches[mid]
+        except Exception as e:
+            auto_approve_enabled = bool(self.settings.scraper.auto_approve_matches)
+
+        # Periodically refresh scrape-approved matches (every 5s) so UI approvals take effect immediately
+        if self._last_approved_refresh is None or (now - self._last_approved_refresh).total_seconds() > 5:
             await self._load_scrape_approved()
             self._last_approved_refresh = now
 
@@ -253,7 +283,7 @@ class ScraperManager:
             # Register first-seen matches as "discovered" (no tick storage yet)
             if event.match_id not in self._seen_match_ids:
                 self._seen_match_ids.add(event.match_id)
-                await self._upsert_training_status(event)
+                await self._upsert_training_status(event, auto_approve_enabled=auto_approve_enabled)
 
             # ── SCRAPE GATE: only collect data for approved matches ──
             if event.match_id not in self._scrape_approved_ids:
@@ -512,15 +542,16 @@ class ScraperManager:
         except Exception as e:
             logger.error("db_store_error", match_id=event.match_id, error=str(e))
 
-    async def _upsert_training_status(self, event: OddsEvent) -> None:
+    async def _upsert_training_status(self, event: OddsEvent, auto_approve_enabled: bool = False) -> None:
         """Insert match_training_status for a newly discovered match.
 
         Two-phase approval:
         1. scrape_status: 'discovered' (default) or 'scrape_approved' (auto or manual)
         2. training_status: 'pending' until user reviews collected data
 
-        When auto_approve_matches is True, ICC/international/franchise matches
-        get scrape_approved automatically. Otherwise all start as 'discovered'.
+        When auto_approve_enabled is True, ICC/international/major franchise matches
+        get scrape_approved automatically. Non-international matches and SRL/virtual/cyber
+        are NEVER auto-approved. Otherwise all start as 'discovered'.
         """
         from backend.models.match_status import MatchTrainingStatus
 
@@ -529,7 +560,8 @@ class ScraperManager:
             team_home=event.team_home,
             team_away=event.team_away,
         )
-        if self.settings.scraper.auto_approve_matches:
+        is_intl_major = self._match_filter.is_international_or_major(event)
+        if auto_approve_enabled and is_intl_major:
             auto_tiers = {
                 MatchTier.ICC_EVENT,
                 MatchTier.INTERNATIONAL_BILATERAL,
@@ -562,13 +594,15 @@ class ScraperManager:
                         if record.training_status == "pending":
                             record.training_status = "approved"
 
-                    # Already tracked — but update scrape cache if approved
+                    # Already tracked — update in-memory cache
                     if record.scrape_status == "scrape_approved":
                         self._scrape_approved_ids.add(event.match_id)
                         if record.match_start_time:
                             if not hasattr(self, "_scrape_approved_times"):
                                 self._scrape_approved_times = {}
                             self._scrape_approved_times[event.match_id] = record.match_start_time
+                    else:
+                        self._scrape_approved_ids.discard(event.match_id)
 
                     return
 

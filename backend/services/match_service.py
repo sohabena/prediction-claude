@@ -364,3 +364,47 @@ class MatchService:
             "stored": True,
             "settled_bets": settled_count,
         }
+
+    # ------------------------------------------------------------------
+    # Scraper Runtime Settings & Control
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    async def get_scraper_settings() -> dict[str, Any]:
+        """Get runtime scraper settings from Redis with config fallbacks."""
+        from shared.config import get_settings
+        settings = get_settings()
+        redis = await get_redis()
+
+        auto_raw = await redis.client.get("config:scraper:auto_approve")
+        if auto_raw is not None:
+            auto_val = str(auto_raw).lower() in ("true", "1")
+        else:
+            auto_val = bool(settings.scraper.auto_approve_matches)
+
+        intl_raw = await redis.client.get("config:scraper:international_only")
+        if intl_raw is not None:
+            intl_val = str(intl_raw).lower() in ("true", "1")
+        else:
+            intl_val = bool(settings.scraper.international_only)
+
+        return {
+            "auto_approve": auto_val,
+            "international_only": intl_val,
+        }
+
+    @staticmethod
+    async def update_scraper_settings(updates: dict[str, Any]) -> dict[str, Any]:
+        """Update runtime scraper settings in Redis."""
+        redis = await get_redis()
+        if "auto_approve" in updates and updates["auto_approve"] is not None:
+            val = "true" if updates["auto_approve"] else "false"
+            await redis.client.set("config:scraper:auto_approve", val)
+            logger.info("scraper_setting_updated", key="auto_approve", value=val)
+
+        if "international_only" in updates and updates["international_only"] is not None:
+            val = "true" if updates["international_only"] else "false"
+            await redis.client.set("config:scraper:international_only", val)
+            logger.info("scraper_setting_updated", key="international_only", value=val)
+
+        return await MatchService.get_scraper_settings()

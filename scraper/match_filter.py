@@ -88,8 +88,12 @@ class MatchClassifier:
         if not self.enabled:
             return True
 
-        # Layer 0: Blacklist always wins
-        if self._is_blacklisted(event.competition):
+        # Layer 0: Blacklist always wins (checks competition, team_home, and team_away)
+        if (
+            self._is_blacklisted(event.competition)
+            or self._is_blacklisted(event.team_home)
+            or self._is_blacklisted(event.team_away)
+        ):
             logger.debug(
                 "match_rejected_blacklist",
                 competition=event.competition,
@@ -144,6 +148,26 @@ class MatchClassifier:
             team_home=event.team_home,
             team_away=event.team_away,
         )
+
+    def is_international_or_major(self, event: OddsEvent) -> bool:
+        """
+        Strictly verify whether a match is official international or major franchise.
+        Returns False for all SRL, simulated, cyber, minor, and unverified matches.
+        """
+        # 1. Any blacklist pattern in competition or team names immediately fails
+        if (
+            self._is_blacklisted(event.competition)
+            or self._is_blacklisted(event.team_home)
+            or self._is_blacklisted(event.team_away)
+        ):
+            return False
+
+        # 2. Whitelisted competition name
+        if event.competition and self._is_whitelisted(event.competition):
+            return True
+
+        # 3. Known team name recognition (both teams must be recognised)
+        return self._is_known_team(event.team_home) and self._is_known_team(event.team_away)
 
     def _is_whitelisted(self, competition: str) -> bool:
         """Check if competition matches any whitelist pattern."""

@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 
 from backend.services.match_service import MatchService
 from shared.logging import setup_logging
@@ -15,6 +16,32 @@ from shared.logging import setup_logging
 router = APIRouter()
 logger = setup_logging("router_matches")
 svc = MatchService()
+
+
+class ScraperSettingsUpdate(BaseModel):
+    auto_approve: Optional[bool] = None
+    international_only: Optional[bool] = None
+
+
+@router.get("/settings")
+async def get_scraper_settings() -> dict[str, Any]:
+    """Get dynamic scraper settings."""
+    try:
+        return await svc.get_scraper_settings()
+    except Exception as e:
+        logger.error("get_scraper_settings_error", error=str(e))
+        return {"auto_approve": False, "international_only": True, "error": str(e)}
+
+
+@router.post("/settings")
+async def update_scraper_settings(settings: ScraperSettingsUpdate) -> dict[str, Any]:
+    """Update dynamic scraper settings."""
+    try:
+        updates = settings.model_dump(exclude_unset=True)
+        return await svc.update_scraper_settings(updates)
+    except Exception as e:
+        logger.error("update_scraper_settings_error", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/active")

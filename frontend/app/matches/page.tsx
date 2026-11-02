@@ -97,6 +97,11 @@ interface ActiveMatchesResponse {
   updated_at?: string;
 }
 
+interface ScraperSettings {
+  auto_approve: boolean;
+  international_only: boolean;
+}
+
 type ViewTab = "scrape" | "training";
 type FormatFilter = "all" | "t20" | "odi" | "test";
 
@@ -190,6 +195,50 @@ export default function MatchesPage() {
     5000,
   );
 
+  const { data: scraperSettings, refresh: refreshSettings } = useApi<ScraperSettings>(
+    "/matches/settings",
+    10000,
+  );
+  const [updatingSettings, setUpdatingSettings] = useState<boolean>(false);
+
+  const toggleAutoApprove = useCallback(async () => {
+    if (!scraperSettings) return;
+    const nextVal = !scraperSettings.auto_approve;
+    setUpdatingSettings(true);
+    try {
+      await fetch(`${API_BASE}/matches/settings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ auto_approve: nextVal }),
+      });
+      refreshSettings();
+      refresh();
+    } catch (e) {
+      console.error("Failed to toggle auto approve", e);
+    } finally {
+      setUpdatingSettings(false);
+    }
+  }, [scraperSettings, refreshSettings, refresh]);
+
+  const toggleInternationalOnly = useCallback(async () => {
+    if (!scraperSettings) return;
+    const nextVal = !scraperSettings.international_only;
+    setUpdatingSettings(true);
+    try {
+      await fetch(`${API_BASE}/matches/settings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ international_only: nextVal }),
+      });
+      refreshSettings();
+      refresh();
+    } catch (e) {
+      console.error("Failed to toggle international only", e);
+    } finally {
+      setUpdatingSettings(false);
+    }
+  }, [scraperSettings, refreshSettings, refresh]);
+
   const { isConnected } = useWebSocket();
 
   const liveIds = useMemo(() => {
@@ -229,20 +278,30 @@ export default function MatchesPage() {
     return result;
   }, [activeData, allMatches]);
 
+  const isSimulatedOrMinor = (m: TrainingMatch) => {
+    const combined = `${m.competition} ${m.team_home} ${m.team_away}`.toLowerCase();
+    return /\b(srl|simulated|cyber|esport|virtual)\b/.test(combined);
+  };
+
+  const displayedLotusMatches = useMemo(() => {
+    if (!scraperSettings?.international_only) return liveLotusMatches;
+    return liveLotusMatches.filter((m) => !isSimulatedOrMinor(m));
+  }, [liveLotusMatches, scraperSettings?.international_only]);
+
   const liveLotusSummary = useMemo(() => {
     let discovered = 0;
     let approved = 0;
     let rejected = 0;
-    for (const m of liveLotusMatches) {
+    for (const m of displayedLotusMatches) {
       if (m.scrape_status === "discovered") discovered++;
       else if (m.scrape_status === "scrape_approved") approved++;
       else if (m.scrape_status === "scrape_rejected") rejected++;
     }
-    return { discovered, approved, rejected, total: liveLotusMatches.length };
-  }, [liveLotusMatches]);
+    return { discovered, approved, rejected, total: displayedLotusMatches.length };
+  }, [displayedLotusMatches]);
 
   const filteredScrapeMatches = useMemo(() => {
-    return liveLotusMatches.filter((m) => {
+    return displayedLotusMatches.filter((m) => {
       if (scrapeFilter !== "all" && m.scrape_status !== scrapeFilter) return false;
       if (!searchQuery) return true;
       const q = searchQuery.toLowerCase();
@@ -253,7 +312,7 @@ export default function MatchesPage() {
         (m.competition && m.competition.toLowerCase().includes(q))
       );
     });
-  }, [liveLotusMatches, scrapeFilter, searchQuery]);
+  }, [displayedLotusMatches, scrapeFilter, searchQuery]);
 
   // ── Training Tab: Official Harmonized Training Corpus & Completed Matches ──
   const trainingCorpusMatches = useMemo(() => {
@@ -456,7 +515,7 @@ export default function MatchesPage() {
                 : "text-zinc-400 hover:text-zinc-200"
             }`}
           >
-            🏏 Live LotusBook Matches ({liveLotusMatches.length})
+            🏏 Live LotusBook Matches ({displayedLotusMatches.length})
           </button>
           <button
             onClick={() => {
@@ -497,6 +556,80 @@ export default function MatchesPage() {
       {/* ═══ TAB 1: LIVE LOTUSBOOK MATCHES ═══ */}
       {viewTab === "scrape" && (
         <>
+          {/* Scraper Control & Ingestion Governance Banner */}
+          <div className="bg-zinc-900/90 border border-zinc-800 rounded-xl p-4 mb-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-lg">
+            <div className="flex items-start gap-3">
+              <div className="p-2.5 bg-blue-500/10 text-blue-400 rounded-lg border border-blue-500/20 text-lg">
+                🛡️
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-semibold text-zinc-100">Scraping Ingestion Governance</h3>
+                  <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700">
+                    Runtime Control
+                  </span>
+                </div>
+                <p className="text-xs text-zinc-400 mt-0.5 max-w-xl">
+                  {scraperSettings?.auto_approve
+                    ? "⚡ Auto-Approve Active: Strictly Tier-1 International & Major Franchise matches. Simulated Reality League (SRL), cyber, and minor domestic are strictly blocked."
+                    : "🔒 Manual Control Active: You decide every match to scrape. All incoming matches wait in 'Discovered' until you click Approve."}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3 w-full md:w-auto justify-end">
+              {/* Auto-Approve Toggle */}
+              <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-800">
+                <div className="flex flex-col">
+                  <span className="text-xs font-semibold text-zinc-200">Auto-Approve Scraping</span>
+                  <span className="text-[10px] text-zinc-500">
+                    {scraperSettings?.auto_approve ? "Tier-1 Intl Only" : "Manual Approval Only"}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={toggleAutoApprove}
+                  disabled={updatingSettings}
+                  className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                    scraperSettings?.auto_approve ? "bg-emerald-600" : "bg-zinc-700"
+                  }`}
+                  title="Toggle automatic scraping approval for Tier-1 matches"
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                      scraperSettings?.auto_approve ? "translate-x-4" : "translate-x-0"
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {/* Strict International Filter Toggle */}
+              <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-800">
+                <div className="flex flex-col">
+                  <span className="text-xs font-semibold text-zinc-200">Strict International</span>
+                  <span className="text-[10px] text-zinc-500">
+                    {scraperSettings?.international_only ? "Blocks SRL & Cyber" : "Show All Matches"}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={toggleInternationalOnly}
+                  disabled={updatingSettings}
+                  className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                    scraperSettings?.international_only ? "bg-blue-600" : "bg-zinc-700"
+                  }`}
+                  title="Toggle strict international filter to block SRL and cyber matches"
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                      scraperSettings?.international_only ? "translate-x-4" : "translate-x-0"
+                    }`}
+                  />
+                </button>
+              </div>
+            </div>
+          </div>
+
           <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 mb-4">
             <p className="text-zinc-400 text-xs">
               Matches discovered in real time from <code className="text-zinc-300">https://lotusbook.cc/cricket</code>.
