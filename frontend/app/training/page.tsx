@@ -59,7 +59,7 @@ export default function TrainingPage() {
   );
 
   const { data: summary } = useApi<SummaryResponse>("/training/summary", 3000);
-  const { data: syncStatus, mutate: mutateSync } = useApi<SyncStatus>(
+  const { data: syncStatus, refresh: mutateSync } = useApi<SyncStatus>(
     "/training/cricsheet-sync/status",
     10000
   );

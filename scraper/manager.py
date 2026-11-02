@@ -539,6 +539,11 @@ class ScraperManager:
                     scrape_latency_ms=event.scrape_latency_ms or None,
                 )
                 session.add(tick)
+                from sqlalchemy import text
+                await session.execute(
+                    text("UPDATE match_training_status SET tick_count = COALESCE(tick_count, 0) + 1 WHERE match_id = :mid"),
+                    {"mid": event.match_id},
+                )
         except Exception as e:
             logger.error("db_store_error", match_id=event.match_id, error=str(e))
 

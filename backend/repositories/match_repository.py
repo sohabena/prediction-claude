@@ -169,14 +169,9 @@ class MatchRepository:
                         mts.approved_at,
                         mts.created_at,
                         mts.match_start_time,
-                        COALESCE(tc.tick_count, 0) as tick_count,
+                        COALESCE(mts.tick_count, 0) as tick_count,
                         COALESCE(mts.scrape_status, 'discovered') as scrape_status
                     FROM match_training_status mts
-                    LEFT JOIN (
-                        SELECT match_id, COUNT(*) as tick_count
-                        FROM odds_ticks
-                        GROUP BY match_id
-                    ) tc ON tc.match_id = mts.match_id
                     {where_clause}
                     ORDER BY mts.created_at DESC
                 """),

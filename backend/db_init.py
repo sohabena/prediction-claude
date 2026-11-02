@@ -78,6 +78,12 @@ MIGRATION_STATEMENTS = [
     END $$;""",
     """DO $$ BEGIN
         IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name='match_training_status' AND column_name='tick_count')
+        THEN ALTER TABLE match_training_status ADD COLUMN tick_count INTEGER DEFAULT 0;
+        END IF;
+    END $$;""",
+    """DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                        WHERE table_name='match_results' AND column_name='closing_back_home')
         THEN ALTER TABLE match_results ADD COLUMN closing_back_home FLOAT;
         END IF;

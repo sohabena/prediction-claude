@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, String, func
+from sqlalchemy import Boolean, DateTime, Float, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.models.base import Base
@@ -37,6 +37,9 @@ class MatchTrainingStatus(Base):
 
     # True when the system auto-approved (ICC/International/Major Franchise)
     auto_approved: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Total recorded odds/microstructure ticks for this match
+    tick_count: Mapped[int] = mapped_column(Integer, default=0)
 
     # Quality metrics (populated during validation)
     quality_score: Mapped[float] = mapped_column(Float, default=0.0)

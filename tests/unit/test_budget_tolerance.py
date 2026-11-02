@@ -114,3 +114,4 @@ def test_env_bet_volume_tolerance():
     env._bets_this_episode = 30
     obs, reward, terminated, truncated, info = env.step(BettingAction.LAY_HOME_SM.value)
     assert env._bets_this_episode == 30
+

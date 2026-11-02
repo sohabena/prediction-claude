@@ -207,7 +207,83 @@ def append_to_corpora(new_by_spec: Dict[str, List[Dict[str, Any]]]) -> List[str]
         print(f"[CORPUS] Appended {len(new_matches)} matches to {key} (Total: {len(combined):,} matches)")
         updated_specialists.append(key)
 
+    if updated_specialists:
+        sync_new_matches_to_db(new_by_spec)
+
     return updated_specialists
+
+
+async def async_sync_new_matches_to_db(new_by_spec: Dict[str, List[Dict[str, Any]]]) -> int:
+    """Bulk upsert newly scraped/synced matches into TimescaleDB match_training_status."""
+    from shared.db import get_session
+    from sqlalchemy import text
+    from scripts.sync_specialists_to_db import parse_iso_datetime
+
+    records = []
+    for spec, matches in new_by_spec.items():
+        for m in matches:
+            mid = m.get("match_id")
+            if not mid:
+                continue
+            start_time = parse_iso_datetime(m.get("start_time"))
+            ticks = m.get("total_ticks") or len(m.get("ticks", []))
+            records.append({
+                "match_id": mid,
+                "team_home": m.get("team_home") or "Unknown Home",
+                "team_away": m.get("team_away") or "Unknown Away",
+                "competition": m.get("competition") or "",
+                "match_start_time": start_time,
+                "scrape_status": "scrape_approved",
+                "training_status": "approved",
+                "auto_approved": True,
+                "tick_count": ticks,
+                "quality_score": 1.0,
+                "completeness": 1.0,
+                "approved_at": start_time,
+                "created_at": start_time,
+            })
+
+    if not records:
+        return 0
+
+    upsert_sql = text("""
+        INSERT INTO match_training_status (
+            match_id, team_home, team_away, competition, match_start_time,
+            scrape_status, training_status, auto_approved, tick_count,
+            quality_score, completeness, approved_at, created_at
+        ) VALUES (
+            :match_id, :team_home, :team_away, :competition, :match_start_time,
+            :scrape_status, :training_status, :auto_approved, :tick_count,
+            :quality_score, :completeness, :approved_at, :created_at
+        )
+        ON CONFLICT (match_id) DO UPDATE SET
+            team_home = EXCLUDED.team_home,
+            team_away = EXCLUDED.team_away,
+            competition = EXCLUDED.competition,
+            scrape_status = EXCLUDED.scrape_status,
+            training_status = EXCLUDED.training_status,
+            auto_approved = EXCLUDED.auto_approved,
+            tick_count = GREATEST(match_training_status.tick_count, EXCLUDED.tick_count),
+            quality_score = EXCLUDED.quality_score,
+            completeness = EXCLUDED.completeness,
+            approved_at = COALESCE(match_training_status.approved_at, EXCLUDED.approved_at)
+    """)
+
+    async with get_session() as session:
+        for i in range(0, len(records), 500):
+            chunk = records[i : i + 500]
+            await session.execute(upsert_sql, chunk)
+            await session.commit()
+    print(f"[DB] Synchronized {len(records)} new match headers to match_training_status table.")
+    return len(records)
+
+
+def sync_new_matches_to_db(new_by_spec: Dict[str, List[Dict[str, Any]]]) -> int:
+    try:
+        return asyncio.run(async_sync_new_matches_to_db(new_by_spec))
+    except Exception as e:
+        logger.error("sync_new_matches_to_db_error", error=str(e))
+        return 0
 
 
 def retrain_specialist_model(

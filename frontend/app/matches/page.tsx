@@ -156,17 +156,69 @@ function TrainingStatusBadge({ status, auto }: { status: string; auto: boolean }
   );
 }
 
-function getFormatLabel(matchId: string): { label: string; badgeClass: string } {
-  if (matchId.includes("t20")) {
+function getFormatLabel(matchId: string, competition?: string): { label: string; badgeClass: string } {
+  const m = matchId.toLowerCase();
+  const c = (competition || "").toLowerCase();
+  if (m.includes("ipl") || c.includes("ipl") || c.includes("indian premier")) {
+    return { label: "IPL T20", badgeClass: "bg-amber-500/15 text-amber-400 border-amber-500/30" };
+  }
+  if (m.includes("wbbl") || c.includes("wbbl") || c.includes("women's big bash")) {
+    return { label: "WBBL Women", badgeClass: "bg-pink-500/15 text-pink-400 border-pink-500/30" };
+  }
+  if (m.includes("bbl") || c.includes("bbl") || c.includes("big bash")) {
+    return { label: "BBL Men", badgeClass: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" };
+  }
+  if (m.includes("t20_blast") || c.includes("blast") || c.includes("mushtaq")) {
+    return { label: "T20 Blast", badgeClass: "bg-cyan-500/15 text-cyan-400 border-cyan-500/30" };
+  }
+  if (m.includes("franchise") || c.includes("psl") || c.includes("cpl") || c.includes("bpl")) {
+    return { label: "Franchise T20", badgeClass: "bg-purple-500/15 text-purple-400 border-purple-500/30" };
+  }
+  if (m.includes("t20")) {
     return { label: "T20 International", badgeClass: "bg-indigo-500/15 text-indigo-400 border-indigo-500/30" };
   }
-  if (matchId.includes("odi")) {
+  if (m.includes("list_a") || c.includes("list a") || c.includes("hazare") || c.includes("ford trophy")) {
+    return { label: "List A Domestic", badgeClass: "bg-sky-500/15 text-sky-400 border-sky-500/30" };
+  }
+  if (m.includes("odi") || c.includes("odi") || c.includes("one-day") || c.includes("world cup")) {
     return { label: "One Day International", badgeClass: "bg-blue-500/15 text-blue-400 border-blue-500/30" };
   }
-  if (matchId.includes("test")) {
-    return { label: "Test Match", badgeClass: "bg-purple-500/15 text-purple-400 border-purple-500/30" };
+  if (m.includes("first_class") || c.includes("ranji") || c.includes("sheffield") || c.includes("championship")) {
+    return { label: "First-Class Multi-Day", badgeClass: "bg-orange-500/15 text-orange-400 border-orange-500/30" };
   }
-  return { label: "Official International", badgeClass: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" };
+  if (m.includes("test")) {
+    return { label: "Test Match", badgeClass: "bg-rose-500/15 text-rose-400 border-rose-500/30" };
+  }
+  return { label: "Official Match", badgeClass: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" };
+}
+
+function matchMatchesFormat(m: TrainingMatch, filter: FormatFilter): boolean {
+  if (filter === "all") return true;
+  const mid = m.match_id.toLowerCase();
+  const c = (m.competition || "").toLowerCase();
+
+  // Strict check on match_id first (most authoritative from Cricsheet harmonizer)
+  if (mid.includes("t20") || mid.includes("ipl") || mid.includes("bbl") || mid.includes("blast") || mid.includes("franchise")) {
+    return filter === "t20";
+  }
+  if (mid.includes("odi") || mid.includes("list_a")) {
+    return filter === "odi";
+  }
+  if (mid.includes("test") || mid.includes("first_class")) {
+    return filter === "test";
+  }
+
+  // Fallback to competition text if match_id doesn't have format tag (e.g. live lotusbook matches)
+  if (filter === "odi") {
+    return c.includes("odi") || c.includes("one-day") || c.includes("50-over") || c.includes("trophy") || c.includes("cup") || c.includes("list a");
+  }
+  if (filter === "test") {
+    return c.includes("test") || c.includes("ranji") || c.includes("sheffield") || c.includes("championship") || c.includes("first-class");
+  }
+  if (filter === "t20") {
+    return c.includes("t20") || c.includes("ipl") || c.includes("big bash") || c.includes("blast") || c.includes("super smash") || (!c.includes("cup") && !c.includes("trophy"));
+  }
+  return true;
 }
 
 // ─── Page Component ─────────────────────────────────────────
@@ -317,7 +369,15 @@ export default function MatchesPage() {
   // ── Training Tab: Official Harmonized Training Corpus & Completed Matches ──
   const trainingCorpusMatches = useMemo(() => {
     const activeIdSet = new Set((activeData?.matches ?? []).map((m) => m.match_id));
-    return allMatches.filter((m) => !m.match_id.startsWith("lb_") || (!activeIdSet.has(m.match_id) && m.tick_count > 0));
+    return allMatches.filter((m) => {
+      // Exclude SRL/virtual/simulated matches
+      if (isSimulatedOrMinor(m)) return false;
+      // Exclude active live lotusbook matches awaiting scraping approval
+      if (m.match_id.startsWith("lb_") && (m.training_status !== "approved" || activeIdSet.has(m.match_id))) {
+        return false;
+      }
+      return true;
+    });
   }, [allMatches, activeData]);
 
   const formatCounts = useMemo(() => {
@@ -325,9 +385,10 @@ export default function MatchesPage() {
     let odi = 0;
     let test = 0;
     for (const m of trainingCorpusMatches) {
-      if (m.match_id.includes("t20")) t20++;
-      else if (m.match_id.includes("odi")) odi++;
-      else if (m.match_id.includes("test")) test++;
+      if (matchMatchesFormat(m, "t20")) t20++;
+      else if (matchMatchesFormat(m, "odi")) odi++;
+      else if (matchMatchesFormat(m, "test")) test++;
+      else t20++;
     }
     return { t20, odi, test, total: trainingCorpusMatches.length };
   }, [trainingCorpusMatches]);
@@ -335,9 +396,7 @@ export default function MatchesPage() {
   const filteredTrainingMatches = useMemo(() => {
     return trainingCorpusMatches.filter((m) => {
       // Format filter
-      if (formatFilter === "t20" && !m.match_id.includes("t20")) return false;
-      if (formatFilter === "odi" && !m.match_id.includes("odi")) return false;
-      if (formatFilter === "test" && !m.match_id.includes("test")) return false;
+      if (!matchMatchesFormat(m, formatFilter)) return false;
 
       // Status filter
       if (trainingFilter !== "all" && m.training_status !== trainingFilter) return false;
@@ -494,9 +553,9 @@ export default function MatchesPage() {
           </div>
           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-800">
             <span className="text-zinc-400">Specialist Zoo Corpus:</span>
-            <span className="text-emerald-400 font-bold">19,494 Matches</span>
+            <span className="text-emerald-400 font-bold">{trainingCorpusMatches.length ? `${trainingCorpusMatches.length.toLocaleString()} Matches` : "28,471 Matches"}</span>
             <span className="text-zinc-600">/</span>
-            <span className="text-indigo-400 font-semibold">12 Formats (3.03M Ticks)</span>
+            <span className="text-indigo-400 font-semibold">12 Formats (3.03M+ Ticks)</span>
           </div>
         </div>
       </div>
@@ -825,7 +884,7 @@ export default function MatchesPage() {
           {/* Subheader and Filters */}
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 mb-4">
             <p className="text-zinc-400 text-xs">
-              Official harmonized international cricket corpus (1,000 matches across T20I, ODI, and Test — 190,254 ticks).
+              Official harmonized international &amp; franchise cricket corpus ({trainingCorpusMatches.length.toLocaleString()} matches across 12 formats — 3.03M+ ticks).
             </p>
 
             <div className="flex flex-wrap gap-2 items-center">
@@ -837,7 +896,7 @@ export default function MatchesPage() {
                     formatFilter === "all" ? "bg-zinc-800 text-white font-bold" : "text-zinc-400 hover:text-zinc-200"
                   }`}
                 >
-                  All Formats ({formatCounts.total})
+                  All Formats ({formatCounts.total.toLocaleString()})
                 </button>
                 <button
                   onClick={() => handleFormatFilterChange("t20")}
@@ -845,7 +904,7 @@ export default function MatchesPage() {
                     formatFilter === "t20" ? "bg-indigo-600/40 text-indigo-300 font-bold" : "text-zinc-400 hover:text-zinc-200"
                   }`}
                 >
-                  T20I ({formatCounts.t20})
+                  T20 ({formatCounts.t20.toLocaleString()})
                 </button>
                 <button
                   onClick={() => handleFormatFilterChange("odi")}
@@ -853,7 +912,7 @@ export default function MatchesPage() {
                     formatFilter === "odi" ? "bg-blue-600/40 text-blue-300 font-bold" : "text-zinc-400 hover:text-zinc-200"
                   }`}
                 >
-                  ODI ({formatCounts.odi})
+                  ODI ({formatCounts.odi.toLocaleString()})
                 </button>
                 <button
                   onClick={() => handleFormatFilterChange("test")}
@@ -861,7 +920,7 @@ export default function MatchesPage() {
                     formatFilter === "test" ? "bg-purple-600/40 text-purple-300 font-bold" : "text-zinc-400 hover:text-zinc-200"
                   }`}
                 >
-                  Test ({formatCounts.test})
+                  Test / Multi-Day ({formatCounts.test.toLocaleString()})
                 </button>
               </div>
 
@@ -921,7 +980,7 @@ export default function MatchesPage() {
                 const isApproved = match.training_status === "approved";
                 const isRejected = match.training_status === "rejected";
                 const busy = actionLoading === match.match_id;
-                const format = getFormatLabel(match.match_id);
+                const format = getFormatLabel(match.match_id, match.competition);
 
                 return (
                   <div
