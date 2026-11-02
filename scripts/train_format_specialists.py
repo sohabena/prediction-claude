@@ -16,19 +16,27 @@ from __future__ import annotations
 import argparse
 import asyncio
 import gzip
+import hashlib
+import inspect
 import json
 import logging
-import math
-from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+import subprocess
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 
 import numpy as np
 import torch
 from sqlalchemy import text
 from stable_baselines3 import PPO
 
+from backtesting.baselines import (
+    HeuristicPolicy,
+    HoldPolicy,
+    RandomPolicy,
+    estimate_in_play_prob,
+)
 from rl.agent import PhoenixAgent
 from rl.environment import CricketBettingEnv
 from rl.model_zoo import ModelZoo, get_model_zoo
@@ -228,6 +236,21 @@ class SpecialistEvaluationMetrics:
     max_drawdown_dollars: float
     max_drawdown_pct: float
     profit_factor: float
+    # --- honest-evaluation additions (defaulted for backwards compatibility) ---
+    policy: str = "model"
+    evaluated_at: str = ""
+    holdout_match_ids_hash: str = ""
+    code_version: str = ""
+    n_matches: int = 0
+    bet_win_rate_pct: float = 0.0
+    total_stake: float = 0.0
+    roi_on_turnover_pct: float = 0.0
+    mean_match_pnl: float = 0.0
+    pnl_ci95_low: float = 0.0
+    pnl_ci95_high: float = 0.0
+    commission_paid: float = 0.0
+    edge_vs_random: Optional[float] = None
+    baselines: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
 
 def load_corpus(key: str) -> List[List[Dict[str, Any]]]:
@@ -280,53 +303,253 @@ TEAM_RATINGS: Dict[str, int] = {
 
 def estimate_causal_in_play_prob(tick: Dict[str, Any], specialist_key: str) -> float:
     """
-    Computes in-play win probability strictly from the forward state at time t.
-    NEVER accesses match winner, loser, or future events (strict zero-lookahead).
-    Uses gender-calibrated par score curves and wicket decay factors.
+    Causal in-play home win probability from the state at time t (no winner/future access).
+    Thin wrapper over backtesting.baselines.estimate_in_play_prob with the specialist's config.
+    TEAM_RATINGS are static hand-assigned priors, not fitted on the corpus.
     """
     cfg = SPECIALIST_MAP.get(specialist_key, SPECIALIST_MAP.get("t20i_men", {}))
-    max_overs = float(cfg.get("max_overs", 20.0))
-    par_1 = float(cfg.get("par_1", 168.0))
-    wicket_decay = float(cfg.get("wicket_decay_power", 0.65))
-    div_factor = float(cfg.get("div", 18.0))
+    return estimate_in_play_prob(tick, cfg, TEAM_RATINGS)
 
-    th = tick.get("team_home", "")
-    ta = tick.get("team_away", "")
-    r_home = TEAM_RATINGS.get(th, 100)
-    r_away = TEAM_RATINGS.get(ta, 100)
-    p_pre = 1.0 / (1.0 + 10.0 ** ((r_away - r_home) / 400.0))
 
-    innings = tick.get("innings", 1)
-    overs = tick.get("overs", 0.0)
-    score = tick.get("score", 0)
-    wickets = tick.get("wickets", 0)
-    batting_is_home = (tick.get("batting_team") == th)
+def _parse_tick_time(tick: Dict[str, Any]) -> datetime:
+    """Best-effort tz-aware timestamp of a tick (falls back to now)."""
+    raw = tick.get("timestamp", tick.get("time"))
+    try:
+        if isinstance(raw, datetime):
+            dt = raw
+        elif isinstance(raw, (int, float)):
+            dt = datetime.fromtimestamp(float(raw), tz=timezone.utc)
+        elif isinstance(raw, str):
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        else:
+            return datetime.now(timezone.utc)
+    except (ValueError, OSError, OverflowError):
+        return datetime.now(timezone.utc)
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
-    overs_rem = max(0.1, max_overs - overs)
-    wickets_rem = max(0, 10 - wickets)
-    res_factor = (wickets_rem / 10.0) ** wicket_decay * (overs_rem / max_overs) ** 0.35
-    proj_extra = res_factor * (max_overs * (par_1 / max_overs))
-    proj_total = score + proj_extra
 
-    if innings == 1:
-        diff = proj_total - par_1
-        p_inplay_bat = 1.0 / (1.0 + math.exp(-max(-10, min(10, diff / div_factor))))
+def _code_version() -> str:
+    """Short git SHA of the working tree, or 'unknown'."""
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+        )
+        return out.stdout.strip() or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def _action_confidence(model: Any, obs: np.ndarray, action: int) -> Optional[float]:
+    """Policy probability of ``action`` for ``obs``; None if the model cannot report it."""
+    try:
+        obs_t = model.policy.obs_to_tensor(obs)[0]
+        probs = model.policy.get_distribution(obs_t).distribution.probs
+        return float(probs.detach().cpu().numpy().reshape(-1)[int(action)])
+    except Exception:
+        return None
+
+
+def _bet_is_back(action: BettingAction) -> bool:
+    return action in (
+        BettingAction.BACK_HOME_SM, BettingAction.BACK_HOME_LG,
+        BettingAction.BACK_AWAY_SM, BettingAction.BACK_AWAY_LG,
+    )
+
+
+def _bet_is_home(action: BettingAction) -> bool:
+    return action in (
+        BettingAction.BACK_HOME_SM, BettingAction.BACK_HOME_LG,
+        BettingAction.LAY_HOME_SM, BettingAction.LAY_HOME_LG,
+    )
+
+
+def _make_env(
+    ep_ticks: List[Dict[str, Any]], starting_bankroll: float, max_bets: int, commission: float
+) -> CricketBettingEnv:
+    kwargs: Dict[str, Any] = dict(
+        data=[ep_ticks],
+        initial_bankroll=starting_bankroll,
+        settlement_mode="real",
+        max_bets_per_episode=max_bets,
+        exchange_commission=commission,
+    )
+    if "episode_sampling" in inspect.signature(CricketBettingEnv.__init__).parameters:
+        kwargs["episode_sampling"] = "sequential"
+    return CricketBettingEnv(**kwargs)
+
+
+def _run_policy(
+    act: Callable[[np.ndarray, Dict[str, Any], CricketBettingEnv, int], Tuple[int, Optional[float]]],
+    reset_policy: Callable[[], None],
+    specialist_key: str,
+    test_episodes: List[List[Dict[str, Any]]],
+    max_bets_per_match: int,
+    commission: float,
+    starting_bankroll: float,
+    version: str,
+) -> Dict[str, Any]:
+    """Drive one policy through every holdout episode and collect raw per-bet / per-match results."""
+    match_pnls: List[float] = []
+    match_stakes: List[float] = []
+    match_commission: List[float] = []
+    bet_rows: List[Dict[str, Any]] = []
+    hedged = 0
+    total_bets = 0
+    bet_wins = 0
+    settled_bets = 0
+
+    for ep_idx, ep_ticks in enumerate(test_episodes):
+        env = _make_env(ep_ticks, starting_bankroll, max_bets_per_match, commission)
+        obs, _ = env.reset()
+        reset_policy()
+        match_id = ep_ticks[0].get("match_id", f"{specialist_key}_test_{ep_idx}")
+        last_tick = ep_ticks[-1]
+        seen: set = set()
+        placed: List[Dict[str, Any]] = []
+        done = False
+        step = 0
+
+        while not done:
+            tick = ep_ticks[min(step, len(ep_ticks) - 1)]
+            action, conf = act(obs, tick, env, step)
+            action = int(action)
+            before_home, before_away = env._net_exposure_home, env._net_exposure_away
+            obs, reward, terminated, truncated, info = env.step(action)
+            done = terminated or truncated
+            if info["step_info"].get("bet_placed"):
+                pool = list(env._open_bets) + list(env._settled_bets_history)
+                new = [b for b in pool if id(b) not in seen]
+                if new:
+                    bet = new[-1]
+                    seen.add(id(bet))
+                    if _bet_is_home(bet.action):
+                        b_exp, a_exp = before_home, env._net_exposure_home
+                    else:
+                        b_exp, a_exp = before_away, env._net_exposure_away
+                    is_hedge = b_exp != 0 and abs(a_exp) < abs(b_exp)
+                    placed.append(
+                        {"bet": bet, "tick": tick, "conf": conf, "reward": float(reward), "hedge": is_hedge}
+                    )
+            step += 1
+
+        match_pnl = float(env._portfolio.session_pnl)
+        gross = sum(float(p["bet"].profit_loss) for p in placed)
+        match_pnls.append(match_pnl)
+        match_stakes.append(sum(float(p["bet"].stake) for p in placed))
+        match_commission.append(max(0.0, gross - match_pnl))
+        total_bets += env._bets_this_episode
+
+        for k, p in enumerate(placed):
+            bet = p["bet"]
+            back = _bet_is_back(bet.action)
+            side = ("back_" if back else "lay_") + ("home" if _bet_is_home(bet.action) else "away")
+            closing = last_tick.get(side)
+            closing = float(closing) if closing and closing > 1.0 else None
+            clv = None
+            if closing is not None and bet.odds > 1.0:
+                clv = (1.0 / bet.odds - 1.0 / closing) if back else (1.0 / closing - 1.0 / bet.odds)
+            hedged += 1 if p["hedge"] else 0
+            outcome = bet.outcome.value if hasattr(bet.outcome, "value") else str(bet.outcome)
+            if outcome.lower() in ("win", "loss"):
+                settled_bets += 1
+                bet_wins += 1 if outcome.lower() == "win" else 0
+            bet_rows.append({
+                "placed_at": _parse_tick_time(p["tick"]) + timedelta(microseconds=k),
+                "match_id": match_id,
+                "action": bet.action.name if hasattr(bet.action, "name") else str(bet.action),
+                "team": bet.team,
+                "odds": bet.odds,
+                "stake": bet.stake,
+                "confidence": p["conf"],
+                "settled_at": bet.settled_at,
+                "outcome": outcome,
+                "profit_loss": bet.profit_loss,
+                "closing_odds": closing,
+                "clv": clv,
+                "agent_version": f"holdout_eval:{specialist_key}:{version}",
+                "reward": p["reward"],
+            })
+
+    return {
+        "match_pnls": match_pnls, "match_stakes": match_stakes, "match_commission": match_commission,
+        "bet_rows": bet_rows, "hedged": hedged, "total_bets": total_bets,
+        "bet_wins": bet_wins, "settled_bets": settled_bets,
+    }
+
+
+def _bootstrap_mean_ci(values: List[float], n_resamples: int = 1000, seed: int = 0) -> Tuple[float, float]:
+    """Seeded 95% percentile bootstrap CI for the mean."""
+    if not values:
+        return 0.0, 0.0
+    arr = np.asarray(values, dtype=float)
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(0, len(arr), size=(n_resamples, len(arr)))
+    means = arr[idx].mean(axis=1)
+    return float(np.percentile(means, 2.5)), float(np.percentile(means, 97.5))
+
+
+def _summarize_run(
+    raw: Dict[str, Any],
+    specialist_key: str,
+    format_name: str,
+    policy: str,
+    starting_bankroll: float,
+    holdout_hash: str,
+    code_version: str,
+    seed: int,
+) -> SpecialistEvaluationMetrics:
+    """Turn raw run results into a metrics object (all values derived from simulated bets)."""
+    pnls = raw["match_pnls"]
+    n = len(pnls)
+    total_pnl = float(sum(pnls))
+    total_stake = float(sum(raw["match_stakes"]))
+    mean_pnl = float(np.mean(pnls)) if n else 0.0
+    std_pnl = float(np.std(pnls, ddof=1)) if n > 1 else 0.0
+    sharpe = mean_pnl / std_pnl if std_pnl > 1e-9 else 0.0
+
+    cum = np.cumsum(pnls) if n else np.zeros(1)
+    max_dd = float(np.max(np.maximum.accumulate(cum) - cum))
+    capital = starting_bankroll * max(1, n)
+    gross_win = float(sum(p for p in pnls if p > 0))
+    gross_loss = float(sum(-p for p in pnls if p < 0))
+    ci_lo, ci_hi = _bootstrap_mean_ci(pnls, 1000, seed)
+    total_bets = int(raw["total_bets"])
+    if gross_loss > 0:
+        profit_factor = round(gross_win / gross_loss, 3)
     else:
-        req_r = tick.get("req_run_rate", (par_1 / max_overs))
-        target = tick.get("score", 0) + req_r * overs_rem / 6.0
-        diff = proj_total - target
-        p_inplay_bat = 1.0 / (1.0 + math.exp(-max(-10, min(10, diff / div_factor))))
+        profit_factor = 0.0 if gross_win == 0 else float("inf")
 
-    p_inplay_home = p_inplay_bat if batting_is_home else (1.0 - p_inplay_bat)
-
-    # Blend pre-match rating prior with in-play match state progress
-    total_balls = max_overs * 6.0 * (2 if innings == 2 else 1)
-    current_balls = (max_overs * 6.0 if innings == 2 else 0) + overs * 6.0
-    progress = min(1.0, current_balls / max(1.0, total_balls))
-    w_inplay = progress ** 0.75
-
-    p_final_home = (1.0 - w_inplay) * p_pre + w_inplay * p_inplay_home
-    return max(0.02, min(0.98, p_final_home))
+    return SpecialistEvaluationMetrics(
+        key=specialist_key,
+        format_name=format_name,
+        matches_trained=0,
+        matches_tested=n,
+        timesteps=0,
+        total_bets=total_bets,
+        avg_bets_per_match=round(total_bets / max(1, n), 2),
+        hedged_bets=int(raw["hedged"]),
+        hedge_rate_pct=round(100.0 * raw["hedged"] / max(1, total_bets), 2),
+        win_rate_pct=round(100.0 * sum(1 for p in pnls if p > 0) / max(1, n), 2),
+        total_pnl=round(total_pnl, 2),
+        mean_roi_pct=round(100.0 * mean_pnl / starting_bankroll, 4),
+        sharpe_ratio=round(sharpe, 4),
+        max_drawdown_dollars=round(max_dd, 2),
+        max_drawdown_pct=round(100.0 * max_dd / capital, 4),
+        profit_factor=profit_factor,
+        policy=policy,
+        evaluated_at=datetime.now(timezone.utc).isoformat(),
+        holdout_match_ids_hash=holdout_hash,
+        code_version=code_version,
+        n_matches=n,
+        bet_win_rate_pct=round(100.0 * raw["bet_wins"] / max(1, raw["settled_bets"]), 2),
+        total_stake=round(total_stake, 2),
+        roi_on_turnover_pct=round(100.0 * total_pnl / total_stake, 4) if total_stake > 0 else 0.0,
+        mean_match_pnl=round(mean_pnl, 2),
+        pnl_ci95_low=round(ci_lo, 2),
+        pnl_ci95_high=round(ci_hi, 2),
+        commission_paid=round(float(sum(raw["match_commission"])), 2),
+    )
 
 
 def evaluate_specialist_holdout(
@@ -337,153 +560,63 @@ def evaluate_specialist_holdout(
     max_bets_per_match: int = 25,
     commission: float = 0.02,
     starting_bankroll: float = 100_000.0,
+    *,
+    policy: Literal["model", "heuristic", "random", "hold"] = "model",
+    include_baselines: bool = True,
+    seed: int = 0,
+    version: str = "v1",
 ) -> Tuple[SpecialistEvaluationMetrics, List[Dict[str, Any]]]:
+    """Evaluate a policy on unseen holdout matches by simulating real bets in the environment.
+
+    With ``policy="model"`` every action is ``model.predict(obs, deterministic=True)``.
+    All metrics derive from the bets the environment actually settled. Unless disabled,
+    ``random`` and ``hold`` baselines are run through the same loop on the same episodes and
+    attached under ``metrics.baselines``; ``edge_vs_random`` is model minus random mean P&L.
     """
-    Evaluates a trained specialist model on unseen holdout matches.
-    Enforces active two-way rate trading (20-30 bets/match, $100,000 budget cap, 2% commission)
-    with strict exchange liability limits (never lay over 2.10).
-    """
-    episode_pnls: List[float] = []
-    episode_rois: List[float] = []
-    episode_wins: List[int] = []
-    total_bets_placed = 0
-    total_hedged_bets = 0
-    gross_winnings = 0.0
-    gross_losses = 0.0
-    all_bets_records: List[Dict[str, Any]] = []
+    cfg = SPECIALIST_MAP.get(specialist_key, SPECIALIST_MAP.get("t20i_men", {}))
+    ids = [str(ep[0].get("match_id", i)) if ep else str(i) for i, ep in enumerate(test_episodes)]
+    holdout_hash = hashlib.sha1("|".join(ids).encode("utf-8")).hexdigest()[:12]
+    code_version = _code_version()
 
-    for ep_idx, ep_ticks in enumerate(test_episodes):
-        # Strict fresh $100,000 budget per match
-        env = CricketBettingEnv(
-            data=[ep_ticks],
-            initial_bankroll=starting_bankroll,
-            settlement_mode="real",
-            max_bets_per_episode=max_bets_per_match,
-            exchange_commission=commission,
-        )
-        obs, info = env.reset()
-        done = False
-        step = 0
-        match_id = ep_ticks[0].get("match_id", f"{specialist_key}_test_{ep_idx}")
+    def run(pol: str) -> Dict[str, Any]:
+        if pol == "model":
+            def act(obs: np.ndarray, tick: Dict[str, Any], env: Any, step: int) -> Tuple[int, Optional[float]]:
+                a, _ = model.predict(obs, deterministic=True)
+                a = int(np.asarray(a).reshape(-1)[0])
+                return a, _action_confidence(model, obs, a)
 
-        interval = max(2, len(ep_ticks) // max_bets_per_match)
-
-        while not done:
-            action_int = 0
-
-            # Causal Two-Way Rate Trading: strictly time-series forward without future access
-            if env._bets_this_episode < max_bets_per_match and step < len(ep_ticks) - 2:
-                if step % interval == 0:
-                    cur_tick = ep_ticks[min(step, len(ep_ticks) - 1)]
-                    b_home = cur_tick.get("back_home", 2.0)
-                    l_home = cur_tick.get("lay_home", 2.0)
-                    b_away = cur_tick.get("back_away", 2.0)
-                    l_away = cur_tick.get("lay_away", 2.0)
-
-                    # Dynamic causal in-play win probability (zero lookahead)
-                    p_h = estimate_causal_in_play_prob(cur_tick, specialist_key)
-                    p_a = 1.0 - p_h
-                    mkt_p_h = 1.0 / b_home if b_home > 1.0 else 0.5
-                    mkt_p_a = 1.0 / b_away if b_away > 1.0 else 0.5
-
-                    edge_h = p_h - mkt_p_h
-                    edge_a = p_a - mkt_p_a
-
-                    # Rate shifting / Green up check (hedging locked profit):
-                    has_home_exposure = env._net_exposure_home > 2000.0
-                    has_away_exposure = env._net_exposure_away > 2000.0
-
-                    if has_home_exposure and l_home <= 1.80 and p_h > 0.60:
-                        # Home odds shortened into deep profit: LAY Home to green up
-                        action_int = BettingAction.LAY_HOME_SM.value
-                    elif has_away_exposure and l_away <= 1.80 and p_a > 0.60:
-                        # Away odds shortened into deep profit: LAY Away to green up
-                        action_int = BettingAction.LAY_AWAY_SM.value
-                    elif edge_h > 0.035:
-                        action_int = BettingAction.BACK_HOME_SM.value
-                    elif edge_a > 0.035:
-                        action_int = BettingAction.BACK_AWAY_SM.value
-                    elif l_home <= 2.10 and edge_a > 0.02:
-                        action_int = BettingAction.LAY_HOME_SM.value
-                    elif l_away <= 2.10 and edge_h > 0.02:
-                        action_int = BettingAction.LAY_AWAY_SM.value
-
-            obs, reward, terminated, truncated, step_info_dict = env.step(action_int)
-            done = terminated or truncated
-            step += 1
-
-        match_pnl = env._portfolio.session_pnl
-        bets_in_match = env._bets_this_episode
-        total_bets_placed += bets_in_match
-
-        # Count hedged bets (positions covering both sides)
-        hedged_in_match = max(0, int(bets_in_match * 0.40))
-        total_hedged_bets += hedged_in_match
-
-        episode_pnls.append(match_pnl)
-        roi = (match_pnl / starting_bankroll) * 100.0
-        episode_rois.append(roi)
-        episode_wins.append(1 if match_pnl > 0 else 0)
-
-        if match_pnl > 0:
-            gross_winnings += match_pnl
+            return _run_policy(act, lambda: None, specialist_key, test_episodes,
+                               max_bets_per_match, commission, starting_bankroll, version)
+        if pol == "heuristic":
+            n_ticks = int(np.mean([len(e) for e in test_episodes])) if test_episodes else 100
+            pobj: Any = HeuristicPolicy(cfg, TEAM_RATINGS, n_ticks=n_ticks, max_bets=max_bets_per_match)
+        elif pol == "random":
+            pobj = RandomPolicy(seed=seed, n_actions=ACTION_SPACE_SIZE)
         else:
-            gross_losses += abs(match_pnl)
+            pobj = HoldPolicy()
+        return _run_policy(
+            lambda obs, tick, env, step: (pobj.predict(obs, tick, env), None),
+            pobj.reset, specialist_key, test_episodes,
+            max_bets_per_match, commission, starting_bankroll, version,
+        )
 
-        # Record representative virtual bets for audit
-        for b in env._settled_bets_history[:2]:
-            all_bets_records.append({
-                "placed_at": b.placed_at,
-                "match_id": match_id,
-                "action": b.action.name if hasattr(b.action, "name") else str(b.action),
-                "team": b.team,
-                "odds": b.odds,
-                "stake": b.stake,
-                "confidence": 0.85,
-                "settled_at": b.settled_at or datetime.now(timezone.utc),
-                "outcome": b.outcome.value if hasattr(b.outcome, "value") else str(b.outcome),
-                "profit_loss": b.profit_loss,
-                "closing_odds": 1.03,
-                "clv": 0.12,
-                "agent_version": f"{specialist_key}_v1",
-                "reward": 0.48,
-            })
-
-    total_pnl = float(sum(episode_pnls))
-    win_rate = float(np.mean(episode_wins) * 100.0)
-    mean_roi = float(np.mean(episode_rois))
-    avg_bets = float(total_bets_placed / max(1, len(test_episodes)))
-    hedge_rate = float((total_hedged_bets / max(1, total_bets_placed)) * 100.0)
-
-    std_pnl = float(np.std(episode_pnls)) if len(episode_pnls) > 1 else 1.0
-    sharpe = float((np.mean(episode_pnls) / max(std_pnl, 1e-4)) * np.sqrt(len(test_episodes)))
-
-    cum_pnl = np.cumsum(episode_pnls)
-    running_max = np.maximum.accumulate(cum_pnl)
-    drawdowns = running_max - cum_pnl
-    max_dd_dollars = float(np.max(drawdowns)) if len(drawdowns) > 0 else 0.0
-    max_dd_pct = float((max_dd_dollars / starting_bankroll) * 100.0)
-    profit_factor = round(gross_winnings / max(gross_losses, 1.0), 2)
-
-    metrics = SpecialistEvaluationMetrics(
-        key=specialist_key,
-        format_name=format_name,
-        matches_trained=0,
-        matches_tested=len(test_episodes),
-        timesteps=0,
-        total_bets=total_bets_placed,
-        avg_bets_per_match=round(avg_bets, 1),
-        hedged_bets=total_hedged_bets,
-        hedge_rate_pct=round(hedge_rate, 2),
-        win_rate_pct=round(win_rate, 2),
-        total_pnl=round(total_pnl, 2),
-        mean_roi_pct=round(mean_roi, 2),
-        sharpe_ratio=round(sharpe, 2),
-        max_drawdown_dollars=round(max_dd_dollars, 2),
-        max_drawdown_pct=round(max_dd_pct, 2),
-        profit_factor=profit_factor,
-    )
-    return metrics, all_bets_records
+    raw = run(policy)
+    metrics = _summarize_run(raw, specialist_key, format_name, policy, starting_bankroll,
+                             holdout_hash, code_version, seed)
+    if include_baselines:
+        for name in ("random", "hold"):
+            if name == policy:
+                continue
+            b = _summarize_run(run(name), specialist_key, format_name, name, starting_bankroll,
+                               holdout_hash, code_version, seed)
+            metrics.baselines[name] = asdict(b)
+        if policy == "random":
+            metrics.edge_vs_random = 0.0
+        elif "random" in metrics.baselines:
+            metrics.edge_vs_random = round(
+                metrics.mean_match_pnl - metrics.baselines["random"]["mean_match_pnl"], 2
+            )
+    return metrics, raw["bet_rows"]
 
 
 def train_single_specialist(
@@ -594,15 +727,22 @@ def train_single_specialist(
     return metrics, bet_records
 
 
-async def persist_virtual_bets(bets: List[Dict[str, Any]]) -> None:
-    """Store sample specialist virtual bets in TimescaleDB."""
+async def persist_virtual_bets(bets: List[Dict[str, Any]]) -> int:
+    """Store holdout-evaluation bets in TimescaleDB, tagged via agent_version="holdout_eval:...".
+
+    Returns the number of rows actually inserted (conflicting PKs are skipped and logged).
+    """
     if not bets:
-        return
-    print(f"\n[DB] Storing {len(bets)} virtual bets in TimescaleDB...")
+        return 0
+    print(f"\n[DB] Storing {len(bets)} holdout-evaluation bets in TimescaleDB...")
+    inserted = 0
     try:
         async with get_session() as session:
-            for b in bets:
-                await session.execute(
+            for i, b in enumerate(bets):
+                row = dict(b)
+                # PK is (placed_at, match_id): make placed_at unique per bet.
+                row["placed_at"] = row["placed_at"] + timedelta(microseconds=i)
+                result = await session.execute(
                     text("""
                         INSERT INTO virtual_bets (
                             placed_at, match_id, action, team, odds, stake, confidence,
@@ -611,15 +751,18 @@ async def persist_virtual_bets(bets: List[Dict[str, Any]]) -> None:
                         ) VALUES (
                             :placed_at, :match_id, :action, :team, :odds, :stake, :confidence,
                             :settled_at, :outcome, :profit_loss, :closing_odds, :clv,
-                            :agent_version, 'hash_spec', :reward
+                            :agent_version, 'holdout_eval', :reward
                         ) ON CONFLICT DO NOTHING
                     """),
-                    b,
+                    row,
                 )
+                inserted += max(0, result.rowcount or 0)
             await session.commit()
-        print("     Virtual bets recorded successfully.")
+        logger.info("holdout_bets_persisted", attempted=len(bets), inserted=inserted)
+        print(f"     Virtual bets recorded: {inserted}/{len(bets)} inserted.")
     except Exception as e:
         print(f"     Warning: database insert skipped ({e})")
+    return inserted
 
 
 async def update_redis_model_zoo_state(all_metrics: Dict[str, SpecialistEvaluationMetrics]) -> None:
