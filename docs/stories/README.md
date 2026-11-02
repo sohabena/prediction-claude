@@ -153,6 +153,11 @@ Model tier = suggested executor. **Sonnet** implements every story (each needs d
 | [S42](S42-go-live-gate-and-kill-switch.md) | Signal trust gate (CLV vs Betfair close) + signal kill switch | P1 | Sonnet | S40 (S41) | `rl/graduation.py`, `rl/lifecycle/graduation_handler.py`, `shared/constants.py` (GRADUATION/KILL), new `virtual_trading/kill_switch.py`, `virtual_trading/risk_manager.py` |
 | [S43](S43-signal-path-integration.md) | Signal-path integration: one manual execution model, backtest = live strategy, ratings wired | P0 | Haiku | S38, S39, S40 | `backtesting/execution.py` (presets), `strategy/runner.py` (`live_execution`), `scripts/run_real_backtest.py`, `virtual_trading/live_trading_loop.py` (runner/result), new `strategy/live_context.py` |
 | [S44](S44-trust-and-kill-wiring.md) | Wire trust labels and kill switch into the live signal path; persist missed signals | P0 | Haiku | S42, S43 | `virtual_trading/live_trading_loop.py` (runner), `strategy/runner.py` (outcome log), `rl/orchestrator.py` (nightly), `scripts/audit_clv.py` (`--source`), new `scripts/signals_admin.py` |
+| [S45](S45-reference-price-source-lotusbook.md) | CLV and trust against LotusBook match odds (Betfair blocked) | P0 | Haiku | S42, S44 | `strategy/trust.py`, `rl/lifecycle/graduation_handler.py` (ticks SQL), `virtual_trading/kill_switch.py` (CLV source), `scripts/audit_clv.py` (default), `shared/constants.py` (`CLV_REFERENCE_SOURCE`) |
+| [S46](S46-backtest-on-recorded-lotusbook.md) | Backtest on our own LotusBook recordings | P0 | Haiku | S37, S39, S43 | `scripts/export_recorded_corpus.py` (`--format real`), `scripts/run_real_backtest.py` (`--corpus`) |
+| [S47](S47-record-bookmaker-and-session-markets.md) | Record Bookmaker and session (fancy) markets | P0 | Sonnet | S37 | new `scraper/market_pages.py`, `scraper/parsers/lotusbook_markets.py`, `scraper/manager.py` (worker wiring), new `market_ticks` model + migration 003 |
+| [S48](S48-session-runs-model.md) | Session-runs model (calibrated runs-by-over distribution) | P1 | Haiku | S24, S25 | new `strategy/session_model.py`, `scripts/train_session_model.py` |
+| [S49](S49-soft-vs-sharp-bookmaker-signals.md) | Soft-vs-sharp signals: Bookmaker vs match-odds fair | P1 | Haiku | S47, S46 | new `strategy/soft_sharp.py`, `scripts/run_real_backtest.py` (register) |
 | [S24](S24-in-house-cricsheet-elo-engine.md) | In-house chronological Cricket Elo engine from Cricsheet | P1 | Sonnet | — | scripts/compute_cricsheet_elo.py, shared/elo.py, 	ests/unit/test_s24_cricsheet_elo.py |
 | [S25](S25-venue-and-toss-priors-engine.md) | In-house venue par and toss prior engine from Cricsheet | P1 | Sonnet | — | scripts/compute_venue_priors.py, shared/venue_priors.py, 	ests/unit/test_s25_venue_priors.py |
 | [S26](S26-observation-vector-expansion.md) | Observation vector expansion: incorporate Elo, venue, and toss priors | P1 | Sonnet | S24, S25 | shared/constants.py, eatures/pipeline.py, eatures/extractors/prior_features.py, 	ests/unit/test_s11_feature_parity.py, 	ests/unit/test_features.py |
@@ -190,6 +195,11 @@ Stories in the same wave own disjoint files and can run concurrently.
   - **Wave 12 (parallel):** S40 strategy engine, S41 Betfair adapter, S29 player resources (as S38 v3 features)
   - **Wave 13 (parallel):** S42 signal trust gate + kill switch (after S32), S43 signal-path integration
   - **Wave 14:** S44 trust and kill wiring (after S42 and S43)
+- **Betfair-blocked plan (2026-11-02, see architecture §7). Supersedes the Betfair steps above:**
+  - **Wave 15 (parallel):** S45 reference source = LotusBook, S46 recorded-corpus backtests, S47 Bookmaker + session recording (Sonnet; needs a live match for discovery), S48 session-runs model
+  - **Wave 16:** S49 soft-vs-sharp signals (after S46, S47)
+  - **Shelved:** S35 Betfair corpus, S36 alignment, S41 Betfair adapter, S28 Betfair → DB (code kept, not run)
+  - **Operator steps:** run `scripts/install_scraper_task.ps1` once (recording is now the only source of real prices); apply migration 003 after S47; check local law on betting at LotusBook
   - **Later / P2:** S34 UI, S28 (Betfair → DB ingestion, after S35), S22, S23
   - **Shelved:** S26 (observation expansion), S30 (zoo retraining). Both feed PPO trained on the synthetic market, which pays a no-skill policy (S18 report, S22 evidence).
   - **Superseded:** S27 by S40 (same goal; S40 runs the backtested strategy object). S31 by S39's execution model plus S40's latency-matched placement. Both also own `live_trading_loop.py` and `engine.py`, which S40 owns.

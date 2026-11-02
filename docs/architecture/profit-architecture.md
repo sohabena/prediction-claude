@@ -106,3 +106,41 @@ there is no demonstrated edge. The honest outcome is then to stop, or to collect
 - Superseded: S21 → S42. S22 → P2 (synthetic market only for RL research and mechanics tests). S23 → split (historical
   table into S37, fair-value naming into S38; the rest stays P2).
 - Shelved: PPO training on synthetic markets (S09/S18 pipeline stays runnable, no further investment).
+
+## 7. Constraint (2026-11-02): Betfair is blocked in the operator's country
+
+**Decision:** we do not use Betfair in any form, and we do not route around the block. Its historical files, live
+stream and closing prices are unavailable. Everything below uses data we can collect legitimately ourselves.
+
+**What replaces each Betfair role:**
+
+| Role | Was | Now |
+|---|---|---|
+| Real historical prices for backtests | Betfair historical files (S35/S36) | **Our own LotusBook recordings** (S37 recorder, running daily). They also carry the live score with true timestamps, so no ball-time alignment is needed (S46) |
+| Sharp reference price for CLV and trust | Betfair prices (S41/S42) | **LotusBook match odds**, which on this kind of site mirror the exchange. Configurable reference source, default `lotusbook` (S45). Flagged as a mirror whose lag is unmeasured |
+| Live data | Betfair stream (S41) | LotusBook (already live) |
+
+**New edge sources, available on the site where bets are placed (thesis 3 becomes reachable):**
+
+- **Soft vs sharp (S47 → S49):** sites like LotusBook show an exchange-mirror "Match Odds" market *and* an in-house
+  "Bookmaker" market. The bookmaker price is set by the site's own traders, can lag, and often has no commission.
+  Signal when the bookmaker price beats the de-vigged match-odds fair price by more than a margin. This is the most
+  proven retail edge, and it needs no model at all.
+- **Session ("fancy") runs markets (S47 → S48):** lines like "runs in the first 6 overs" are also set in-house. A runs
+  model trained on 11k Cricsheet matches ball by ball is a realistic edge over a trader's line.
+
+**What does not change:** the validation ladder (§4), with "real prices" now meaning our recordings; manual bets
+only; the trust gate and kill switch (with the reference source switched to LotusBook); 60 s manual latency.
+
+**Honest cost of this constraint:**
+
+- Real-price evidence now accumulates only as fast as we record. Every day the recorder is not running is lost
+  evidence. Expect weeks before R2 has 150 real matches.
+- CLV measured against a mirror can only show that we beat the price the site itself shows later. It is a weaker
+  yardstick than the exchange.
+
+**Legality:** if Betfair is blocked where you live, betting on other offshore sites may also be restricted there.
+Check that betting on LotusBook is legal for you before staking money. This app only gives signals.
+
+**Shelved (code kept, not run):** S35 Betfair corpus, S36 alignment (it is only needed for Cricsheet ↔ Betfair), S41
+Betfair adapter, S28 (Betfair → DB).
