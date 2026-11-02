@@ -66,8 +66,9 @@ flowchart LR
 ```
 
 ### Key Parameters Per Match
-- **Per-Match Budget:** **$100,000** (or ₹1,00,000) total capital allocation.
-- **Trade Volume:** **20 to 30 bets per match** (`MAX_BETS_PER_MATCH = 30`).
+- **Per-Match Budget:** **$100,000** (or ₹1,00,000) base capital allocation.
+- **20% Opportunity Tolerance Limit:** When base budget ($100k) or bet volume (25 bets) is exhausted, a **+20% tolerance buffer** allows up to **$120,000** budget and **30 bets** if high conviction ($\ge 75\%$) or green-up hedging opportunities occur.
+- **Trade Volume:** **20 to 25 bets base** (up to **30 bets** with tolerance).
 - **Stake Sizing:**
   - **Small Action (`SM`):** 2% of budget = **$2,000** (₹2,000).
   - **Large Action (`LG`):** 4% of budget = **$4,000** (₹4,000).

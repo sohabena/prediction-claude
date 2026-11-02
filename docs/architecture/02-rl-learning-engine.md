@@ -98,8 +98,11 @@ class BettingAction(IntEnum):
 ```
 
 **Two-Way Trading Rules:**
-- **Per-Match Budget:** Each match has a hard budget of **$100,000** (`initial_bankroll = 100_000.0`).
-- **Target Volume:** 20 to 30 bets per match (`max_bets_per_episode = 25`).
+- **Per-Match Budget:** Base capital allocation of **$100,000** (`initial_bankroll = 100_000.0`).
+- **Target Volume:** 20 to 25 bets base target (`max_bets_per_episode = 25`).
+- **20% Opportunity Tolerance Limit:**
+  - When base budget ($100k) or bet volume (25 bets) is reached, a **+20% Opportunity Tolerance Buffer** unlocks up to **$120,000** total commitment and up to **30 bets** maximum ceiling.
+  - **Gatekeeper Conditions:** Tolerance is unlocked *only* if the action constitutes a high-conviction edge ($\text{confidence} \ge 0.75$) or a risk-mitigating greening-up trade (counter-betting to hedge open liability across outcomes).
 - **Rate Shifting & Greening-Up:** When rates swing favorably (e.g. Back Home at 3.34 $\rightarrow$ Lay Home at 1.73), the opposing action locks in guaranteed green profit on both sides.
 - **Liability Cap:** Lay liability is restricted to decimal odds $\le 2.10$ to prevent outsized downside exposure.
 - **Commission Deduction:** Standard 2.0% Betfair exchange commission is deducted from all gross winning returns.

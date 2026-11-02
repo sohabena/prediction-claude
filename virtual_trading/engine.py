@@ -9,16 +9,20 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from shared.constants import (
+    BUDGET_TOLERANCE_PERCENT,
     CHANNEL_RL_ACTIONS,
     CHANNEL_VIRTUAL_OUTCOMES,
     LARGE_STAKE_PERCENT,
     MAX_BETS_PER_MATCH,
+    MAX_BETS_WITH_TOLERANCE,
+    MAX_PER_MATCH_BUDGET,
     MIN_BET_INTERVAL_SECONDS,
     PAYOUT_HEADROOM_FACTOR,
     PER_MATCH_BUDGET,
     SMALL_STAKE_PERCENT,
     STAKE_NOISE_PERCENT,
     STAKE_ROUND_BUCKETS,
+    TOLERANCE_MIN_CONFIDENCE,
 )
 from shared.logging import setup_logging
 from shared.redis_client import get_redis
@@ -42,9 +46,6 @@ def humanize_stake(raw_stake: float) -> float:
     if raw_stake < 50:
         return max(50.0, round(raw_stake / 10) * 10)  # Round to nearest 10
 
-    # Find the best rounding unit for this stake size
-    # e.g. stake=2946 -> round_unit=500 -> 3000
-    # e.g. stake=487  -> round_unit=100 -> 500
     round_unit = STAKE_ROUND_BUCKETS[0]
     for bucket in STAKE_ROUND_BUCKETS:
         if raw_stake >= bucket * 2:
@@ -70,7 +71,7 @@ class VirtualBetEngine:
     - Bet rejection probability
     - Execution delay simulation
     - Human-like stake rounding
-    - Per-match budget (1,00,000 default) with payout-aware headroom
+    - Per-match budget (1,00,000 base + 20% opportunity tolerance buffer)
     - Dynamic cooldown (shorter during high-volatility moments)
     """
 
@@ -141,10 +142,58 @@ class VirtualBetEngine:
         adjusted_odds = base_odds * (1.0 + slippage)
         adjusted_odds = max(1.01, adjusted_odds)
 
-        # Per-match bet limit check
+        # Evaluate if this action constitutes a high-conviction opportunity or a hedging trade
         match_id = event.match_id
-        if MAX_BETS_PER_MATCH > 0 and self._match_bet_counts.get(match_id, 0) >= MAX_BETS_PER_MATCH:
-            return None
+        is_hedging = False
+        raw_open = self.portfolio.open_bets
+        open_bets_dict = raw_open() if callable(raw_open) else raw_open
+        open_bets_for_match = [
+            b for b in (open_bets_dict.values() if isinstance(open_bets_dict, dict) else [])
+            if b.match_id == match_id
+        ]
+        if open_bets_for_match:
+            has_home_back = any(
+                b.action in (BettingAction.BACK_HOME_SM, BettingAction.BACK_HOME_LG)
+                for b in open_bets_for_match
+            )
+            has_away_back = any(
+                b.action in (BettingAction.BACK_AWAY_SM, BettingAction.BACK_AWAY_LG)
+                for b in open_bets_for_match
+            )
+            if has_home_back and betting_action in (
+                BettingAction.LAY_HOME_SM, BettingAction.LAY_HOME_LG,
+                BettingAction.BACK_AWAY_SM, BettingAction.BACK_AWAY_LG,
+            ):
+                is_hedging = True
+            elif has_away_back and betting_action in (
+                BettingAction.LAY_AWAY_SM, BettingAction.LAY_AWAY_LG,
+                BettingAction.BACK_HOME_SM, BettingAction.BACK_HOME_LG,
+            ):
+                is_hedging = True
+
+        is_opportunity = (confidence >= TOLERANCE_MIN_CONFIDENCE) or is_hedging
+
+        # Per-match bet limit check with 20% opportunity tolerance buffer
+        current_bet_count = self._match_bet_counts.get(match_id, 0)
+        if MAX_BETS_PER_MATCH > 0 and current_bet_count >= MAX_BETS_PER_MATCH:
+            if current_bet_count >= MAX_BETS_WITH_TOLERANCE:
+                logger.debug("bet_rejected_max_bets_tolerance_exhausted", match_id=match_id, count=current_bet_count)
+                return None
+            if not is_opportunity:
+                logger.debug(
+                    "bet_rejected_max_bets_exhausted_no_opportunity",
+                    match_id=match_id,
+                    count=current_bet_count,
+                    confidence=confidence,
+                )
+                return None
+            logger.info(
+                "bet_volume_tolerance_unlocked",
+                match_id=match_id,
+                count=current_bet_count + 1,
+                confidence=confidence,
+                is_hedging=is_hedging,
+            )
 
         # Dynamic cooldown
         now_ts = datetime.now(timezone.utc).timestamp()
@@ -152,16 +201,37 @@ class VirtualBetEngine:
         if (now_ts - last_bet_ts) < MIN_BET_INTERVAL_SECONDS:
             return None
 
-        # Budget Check
+        # Budget Check with 20% opportunity tolerance buffer
         staked_so_far = self._match_total_staked.get(match_id, 0.0)
         potential_payouts = self._match_potential_payouts.get(match_id, 0.0)
-        effective_budget = self.per_match_budget + (potential_payouts * (PAYOUT_HEADROOM_FACTOR - 1.0))
+        base_budget = self.per_match_budget
+        max_tolerance_budget = self.per_match_budget * (1.0 + BUDGET_TOLERANCE_PERCENT)
+
+        if staked_so_far >= base_budget:
+            if staked_so_far >= max_tolerance_budget:
+                logger.debug("bet_rejected_budget_tolerance_exhausted", match_id=match_id, staked=staked_so_far)
+                return None
+            if not is_opportunity:
+                logger.debug(
+                    "bet_rejected_base_budget_exhausted_no_opportunity",
+                    match_id=match_id,
+                    staked=staked_so_far,
+                    confidence=confidence,
+                )
+                return None
+            effective_budget = max_tolerance_budget
+            logger.info(
+                "budget_tolerance_unlocked",
+                match_id=match_id,
+                staked=staked_so_far,
+                ceiling=max_tolerance_budget,
+            )
+        else:
+            effective_budget = base_budget
 
         # Dynamic Confidence Sizing (Fractional Kelly approximation)
-        # Base stakes on confidence, shifting away from hardcoded 10/25%
-        # Confidence typically between 0.2 (low) and 0.9 (high) for Softmax Q
         confidence_scaler = max(0.05, min(1.0, (confidence - 0.2) / 0.7))
-        
+
         if betting_action in (
             BettingAction.BACK_HOME_SM, BettingAction.BACK_AWAY_SM,
             BettingAction.LAY_HOME_SM, BettingAction.LAY_AWAY_SM,
@@ -172,8 +242,8 @@ class VirtualBetEngine:
             # LG actions: 10% to 35% budget based on confidence
             raw_stake = self.per_match_budget * (0.10 + (0.25 * confidence_scaler))
 
-        # Anti-detection: stake noise +/-10% 
-        raw_stake *= 1.0 + random.uniform(-(STAKE_NOISE_PERCENT/2), (STAKE_NOISE_PERCENT/2))
+        # Anti-detection: stake noise +/-10%
+        raw_stake *= 1.0 + random.uniform(-(STAKE_NOISE_PERCENT / 2), (STAKE_NOISE_PERCENT / 2))
 
         # Cap stake to remaining budget
         remaining = max(0, effective_budget - staked_so_far)
@@ -197,7 +267,7 @@ class VirtualBetEngine:
 
         # Try to open position
         if self.portfolio.open_position(bet):
-            self._match_bet_counts[match_id] = self._match_bet_counts.get(match_id, 0) + 1
+            self._match_bet_counts[match_id] = current_bet_count + 1
             self._match_last_bet_time[match_id] = now_ts
             self._match_total_staked[match_id] = staked_so_far + stake
             self._match_potential_payouts[match_id] = potential_payouts + (stake * adjusted_odds)

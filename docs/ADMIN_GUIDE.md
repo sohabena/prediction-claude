@@ -89,8 +89,11 @@ All operational tasks can be managed using the root PowerShell harness:
 
 | Parameter | Environment Variable | Default Value | Description |
 |---|---|---|---|
-| **Per-Match Budget** | `PER_MATCH_BUDGET` | `100_000` | Hard capital commitment per match ($100k / ₹1,00,000). |
-| **Max Bets Per Match** | `MAX_BETS_PER_MATCH` | `30` | Maximum trades executed per match (target: 20–30). |
+| **Per-Match Budget** | `PER_MATCH_BUDGET` | `100_000` | Base capital commitment per match ($100k / ₹1,00,000). |
+| **Budget Tolerance** | `BUDGET_TOLERANCE_PERCENT` | `0.20` | +20% opportunity buffer (extends budget up to $120,000). |
+| **Max Bets Per Match** | `MAX_BETS_PER_MATCH` | `25` | Base target trades executed per match (20–25). |
+| **Bet Volume Tolerance**| `BETS_TOLERANCE_PERCENT` | `0.20` | +20% opportunity buffer (extends cap up to 30 trades). |
+| **Tolerance Min Confidence**| `TOLERANCE_MIN_CONFIDENCE` | `0.75` | Minimum model confidence required to access tolerance buffer. |
 | **Max Bets Per Hour** | `MAX_BETS_PER_HOUR` | `30` | Rate-limiting ceiling to prevent high-frequency churn. |
 | **Small Stake %** | `SMALL_STAKE_PERCENT`| `0.02` | Small bet stake: 2% of budget ($2,000). |
 | **Large Stake %** | `LARGE_STAKE_PERCENT`| `0.04` | Large bet stake: 4% of budget ($4,000). |

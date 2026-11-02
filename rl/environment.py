@@ -113,6 +113,8 @@ class CricketBettingEnv(gym.Env):
         self._bets_this_hour: int = 0
         self._bets_this_episode: int = 0
         self.max_bets_per_episode = max_bets_per_episode
+        self.max_bets_tolerance_pct = 0.20
+        self.max_bets_with_tolerance = int(self.max_bets_per_episode * (1.0 + self.max_bets_tolerance_pct))
         self._peak_balance: float = initial_bankroll
         self._prev_unrealized_pnl: float = 0.0  # For mark-to-market delta
 
@@ -216,8 +218,30 @@ class CricketBettingEnv(gym.Env):
             action = 0
 
         # Enforce bet budget: once exhausted, all bets become HOLD
+        # Enforce bet budget with 20% opportunity tolerance buffer
         if action != 0 and self._bets_this_episode >= self.max_bets_per_episode:
-            action = 0
+            if self._bets_this_episode >= self.max_bets_with_tolerance:
+                action = 0
+            else:
+                # Opportunity check: allow if trade hedges existing net exposure
+                betting_action = BettingAction(action)
+                is_hedge_candidate = False
+                if self._net_exposure_home > 0 and betting_action in (
+                    BettingAction.LAY_HOME_SM, BettingAction.LAY_HOME_LG,
+                    BettingAction.BACK_AWAY_SM, BettingAction.BACK_AWAY_LG,
+                ):
+                    is_hedge_candidate = True
+                elif self._net_exposure_away > 0 and betting_action in (
+                    BettingAction.LAY_AWAY_SM, BettingAction.LAY_AWAY_LG,
+                    BettingAction.BACK_HOME_SM, BettingAction.BACK_HOME_LG,
+                ):
+                    is_hedge_candidate = True
+                current_tick = self._current_episode_data[self._step_idx] if self._step_idx < len(self._current_episode_data) else {}
+                bh = current_tick.get("back_home") or 0.0
+                lh = current_tick.get("lay_home") or 0.0
+                is_bhav_opportunity = abs(bh - lh) > 0.04
+                if not (is_hedge_candidate or is_bhav_opportunity):
+                    action = 0
 
         betting_action = BettingAction(action)
         step_info: dict[str, Any] = {}
@@ -333,7 +357,7 @@ class CricketBettingEnv(gym.Env):
         if self._step_idx >= len(self._current_episode_data):
             return None
 
-        if self._bets_this_episode >= self.max_bets_per_episode:
+        if self._bets_this_episode >= self.max_bets_with_tolerance:
             return None
 
         tick = self._current_episode_data[self._step_idx]

@@ -76,6 +76,10 @@ class RLConfig(BaseSettings):
     training_mode: str = "offline"  # offline | online | eval
     model_path: str = "models/best_model.zip"
     starting_bankroll: int = 100000
+    budget_tolerance_percent: float = 0.20
+    max_bets_per_match: int = 25
+    bets_tolerance_percent: float = 0.20
+    tolerance_min_confidence: float = 0.75
     graduation_enabled: bool = True
     learning_rate: float = 3e-4
     total_timesteps: int = 500000

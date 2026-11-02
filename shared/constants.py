@@ -115,11 +115,20 @@ SCRAPER_TARGET_LATENCY_MS = 500  # p95 target
 BET_DELAY_MIN_SECONDS = 5      # Min random delay before bet placement
 BET_DELAY_MAX_SECONDS = 15     # Max random delay before bet placement
 STAKE_NOISE_PERCENT = 0.20     # +/-20% random noise on stake (avoids robotic pattern)
-MAX_BETS_PER_MATCH = 30        # Target 20 to 30 bets per match (active two-way rate trading)
+
+# Bet volume constraints & 20% opportunity tolerance buffer
+MAX_BETS_PER_MATCH = 25        # Base target: 20 to 25 bets per match
+BETS_TOLERANCE_PERCENT = 0.20  # +20% opportunity tolerance buffer (+5 bets)
+MAX_BETS_WITH_TOLERANCE = int(MAX_BETS_PER_MATCH * (1.0 + BETS_TOLERANCE_PERCENT))  # 30 bets ceiling
 MAX_BETS_PER_HOUR = 30
 MIN_BET_INTERVAL_SECONDS = 15  # Baseline cooldown (shortened during high-volatility events)
 STAKE_ROUND_BUCKETS = [50, 100, 200, 500, 1000, 2000, 5000]  # Human-like round amounts
-PER_MATCH_BUDGET = 100_000     # Default budget per match (1,00,000)
+
+# Capital commitment & 20% opportunity tolerance buffer
+PER_MATCH_BUDGET = 100_000     # Default base budget per match (1,00,000)
+BUDGET_TOLERANCE_PERCENT = 0.20  # +20% opportunity tolerance buffer ($20,000)
+MAX_PER_MATCH_BUDGET = int(PER_MATCH_BUDGET * (1.0 + BUDGET_TOLERANCE_PERCENT))  # 120,000 ceiling
+TOLERANCE_MIN_CONFIDENCE = 0.75  # Minimum model confidence required to unlock tolerance buffer
 PAYOUT_HEADROOM_FACTOR = 1.5   # Allow up to 150% of budget if potential payouts justify it
 
 # ============================================================
