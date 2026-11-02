@@ -11,12 +11,14 @@ bet tagged ``signal:<strategy>:<version>``.
 """
 from __future__ import annotations
 
+import json
 import math
 import uuid
 from bisect import bisect_left
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, Optional
+from pathlib import Path
+from typing import Any, Callable, Iterator, Optional
 
 from backtesting.execution import ExecutionModel, Fill, plan_fill
 from shared.constants import MANUAL_LATENCY_SECONDS, MAX_DATA_AGE_SECONDS, SIGNAL_VALID_SECONDS
@@ -62,6 +64,81 @@ def live_execution() -> ExecutionModel:
     in the tick. On one tick stream, a signal at exchange time T fills at T + 65 s in both paths.
     """
     return ExecutionModel(name="manual_signal", latency_s=0.0, bet_delay_s=MANUAL_LATENCY_SECONDS)
+
+
+# ------------------------------------------------------------------ S44 outcome log
+OUTCOME_LOG_PATH = "logs/signal_outcomes.jsonl"   # the live loop passes this; the runner default is off
+NON_FILL_OUTCOMES = ("missed", "lapsed", "rejected")
+
+
+def append_outcome(path: Path | str, record: dict[str, Any]) -> None:
+    """Append one JSON line to the signal outcome log."""
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+
+
+def _read_outcomes(path: Path | str) -> Iterator[dict[str, Any]]:
+    target = Path(path)
+    if not target.exists():
+        return
+    with target.open(encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                logger.warning("signal_outcome_line_unreadable")
+                continue
+            if isinstance(rec, dict):
+                yield rec
+
+
+def _outcome_time(rec: dict[str, Any]) -> Optional[datetime]:
+    try:
+        value = datetime.fromisoformat(str(rec["time"]).replace("Z", "+00:00"))
+    except (KeyError, ValueError):
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def count_outcomes(
+    strategy_version: str, since: Optional[datetime] = None, path: Path | str = OUTCOME_LOG_PATH,
+) -> dict[str, int]:
+    """Non-fill outcomes of one ``strategy:version`` at or after ``since`` (None = all time).
+
+    Returns ``{"missed": n, "lapsed": n, "rejected": n}``. The trust refresh counts ``missed + lapsed``.
+    """
+    since_utc = None if since is None else (since if since.tzinfo else since.replace(tzinfo=timezone.utc))
+    counts = {k: 0 for k in NON_FILL_OUTCOMES}
+    for rec in _read_outcomes(path):
+        if rec.get("strategy_version") != strategy_version:
+            continue
+        when = _outcome_time(rec)
+        if when is None or (since_utc is not None and when < since_utc):
+            continue
+        outcome = rec.get("outcome")
+        if outcome in counts:
+            counts[outcome] += 1
+    return counts
+
+
+def outcome_versions(since: Optional[datetime] = None, path: Path | str = OUTCOME_LOG_PATH) -> set[str]:
+    """Strategy versions with any non-fill outcome at or after ``since`` (None = all time)."""
+    since_utc = None if since is None else (since if since.tzinfo else since.replace(tzinfo=timezone.utc))
+    versions: set[str] = set()
+    for rec in _read_outcomes(path):
+        version = rec.get("strategy_version")
+        if not isinstance(version, str) or not version:
+            continue
+        when = _outcome_time(rec)
+        if when is None or (since_utc is not None and when < since_utc):
+            continue
+        versions.add(version)
+    return versions
 
 
 @dataclass
@@ -129,6 +206,7 @@ class StrategyRunner:
         *,
         execution: Optional[ExecutionModel] = None,
         bankroll: Optional[Callable[[], float]] = None,
+        outcome_log_path: Optional[Path | str] = None,
     ) -> None:
         self._factory = strategy_factory
         self._engine = engine
@@ -136,6 +214,8 @@ class StrategyRunner:
         self._bus = bus
         self._execution = execution or live_execution()
         self._bankroll = bankroll or (lambda: float(engine.portfolio.state.current_balance))
+        # S44: None disables the outcome log (tests); the live loop passes OUTCOME_LOG_PATH
+        self._outcome_log = None if outcome_log_path is None else Path(outcome_log_path)
         self._matches: dict[str, _Match] = {}
         self._skipped_logged: set[str] = set()
 
@@ -174,6 +254,7 @@ class StrategyRunner:
         if wall_now is not None and wall_now - t > MAX_DATA_AGE_SECONDS:
             logger.debug("strategy_stale_tick_skipped", match_id=match_id, age_s=round(wall_now - t, 1))
             st.position.open_orders = [p.intent for p in st.pending]
+            self._persist_outcomes(st, out.paper)
             return out
 
         st.position.feed = MarketFeed(st.ticks, st.times, k)
@@ -184,11 +265,15 @@ class StrategyRunner:
             detail = details[i] if i < len(details) else {}
             signal = self._signal_for(st, match_id, intent, detail, t)
             published = await self._bus.publish(signal)
-            if published:
-                out.signals.append(signal)
-            st.pending.append(_Pending(intent, k, t, signal if published else None))
+            if not published:
+                # Suspended or duplicate: the person never saw a new signal, so nothing is paper-tracked
+                # (otherwise suspended versions would keep filling and inflate their missed rate).
+                continue
+            out.signals.append(signal)
+            st.pending.append(_Pending(intent, k, t, signal))
         self._settle(st, t, out)
         st.position.open_orders = [p.intent for p in st.pending]
+        self._persist_outcomes(st, out.paper)
         return out
 
     async def finish(self, match_id: str) -> TickOutcome:
@@ -202,9 +287,31 @@ class StrategyRunner:
             if not p.planned:
                 out.paper.append(self._missed(st, p, "lapsed", "no market tick after the manual latency"))
         st.pending = []
+        self._persist_outcomes(st, out.paper)
         return out
 
     # ------------------------------------------------------------------ internals
+    def _persist_outcomes(self, st: _Match, paper: list[PaperFill]) -> None:
+        """S44: append every non-fill outcome (missed, lapsed, rejected) for the nightly trust refresh."""
+        if self._outcome_log is None:
+            return
+        version = f"{st.strategy.name}:{getattr(st.strategy, 'version', '')}"
+        for fill in paper:
+            if fill.status == "filled":
+                continue
+            record = {
+                "time": datetime.fromtimestamp(fill.placed_at, tz=timezone.utc).isoformat(),
+                "strategy_version": version,
+                "match_id": fill.match_id,
+                "signal_id": fill.signal_id,
+                "outcome": fill.status,
+                "reason": fill.detail,
+            }
+            try:
+                append_outcome(self._outcome_log, record)
+            except OSError as e:
+                logger.error("signal_outcome_write_failed", match_id=fill.match_id, error=type(e).__name__)
+
     def _settle(self, st: _Match, now: float, out: TickOutcome) -> None:
         self._plan(st)
         self._reveal(st, now, out)

@@ -291,6 +291,64 @@ class Orchestrator:
                         settled_bets=counts.get(chosen, 0), versions=len(counts))
         return chosen
 
+    async def _signal_versions_from_db(self, since: datetime) -> set[str]:
+        """Signal strategy versions (``signal:<strategy>:<version>`` tags) with bets placed since ``since``."""
+        from sqlalchemy import text
+        from shared.db import get_session
+
+        async with get_session() as session:
+            result = await session.execute(
+                text(
+                    "SELECT DISTINCT agent_version FROM virtual_bets "
+                    "WHERE placed_at > :since AND agent_version LIKE 'signal:%'"
+                ),
+                {"since": since},
+            )
+            return {str(r[0])[len("signal:"):] for r in result.fetchall()}
+
+    async def _refresh_signal_trust(self, now: datetime) -> None:
+        """S44 nightly: refresh trust labels and kill conditions for each signal version seen in the window.
+
+        Only signal labels and kill suspensions change here. Orchestrator state, training and graduation are untouched.
+        Versions come from the outcome log and from signal bets in the DB, so a version with fills but no misses
+        is still refreshed. ``missed_count`` is the all-time count of missed and lapsed signals.
+        """
+        from datetime import timedelta
+
+        loop = getattr(self, "_live_trading_loop", None)
+        guard = loop.signal_guard() if loop is not None else None
+        if guard is None:
+            logger.info("signal_trust_skipped", reason="signal runner not built")
+            return
+        registry, kill, bankroll = guard
+
+        from rl.lifecycle.graduation_handler import WINDOW_DAYS, check_signal_version
+        from strategy.runner import count_outcomes, outcome_versions
+
+        since = now - timedelta(days=WINDOW_DAYS)
+        versions: set[str] = set()
+        try:
+            versions |= outcome_versions(since)
+        except OSError as e:
+            logger.error("signal_outcome_read_failed", error=type(e).__name__)
+        try:
+            versions |= await self._signal_versions_from_db(since)
+        except Exception as e:
+            logger.error("signal_versions_from_db_failed", error=str(e))
+
+        for version in sorted(versions):
+            try:
+                counts = count_outcomes(version)
+                await check_signal_version(
+                    version,
+                    registry=registry,
+                    allocated_bankroll=bankroll,
+                    kill_switch=kill,
+                    missed_count=counts["missed"] + counts["lapsed"],
+                )
+            except Exception as e:
+                logger.error("signal_trust_refresh_failed", strategy_version=version, error=str(e))
+
     async def _check_nightly_schedule(self, now: datetime) -> None:
         """Execute nightly tasks based on UTC schedule."""
         today = now.date().isoformat()
@@ -301,6 +359,11 @@ class Orchestrator:
 
         self._last_nightly_date = today
         logger.info("nightly_schedule_starting", date=today)
+
+        try:
+            await self._refresh_signal_trust(now)
+        except Exception as e:  # trust refresh must never block the rest of the nightly schedule
+            logger.error("signal_trust_nightly_failed", error=str(e))
 
         if self._state in (OrchestratorState.VIRTUAL_TRADING, OrchestratorState.ONLINE_TRAINING):
             candidate = await self._graduation_candidate_version()

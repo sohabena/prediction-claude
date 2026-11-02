@@ -47,6 +47,11 @@ MAX_FILL_SLIPPAGE_TICKS = 2          # max adverse Betfair ticks between decisio
 CONTEXT_STALE_SECONDS = 10.0         # fallback context older than odds by more -> context_stale
 WATCHED_ID_CACHE_SECONDS = 2.0       # cache for KEY_WATCHED_MATCH_ID
 MODEL_RELOAD_INTERVAL_SECONDS = 300.0
+FEED_CHECK_SECONDS = 60.0            # S44: how often the kill switch checks the live feed for staleness
+
+
+def _as_utc(value: datetime) -> datetime:
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
 
 def _strategy_mode() -> str:
@@ -146,6 +151,10 @@ class LiveVirtualTradingLoop:
         # S40: signal runner (value mode), built on the first decision tick; never places a real bet
         self._strategy_mode = _strategy_mode()
         self._runner: Optional[Any] = None
+        # S44: kill switch, trust registry and feed check, all built with the signal runner
+        self._kill_switch: Optional[Any] = None
+        self._trust_registry: Optional[Any] = None
+        self._feed_task: Optional[asyncio.Task] = None
 
     async def start(self) -> None:
         """Start the live trading loop (subscribe and process)."""
@@ -173,6 +182,8 @@ class LiveVirtualTradingLoop:
             self._reload_task = asyncio.create_task(self._reload_models_periodically())
         except Exception as e:
             logger.warning("model_zoo_preload_failed", error=str(e))
+
+        self._feed_task = asyncio.create_task(self._feed_check_loop())
 
         redis = await get_redis()
 
@@ -209,6 +220,8 @@ class LiveVirtualTradingLoop:
         finally:
             if self._reload_task is not None:
                 self._reload_task.cancel()
+            if self._feed_task is not None:
+                self._feed_task.cancel()
             logger.info("live_trading_loop_stopped")
 
     async def stop(self) -> None:
@@ -216,6 +229,8 @@ class LiveVirtualTradingLoop:
         self._running = False
         if self._reload_task is not None:
             self._reload_task.cancel()
+        if self._feed_task is not None:
+            self._feed_task.cancel()
         # Cancel pending bet tasks (each releases its reservation on cancellation)
         for t in list(self._pending_bet_tasks):
             t.cancel()
@@ -371,9 +386,11 @@ class LiveVirtualTradingLoop:
         """
         if self._runner is None:
             from scripts.cricsheet_harmonizer import canonicalize_team
-            from strategy.runner import StrategyRunner
+            from strategy.runner import OUTCOME_LOG_PATH, StrategyRunner
             from strategy.signals import SignalBus
+            from strategy.trust import TrustedSignalBus, TrustRegistry
             from strategy.value_policy import ValueStrategy
+            from virtual_trading.kill_switch import KillSwitch
 
             models, ratings = await asyncio.gather(
                 asyncio.to_thread(_load_fair_models),
@@ -386,10 +403,57 @@ class LiveVirtualTradingLoop:
                 model = models.get(tick.get("family"))
                 return None if model is None else ValueStrategy(model)
 
+            # S44: one kill switch per process, loaded from Redis before the first signal can be published
+            known_versions = sorted({f"{s.name}:{s.version}" for s in (ValueStrategy(m) for m in models.values())})
             redis = await get_redis()
-            self._runner = StrategyRunner(factory, self._engine, self._risk_manager, SignalBus(redis=redis))
-            logger.info("signal_runner_ready", families=sorted(models), prematch=ratings is not None)
+            kill = KillSwitch(redis)
+            await kill.load(known_versions)
+            registry = TrustRegistry(redis=redis, kill_switch=kill)
+            await registry.load(known_versions)
+            self._kill_switch = kill
+            self._trust_registry = registry
+            # Rebuilt here, before any bet can be recorded, so the replacement loses no RiskManager state.
+            # Keeps the loop's own portfolio; a stub risk manager (tests) is left as it is.
+            if isinstance(self._risk_manager, RiskManager):
+                self._risk_manager = RiskManager(self._risk_manager.portfolio, kill_switch=kill)
+            bus = TrustedSignalBus(SignalBus(redis=redis), registry)
+            self._runner = StrategyRunner(
+                factory, self._engine, self._risk_manager, bus, outcome_log_path=OUTCOME_LOG_PATH,
+            )
+            logger.info("signal_runner_ready", families=sorted(models), prematch=ratings is not None,
+                        versions=known_versions)
         return self._runner
+
+    def signal_guard(self) -> Optional[tuple[Any, Any, float]]:
+        """(trust registry, kill switch, bankroll) for the nightly trust refresh. None until the runner is built."""
+        if self._trust_registry is None or self._kill_switch is None:
+            return None
+        return self._trust_registry, self._kill_switch, float(self._portfolio.state.current_balance)
+
+    async def _check_feed(self) -> Optional[str]:
+        """S44: trip the global kill when a live match with open paper positions has gone without a tick.
+
+        Only matches whose last event was live and that have no result yet count, so a finished match that is
+        waiting to settle does not trip the switch.
+        """
+        if self._kill_switch is None:
+            return None
+        open_live = [
+            mid for mid, bets in self._open_bets.items()
+            if bets and mid not in self._completed_match_ids
+            and mid in self._latest_events and self._latest_events[mid].is_live
+        ]
+        last_tick_at = {mid: _as_utc(ev.timestamp) for mid, ev in self._latest_events.items()}
+        return await self._kill_switch.evaluate_feed(last_tick_at, open_live)
+
+    async def _feed_check_loop(self) -> None:
+        """Run ``_check_feed`` every FEED_CHECK_SECONDS. Runs on a timer, so a dead feed is caught without events."""
+        while self._running:
+            await asyncio.sleep(FEED_CHECK_SECONDS)
+            try:
+                await self._check_feed()
+            except Exception as e:
+                logger.error("feed_check_failed", error=str(e))
 
     @staticmethod
     def _tick_from_event(event: OddsEvent, context: Optional[MatchContext]) -> dict[str, Any]:

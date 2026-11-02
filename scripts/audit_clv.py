@@ -17,7 +17,8 @@ Breakdowns are by ``agent_version`` and by the closing-price source
 (``agent_version LIKE 'holdout_eval:%'``) and ticks not from ``lotusbook`` or
 ``betfair`` are excluded in SQL. The session runs in a READ ONLY transaction.
 
-Usage: ``python -m scripts.audit_clv --limit 100``
+Usage: ``python -m scripts.audit_clv --limit 100 [--source betfair|lotusbook|all]``. The default
+``betfair`` prices CLV from Betfair ticks only (the binding definition); ``all`` is the S33 behaviour.
 """
 
 from __future__ import annotations
@@ -54,14 +55,31 @@ BETS_SQL = text("""
     LIMIT :limit
 """)
 
-TICKS_SQL = text("""
+_TICKS_SELECT = """
     SELECT match_id, time, competition, team_home, team_away,
            back_home, lay_home, back_away, lay_away, is_live, source
     FROM odds_ticks
     WHERE match_id = ANY(:match_ids)
-      AND source IN ('lotusbook', 'betfair')
+      AND {source_filter}
     ORDER BY match_id, time
-""")
+"""
+
+# S44: ``--source`` picks the price feed. Betfair is the binding CLV definition; "all" is the S33 behaviour.
+SOURCES = ("betfair", "lotusbook", "all")
+_SOURCE_FILTERS = {
+    "betfair": "source = 'betfair'",
+    "lotusbook": "source = 'lotusbook'",
+    "all": "source IN ('lotusbook', 'betfair')",
+}
+TICKS_SQL_BY_SOURCE = {name: text(_TICKS_SELECT.format(source_filter=f)) for name, f in _SOURCE_FILTERS.items()}
+TICKS_SQL = TICKS_SQL_BY_SOURCE["all"]
+
+
+def ticks_sql(source: str) -> Any:
+    """Tick query for one price source. Raises ValueError for an unknown source."""
+    if source not in TICKS_SQL_BY_SOURCE:
+        raise ValueError(f"source must be one of {SOURCES}, got {source!r}")
+    return TICKS_SQL_BY_SOURCE[source]
 
 
 def _price_field(side: str, selection: str) -> str:
@@ -179,8 +197,9 @@ def summarise(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     }
 
 
-async def run_audit(session: Any, limit: int) -> dict[str, Any]:
-    """Run the read-only audit over the ``limit`` most recent settled bets."""
+async def run_audit(session: Any, limit: int, source: str = "all") -> dict[str, Any]:
+    """Run the read-only audit over the ``limit`` most recent settled bets, priced from ``source`` ticks."""
+    tick_query = ticks_sql(source)  # validate before touching the session
     await session.execute(text("SET TRANSACTION READ ONLY"))
     bet_result = await session.execute(BETS_SQL, {"limit": limit})
     bets = [dict(r) for r in bet_result.mappings().all()]
@@ -188,13 +207,13 @@ async def run_audit(session: Any, limit: int) -> dict[str, Any]:
     ticks_by_match: dict[str, list[dict[str, Any]]] = defaultdict(list)
     match_ids = sorted({str(b["match_id"]) for b in bets})
     if match_ids:
-        tick_result = await session.execute(TICKS_SQL, {"match_ids": match_ids})
+        tick_result = await session.execute(tick_query, {"match_ids": match_ids})
         for r in tick_result.mappings().all():
             ticks_by_match[str(r["match_id"])].append(dict(r))
 
     rows, counts = build_audit_rows(bets, ticks_by_match)
-    logger.info("clv_audit_built", **counts, rows=len(rows))
-    return {"counts": counts, **summarise(rows)}
+    logger.info("clv_audit_built", **counts, rows=len(rows), source=source)
+    return {"counts": counts, "source": source, **summarise(rows)}
 
 
 def _fmt(value: Any, signed: bool = True) -> str:
@@ -239,13 +258,13 @@ def format_report(report: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
-async def _run_cli(limit: int) -> str:
+async def _run_cli(limit: int, source: str) -> str:
     from shared.db import close_database, get_session_factory
 
     factory = get_session_factory()
     try:
         async with factory() as session:
-            report = await run_audit(session, limit)
+            report = await run_audit(session, limit, source=source)
             await session.rollback()
     finally:
         await close_database()
@@ -256,10 +275,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Read-only CLV audit of settled virtual bets.")
     parser.add_argument("--limit", type=int, default=100,
                         help="most recent settled bets to audit (default 100)")
+    parser.add_argument("--source", choices=SOURCES, default="betfair",
+                        help="price feed for the 60 s and 10 m CLV: betfair (default, binding), lotusbook, or all")
     args = parser.parse_args(argv)
     if args.limit < 1:
         parser.error("--limit must be >= 1")
-    print(asyncio.run(_run_cli(args.limit)))
+    print(asyncio.run(_run_cli(args.limit, args.source)))
     return 0
 
 
