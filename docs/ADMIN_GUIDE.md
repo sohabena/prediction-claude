@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide provides system administrators and quant engineers with full operational documentation for running, monitoring, tuning, and maintaining the PHOENIX cricket prediction and two-way rate trading platform.
+This guide provides system administrators and quant engineers with full operational documentation for running, monitoring, tuning, and maintaining the PHOENIX cricket prediction and active two-way rate trading platform.
 
 ---
 
@@ -12,31 +12,40 @@ This guide provides system administrators and quant engineers with full operatio
 flowchart TD
     subgraph "External Feeds"
         A[LotusBook Live: lotusbook.cc/cricket]
-        B[Official Cricsheet Archives: 11k+ Matches]
+        B[Official Cricsheet Archives: 19k+ Matches]
+        C[Weekly Cricsheet Delta Sync: recently_added_7_json.zip]
     end
 
     subgraph "Core Daemons"
-        C[Scraper Manager<br/>python -m scraper.manager]
-        D[RL Orchestrator<br/>python -m rl.orchestrator]
-        E[FastAPI Backend<br/>port 8001]
-        F[Next.js Dashboard<br/>port 3000]
+        D[Scraper Manager<br/>python -m scraper.manager]
+        E[RL Orchestrator<br/>python -m rl.orchestrator]
+        F[FastAPI Backend<br/>port 8001]
+        G[Next.js Dashboard<br/>port 3000]
     end
 
     subgraph "Infrastructure"
-        G[(TimescaleDB :5432<br/>Database: phoenix_betting)]
-        H[(Redis :6379<br/>Broker & Shared State)]
+        H[(TimescaleDB :5432<br/>Database: phoenix_betting)]
+        I[(Redis :6379<br/>Broker & Shared State)]
     end
 
-    A --> C
-    B -->|scripts/cricsheet_harmonizer.py| G
-    C --> H
-    C --> G
-    H --> D
-    G --> D
+    subgraph "12-Specialist Model Zoo"
+        J[Format & Gender Router<br/>rl/model_zoo.py]
+        K[12 PPO Specialists<br/>models/specialists/*.zip]
+    end
+
+    A --> D
+    B -->|scripts/batch_cricsheet_historical_importer.py| H
+    C -->|scripts/weekly_cricsheet_sync_and_retrain.py| K
+    D --> I
     D --> H
-    E --> G
-    E --> H
-    F --> E
+    I --> E
+    H --> E
+    E --> J
+    J --> K
+    F --> H
+    F --> I
+    F --> J
+    G --> F
 ```
 
 ---
@@ -50,6 +59,7 @@ flowchart TD
 | **Backend API** | `localhost:8001` | — | FastAPI application gateway (`backend.main:app`). |
 | **Frontend UI** | `localhost:3000` | — | Next.js 14 reactive dashboard. |
 | **Target Bookmaker** | Web | `https://lotusbook.cc/cricket` | CDP WebSocket interception + DOM polling. |
+| **Model Zoo Storage** | Filesystem | `models/specialists/` | 12 dedicated PPO checkpoints for format/gender. |
 
 ---
 
@@ -68,6 +78,7 @@ All operational tasks can be managed using the root PowerShell harness:
 | `.\phoenix.ps1 logs` | Aggregate tail of recent logs across all running components. |
 | `.\phoenix.ps1 logs -Service scraper` | Tail logs specifically for the Scraper Manager. |
 | `.\phoenix.ps1 orch` | Print current RL Orchestrator lifecycle state from Redis. |
+| `.\phoenix.ps1 sync` | Download latest Cricsheet matches and fine-tune specialist models. |
 | `.\phoenix.ps1 db-init` | Run database schema initialization and migrations. |
 | `.\phoenix.ps1 backup` | Dump `phoenix_betting` database to a timestamped `.sql` archive. |
 | `.\phoenix.ps1 restore` | Restore database from the most recent backup archive. |
@@ -86,7 +97,8 @@ All operational tasks can be managed using the root PowerShell harness:
 | **Observation Size** | `OBSERVATION_SIZE` | `50` | Exact feature vector dimension. |
 | **Scraper Target URL**| `SCRAPER_BETTING_SITE_URL` | `https://lotusbook.cc/cricket` | Live exchange scraping target. |
 | **Min Quality Score** | `DATA_QUALITY_MIN_SCORE` | `0.70` | Threshold for approving matches into training. |
-| **Model Checkpoint** | `RL_MODEL_PATH` | `models/best_model.zip` | Production model weights path. |
+| **Exchange Commission**| `EXCHANGE_COMMISSION`| `0.02` | 2.0% Betfair commission on gross winnings. |
+| **Max Lay Odds** | `MAX_LAY_ODDS` | `2.10` | Hard cap on Lay execution to eliminate catastrophic tail risk. |
 
 ---
 
@@ -96,6 +108,15 @@ All operational tasks can be managed using the root PowerShell harness:
 - `GET /api/health` — Checks database, Redis, and worker connectivity.
 - `GET /api/advisor/state` — Returns current RL Orchestrator lifecycle state.
 - `GET /api/advisor/stats` — Returns match accumulation and training statistics.
+
+### 12-Specialist Model Zoo & Advisor
+- `GET /api/advisor/specialists` — Returns detailed catalog of all 12 specialist models, including active status, holdout P&L, win rate, Sharpe ratio, and training date.
+- `GET /api/advisor/signals` — Broadcasts real-time trading recommendations tagged with the specific routed specialist.
+- `POST /api/advisor/demote` — Manually demotes an agent back to `VIRTUAL_TRADING` for retraining.
+
+### Automated Weekly Cricsheet Synchronization
+- `GET /api/training/cricsheet-sync/status` — Returns synchronization status (last sync timestamp, matches processed, specialists updated, status: `idle` or `running`).
+- `POST /api/training/cricsheet-sync/trigger` — Manually triggers background download of `recently_added_7_json.zip` and incremental specialist fine-tuning.
 
 ### Matches & Data Validation
 - `GET /api/matches/active` — Lists all currently live cricket matches.
@@ -111,25 +132,42 @@ All operational tasks can be managed using the root PowerShell harness:
 - `GET /api/agent/performance` — Returns aggregate P&L, win rate, Sharpe ratio, and profit factor.
 - `GET /api/training/metrics` — Returns episodic training curves (reward, loss, entropy).
 - `GET /api/graduation/status` — Returns rolling 14-day graduation evaluation status.
-- `GET /api/advisor/signals` — Broadcasts real-time trading recommendations for human execution.
-- `POST /api/advisor/demote` — Manually demotes agent back to `VIRTUAL_TRADING` for retraining.
 
 ---
 
-## 6. Manual Ingestion & Model Training Runbook
+## 6. Model Training & Harmonization Runbook
 
-### Re-Harmonizing Historical Matches
-To re-process raw Cricsheet JSON files into the database:
+### 1. Bulk Historical Harmonization (19,494 Matches)
+To re-process raw Cricsheet JSON archives into the 12 specialist datasets in `data/specialists/`:
 ```powershell
 $env:PYTHONPATH = "c:\Users\sohai\Downloads\prediction-claude"
 $env:PYTHONHOME = "C:\Users\sohai\AppData\Local\Programs\Python\Python313"
-& "C:\Python313\python.exe" scripts/cricsheet_harmonizer.py
+& "C:\Python313\python.exe" scripts/batch_cricsheet_historical_importer.py
 ```
 
-### Running Offline Two-Way Rate Trading Benchmark
-To run the full evaluation benchmark across unseen matches:
+### 2. Training the 12 Specialist Models
+To train or re-evaluate all 12 specialist models with holdout validation:
 ```powershell
 $env:PYTHONPATH = "c:\Users\sohai\Downloads\prediction-claude"
 $env:PYTHONHOME = "C:\Users\sohai\AppData\Local\Programs\Python\Python313"
-& "C:\Python313\python.exe" scripts/iterative_tuning_and_virtual_testing.py
+& "C:\Python313\python.exe" scripts/train_and_evaluate_all_specialists.py
 ```
+
+### 3. Executing Weekly Cricsheet Sync & Retraining
+To manually pull recent matches from Cricsheet and incrementally update models:
+```powershell
+.\phoenix.ps1 sync
+```
+Or execute directly via Python:
+```powershell
+$env:PYTHONPATH = "c:\Users\sohai\Downloads\prediction-claude"
+$env:PYTHONHOME = "C:\Users\sohai\AppData\Local\Programs\Python\Python313"
+& "C:\Python313\python.exe" scripts/weekly_cricsheet_sync_and_retrain.py
+```
+
+### 4. Background Scheduled Automation
+The RL Orchestrator daemon (`rl/orchestrator.py`) includes a weekly cron schedule that runs `weekly_cricsheet_sync_and_retrain.py` every Monday at 03:00 UTC. When new matches are detected, it:
+1. Deduplicates against previously seen match signatures (`team1_vs_team2_date`).
+2. Appends new matches to the relevant specialist archive in `data/specialists/`.
+3. Performs 4,000 steps of incremental PPO fine-tuning on the affected specialist.
+4. Updates `models/specialists/catalog.json` and notifies the running Model Zoo.

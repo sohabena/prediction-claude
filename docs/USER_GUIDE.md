@@ -2,11 +2,11 @@
 
 ## What is PHOENIX?
 
-PHOENIX is an automated, AI-driven cricket trading intelligence platform powered by Reinforcement Learning (RL). It tracks live in-play odds from LotusBook (`https://lotusbook.cc/cricket`) and leverages institutional training from thousands of official international cricket matches (Cricsheet) to identify profitable rate fluctuations.
+PHOENIX is an institutional-grade, AI-driven cricket trading intelligence platform powered by Reinforcement Learning (RL). It tracks live in-play odds from LotusBook (`https://lotusbook.cc/cricket`) and leverages institutional training from **19,494 official cricket matches (over 3.03 million order book ticks)** to identify profitable rate fluctuations.
 
-Unlike naive betting systems that place a single static bet and hope for the best, PHOENIX executes **active two-way rate trading (Bhav shifting)**: placing 20 to 30 bets per match, dynamically shifting between Back and Lay positions as rates fluctuate, and locking in guaranteed green profits across all match outcomes.
+Rather than relying on a single monolithic model that treats all cricket identically, PHOENIX employs a **12 Format, League, and Gender Specialist Model Zoo** (`rl/model_zoo.py`). An IPL men's match has an expected first-innings par of 188 runs, while a Women's T20I averages 136 runs with 1.35x steeper odds depreciation per wicket. By routing each fixture to its specialized policy network, PHOENIX captures market edges tailored specifically to the match format and gender dynamics.
 
-**Safety Guarantee:** PHOENIX operates in **Virtual Trading Mode** until it meets strict profitability criteria across rolling windows. In production, it functions as an **Advisor**, broadcasting high-confidence trade recommendations for manual or distributed account execution.
+Unlike naive betting systems that place a single static bet and hope for the best, PHOENIX executes **active two-way rate trading (Bhav shifting)**: placing 20 to 30 trades per match, dynamically shifting between Back and Lay positions as rates fluctuate, hedging risk, and locking in guaranteed green profits across all match outcomes.
 
 ---
 
@@ -18,8 +18,8 @@ graph TB
         A[Overview / Home<br/>Health, P&L, Active Matches]
         B[Live Matches /matches<br/>Scrape & Training Approval]
         C[Virtual Trading /trading<br/>Live Trades & Two-Way Shifting]
-        D[Training Monitor /training<br/>Loss Curves, Rewards, Sharpe]
-        E[Advisor Signals /advisor<br/>Real-Time Bet Recommendations]
+        D[Training Monitor /training<br/>Loss Curves, Rewards & Cricsheet Sync]
+        E[Advisor Signals /advisor<br/>Real-Time Bets & 12 Specialist Cards]
     end
 
     A --> B
@@ -39,8 +39,12 @@ graph TB
 3. **Virtual Trading (`/trading`):**
    - Chronological log of all virtual trades (`virtual_bets`).
    - Visual breakdown of two-way rate shifts, Back/Lay odds matched, stake, and net P&L after 2.0% exchange commission.
-4. **Advisor (`/advisor`):**
-   - Active trade signals with confidence levels and full action probability distribution.
+4. **Training Monitor (`/training`):**
+   - Episodic training curves (reward, policy loss, value loss, entropy).
+   - **Cricsheet Sync Panel:** Displays automated weekly sync status, last update timestamp, matches processed, and includes a **"Sync Cricsheet"** button to manually trigger delta retraining.
+5. **Advisor (`/advisor`):**
+   - **Live Signals:** Active trade recommendations tagged with target team, odds, stake, confidence, and routed specialist.
+   - **12 Specialist Portfolio Cards:** Grid displaying all 12 specialist models (`ipl`, `bbl_men`, `wbbl_women`, `t20i_men`, `t20i_women`, `odi_men`, `odi_women`, `test_men`, `t20_blast`, `franchise_t20`, `first_class`, `list_a`) with individual holdout P&L, win rates, and training status.
    - Shadow trader drift monitoring and manual demotion controls.
 
 ---
@@ -63,19 +67,44 @@ flowchart LR
   - **Small Action (`SM`):** 2% of budget = **$2,000** (₹2,000).
   - **Large Action (`LG`):** 4% of budget = **$4,000** (₹4,000).
 - **Exchange Commission:** Real Betfair 2.0% commission is deducted automatically from all gross winning returns.
+- **Max Lay Odds Limit:** Lay bets are capped at odds $\le 2.10$ to prevent severe liability exposure.
 
 ---
 
-## 3. Reading & Executing Bet Signals
+## 3. The 12 Specialist Models & Dynamic Routing
+
+When a match appears in the live feed or ingestion queue, PHOENIX's **Dynamic Format Router** inspects the event's match type, competition name, and gender to route observations to the optimal specialist:
+
+```mermaid
+flowchart TD
+    M[Live Match Event] --> R{Dynamic Format Router}
+    R -->|IPL Competition| S1[IPL Men Specialist<br/>Par: 188 rpo]
+    R -->|Big Bash League & Men| S2[BBL Men Specialist<br/>Par: 168 rpo]
+    R -->|WBBL / Women League| S3[WBBL Women Specialist<br/>Par: 136 rpo, 1.35x decay]
+    R -->|T20 International & Men| S4[T20I Men Specialist<br/>Par: 168 rpo]
+    R -->|T20 International & Women| S5[T20I Women Specialist<br/>Par: 136 rpo, 1.35x decay]
+    R -->|ODI & Men| S6[ODI Men Specialist<br/>Par: 280 rpo]
+    R -->|ODI & Women| S7[ODI Women Specialist<br/>Par: 215 rpo]
+    R -->|Test Matches| S8[Test Men Specialist<br/>Draw horizon, multi-innings]
+    R -->|Vitality Blast| S9[T20 Blast Specialist]
+    R -->|Other Franchise Leagues| S10[Franchise T20 Specialist]
+    R -->|First-Class / Ranji / Shield| S11[First Class Specialist]
+    R -->|Domestic 50-Over| S12[List A Specialist]
+```
+
+---
+
+## 4. Reading & Executing Bet Signals
 
 When the agent is in **Advisor Mode** (or during live virtual monitoring), signals appear on the Advisor screen:
 
 ### Signal Anatomy
+- **Specialist Tag:** e.g., `[IPL Specialist]` or `[WBBL Women Specialist]`.
 - **Action:** e.g., `BACK_HOME_SM`, `LAY_AWAY_LG`, `HOLD`.
-- **Target Team:** Canonical team name (e.g. `England`, `India`).
+- **Target Team:** Canonical team name (e.g. `Mumbai Indians`, `Sydney Sixers`).
 - **Rate / Odds:** Decimal exchange rate matched from the live ladder.
-- **Recommended Stake:** Calculated automatically from the $100k budget.
-- **Confidence:** Softmax probability score from the PPO policy network (e.g., $74.2\%$).
+- **Recommended Stake:** Calculated automatically from the $100k budget ($2,000 for Small, $4,000 for Large).
+- **Confidence:** Softmax probability score from the specialist policy network (e.g., $74.2\%$).
 
 ### Execution Best Practices
 1. **Multi-Account Distribution:**
@@ -88,16 +117,16 @@ When the agent is in **Advisor Mode** (or during live virtual monitoring), signa
 
 ---
 
-## 4. Frequently Asked Questions (FAQ)
+## 5. Frequently Asked Questions (FAQ)
 
-**Q: How does the model consider "Match Rating"?**
-A: PHOENIX evaluates match rating across three dimensions:
-1. *Live Market Rate (Bhav):* Live decimal odds, bid-ask spreads, and rate momentum (velocity/volatility).
-2. *Team Strength & Tier Rating:* Categorizes competitions into ICC Events, Bilateral Internationals, or Franchise leagues, adjusting for format (`T20`, `ODI`, `Test`).
-3. *Data Quality Rating:* Rejects matches with data quality scores below 70%.
+**Q: Why do we use 12 separate models instead of a single general model?**  
+A: Cricket format and gender differences are massive:
+- **Scoring Rates:** Women's T20 matches average ~136 runs per innings, while Men's IPL matches average ~188. A general model trained on Men's IPL will systematically underestimate par in Women's cricket and make losing bets.
+- **Wicket Sensitivity:** In Women's matches, wickets carry a 1.35x steeper impact on win probability because lower-order boundary percentage is lower.
+- **Time Horizons:** A Test match takes 5 days with draw risk, whereas a T20 lasts 3 hours. Dedicated specialists ensure that every decision is evaluated against calibrated domain realities.
 
-**Q: How did the model achieve +$593,610 net profit in testing?**
-A: On a holdout test set of 150 unseen international matches, the PPO agent fused real-time rate momentum with match resources (wickets, overs, required run rate). It avoided buying falling knives during collapses, scalped temporary market overreactions, and locked in green profits by shifting between Back and Lay positions (averaging 25 bets per match).
+**Q: What is strictly causal zero-lookahead tick simulation?**  
+A: Earlier prototypes generated ticks by interpolating odds towards the known match winner at the end of the game, creating subtle lookahead leakage. PHOENIX generates realistic Betfair market microstructure strictly sequentially from ball 1 to the final ball: calculating current par, run rate pressure, and wickets lost using only the balls that have been bowled so far. The model never has access to future balls.
 
-**Q: How do I start the platform?**
-A: Run `.\phoenix.ps1 start` in PowerShell. The backend launches at `http://localhost:8001` and the dashboard opens at `http://localhost:3000`.
+**Q: How often does PHOENIX update with new matches?**  
+A: Cricsheet publishes newly played matches weekly. PHOENIX features an automated weekly synchronization pipeline (`scripts/weekly_cricsheet_sync_and_retrain.py`) that downloads `recently_added_7_json.zip` every Monday at 03:00 UTC, deduplicates fixtures, appends them to the specialist archives, and runs incremental fine-tuning (4,000 PPO steps per affected specialist). You can also manually trigger a sync anytime from the **Training** page or via `.\phoenix.ps1 sync`.

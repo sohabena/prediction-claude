@@ -3,7 +3,7 @@
     PHOENIX CLI - Unified Application Management
 
 .DESCRIPTION
-    Manage all PHOENIX services: start, stop, status, logs, restart, test, db-init, open.
+    Manage all PHOENIX services: start, stop, status, logs, restart, test, db-init, sync, open.
 
 .EXAMPLE
     .\phoenix.ps1 start
@@ -17,6 +17,7 @@
     .\phoenix.ps1 restart -Service backend
     .\phoenix.ps1 test
     .\phoenix.ps1 test -Suite unit
+    .\phoenix.ps1 sync
     .\phoenix.ps1 db-init
     .\phoenix.ps1 open
     .\phoenix.ps1 open -Page advisor
@@ -904,6 +905,26 @@ function Invoke-Restore {
 }
 
 # ============================================================
+# SYNC & RETRAIN
+# ============================================================
+
+function Invoke-Sync {
+    Write-Banner "Weekly Cricsheet Delta Sync & Specialist Retraining" "Yellow"
+
+    Write-Step "1/1" "Executing scripts/weekly_cricsheet_sync_and_retrain.py..."
+    $env:PYTHONPATH = $ProjectRoot
+    $syncScript = Join-Path $ProjectRoot "scripts\weekly_cricsheet_sync_and_retrain.py"
+
+    if (Test-Path $PythonExe) {
+        & $PythonExe $syncScript
+    } else {
+        & python $syncScript
+    }
+
+    Write-Banner "Sync Run Completed" "Green"
+}
+
+# ============================================================
 # DISPATCH
 # ============================================================
 
@@ -914,6 +935,7 @@ switch ($Command.ToLower()) {
     "logs"       { Invoke-Logs }
     "restart"    { Invoke-Restart }
     "test"       { Invoke-Test }
+    "sync"       { Invoke-Sync }
     "db-init"    { Invoke-DbInit }
     "db-migrate" { Invoke-DbMigrate }
     "open"       { Invoke-Open }

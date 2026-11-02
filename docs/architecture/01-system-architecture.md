@@ -2,9 +2,9 @@
 
 ## Overview
 
-PHOENIX is an advanced reinforcement learning-based cricket betting intelligence and two-way rate trading system that learns to extract consistent profits from live cricket odds on LotusBook and international exchange microstructure. Unlike traditional rule-based betting or static tipping systems, PHOENIX utilizes a Proximal Policy Optimization (PPO) agent that improves continuously through experience — placing virtual bets, dynamically shifting between Back and Lay positions as market rates (Bhav) fluctuate, hedging exposure, and refining its neural policy over thousands of simulated and real matches.
+PHOENIX is an advanced reinforcement learning-based cricket betting intelligence and two-way rate trading system that learns to extract consistent profits from live cricket odds on LotusBook and international exchange microstructure. Unlike traditional rule-based betting or static tipping systems, PHOENIX utilizes a portfolio of **12 format-, league-, and gender-specialized Proximal Policy Optimization (PPO) agents** managed by a **Dynamic Match Router** (`rl/model_zoo.py`). The agents master two-way rate trading (Bhav shifting) — dynamically moving between Back and Lay positions as market rates fluctuate, greening up to lock in profit, and enforcing strict risk controls.
 
-**Core Principle:** The system does NOT go live with real funds until the RL agent proves consistent profitability in virtual trading across holdout evaluation sets with full exchange commission and realistic order slippage.
+**Core Principle:** The system does NOT trade real funds until the specialized RL agents prove consistent profitability in virtual trading across holdout evaluation sets with full 2.0% exchange commission, realistic order slippage, and strict exchange liability limits.
 
 ---
 
@@ -14,9 +14,9 @@ PHOENIX is an advanced reinforcement learning-based cricket betting intelligence
 graph TB
     subgraph "Layer 6: Dashboard & Monitoring"
         A[Next.js 14 Dashboard :3000]
-        B[Training & Performance Curves]
-        C[P&L & Rate Shift Charts]
-        D[Graduation & Advisor System]
+        B[Advisor Page: 12 Specialist Cards]
+        C[Training Page: Weekly Sync Controls]
+        D[Graduation & Shadow Validation]
     end
     
     subgraph "Layer 5: Execution Engine"
@@ -25,40 +25,40 @@ graph TB
         G[Advisor & Shadow Trader]
     end
     
-    subgraph "Layer 4: RL Learning Engine"
-        H[Gymnasium CricketBettingEnv]
-        I[PPO Policy Network]
-        J[Reward Function & Greening Up]
-        K[Autonomous Orchestrator]
+    subgraph "Layer 4: RL Learning Engine & Model Zoo"
+        H[Gymnasium CricketBettingEnv 50-Obs]
+        I[ModelZoo Registry & Dynamic Format Router]
+        J[12 Dedicated Specialist Models]
+        K[Autonomous Orchestrator & Weekly Sync]
     end
     
     subgraph "Layer 3: Feature Engine"
-        L[Feature Pipeline 50-Dim]
-        M[Online Normalizer]
+        L[Feature Pipeline 50-Dim Lean Expert Set]
+        M[Online Normalizer Welford z-score]
         N[Category & Momentum Extractors]
     end
     
     subgraph "Layer 2: Storage"
         O[TimescaleDB :5432<br/>odds_ticks, virtual_bets, match_status]
-        P[Redis :6379<br/>pub/sub + cache + orchestrator]
+        P[Redis :6379<br/>pub/sub + cache + model_zoo status]
     end
     
-    subgraph "Layer 1: Data Collection & Harmonization"
-        Q[LotusBook Live Scraper<br/>lotusbook.cc/cricket]
-        R[Cricsheet Ingestion Pipeline<br/>11k+ matches, 1k harmonized]
-        S[Match Result Collector]
+    subgraph "Layer 1: Data Collection & Ingestion"
+        Q[LotusBook Live Scraper<br/>lotusbook.cc/cricket CDP WebSockets]
+        R[Cricsheet Catalog: 19,494 Matches<br/>12 Format/League/Gender Corpora]
+        S[Weekly Cricsheet Synchronizer<br/>recently_added_7_json.zip]
     end
     
     A --> E
-    B --> H
-    C --> I
-    D --> K
+    B --> I
+    C --> K
+    D --> G
     E --> H
     F --> L
     G --> O
     H --> L
-    I --> M
-    J --> N
+    I --> J
+    J --> H
     K --> P
     L --> O
     M --> P
@@ -72,85 +72,57 @@ graph TB
 ## Layer 1: Data Collection & Ingestion
 
 ### 1. LotusBook Live Scraper
-
 Target: `https://lotusbook.cc/cricket`
 
 **Capabilities:**
-- Real-time CDP WebSocket interception for sub-second odds updates
+- Real-time Chrome DevTools Protocol (CDP) WebSocket interception for sub-second odds updates
 - Fallback DOM extraction every 3–5 seconds
 - Automated match discovery, in-play indicator detection, and score parsing
 - Anti-detection protections (viewport randomization, human-like interaction timing)
 
-**Data Points Captured:**
-
-| Field | Type | Description | Priority |
-|-------|------|-------------|----------|
-| `match_id` | string | Normalized match identifier (e.g. `lb_36255271`) | Critical |
-| `team_home` / `team_away` | string | Canonical team names | Critical |
-| `back_price_home` / `lay_price_home` | float | Decimal Back/Lay odds for Home | Critical |
-| `back_price_away` / `lay_price_away` | float | Decimal Back/Lay odds for Away | Critical |
-| `volume_home` / `volume_away` | float | Order book depth / matched volume | High |
-| `score_text` | string | Live score, wickets, overs (e.g. `142/3 (15.2)`) | High |
-| `is_live` | bool | Active in-play flag | Critical |
-| `timestamp` | datetime | UTC timestamp of observation | Critical |
-
 ### 2. Cricsheet Historical Harmonizer Pipeline
-
-To solve the cold-start problem and provide institutional-grade training data, PHOENIX integrates the official Cricsheet database:
-- **11,235 Raw Matches:** Ingested from official Cricsheet archives across T20s, ODIs, Tests, and IPL (`data/raw/`).
-- **Harmonizer (`scripts/cricsheet_harmonizer.py`):**
-  - Canonical format standardization into `T20`, `ODI`, and `Test`.
-  - Harmonizes team names across 50+ international and franchise variations.
+To solve the cold-start problem and provide institutional-grade training data, PHOENIX integrates the complete 23,193-match Cricsheet database:
+- **19,494 Qualifying Matches Extracted:** Partitioned across 12 specialist archives in `data/specialists/` (172 MB compressed, 3,030,613 ticks).
+- **Separated by Format, League & Gender:**
+  - `ipl` (1,218 matches), `bbl_men` (647 matches), `wbbl_women` (492 matches)
+  - `t20i_men` (3,527 matches), `t20i_women` (2,149 matches)
+  - `odi_men` (2,477 matches), `odi_women` (593 matches)
+  - `test_men` (756 matches), `t20_blast` (2,192 matches)
+  - `franchise_t20` (1,787 matches), `first_class` (896 matches), `list_a` (1,321 matches)
+- **Harmonizer (`scripts/prepare_specialist_datasets.py`):**
   - Generates realistic Betfair order book microstructure: ball-by-ball odds trajectory, realistic 0.8%–1.8% overrounds, and dynamic bid-ask spreads.
-- **Ingestion & Caching:**
-  - 1,000 international matches (190,254 ticks) ingested directly into TimescaleDB `odds_ticks` table.
-  - Compressed pre-baked training corpus stored in `data/harmonized_corpus.json.gz` (10 MB).
+  - Implements gender- and league-calibrated par score curves (Women T20 ~136 vs Men ~168 vs IPL ~188) and wicket sensitivity decays (1.35x decay in Women's cricket).
 
-### 3. Match Result Collector
-
-Collects verified final match outcomes for RL bet settlement:
-- Primary: Automated inference from scorecard innings completion in Cricsheet and scraper context.
-- Secondary: External cricket API integration.
-- Fallback: Manual UI submission via `/api/matches/{id}/result`.
-- **Closing Odds Capture:** Preserves final tick prices for Closing Line Value (CLV) calculation.
+### 3. Automated Weekly Cricsheet Synchronizer
+[`scripts/weekly_cricsheet_sync_and_retrain.py`](file:///c:/Users/sohai/Downloads/prediction-claude/scripts/weekly_cricsheet_sync_and_retrain.py) synchronizes the dataset every Monday:
+- Downloads `https://cricsheet.org/downloads/recently_added_7_json.zip`.
+- Deduplicates matches against canonical signatures `(frozenset([home, away]), date)`.
+- Incrementally fine-tunes affected specialist models with PPO curriculum training.
+- Re-evaluates holdout metrics and publishes sync records to Redis and `weekly_sync_status.json`.
 
 ---
 
 ## Layer 2: Storage Architecture
 
 ### TimescaleDB (`phoenix_betting`)
-
-Time-series optimized relational storage with automated hypertable partitioning:
-
-1. **`odds_ticks`** (Hypertable):
-   - Time-series odds ladder, spreads, volume, and score snapshots.
-   - Partitioned by 1-hour time chunks with compound index `(match_id, time DESC)`.
-   - Over 201,250 ticks stored.
-2. **`virtual_bets`**:
-   - Complete record of every executed virtual trade: `action`, `team`, `odds`, `stake`, `outcome`, `profit_loss`, `closing_odds`, `clv`, `placed_at`, `settled_at`.
-3. **`match_training_status`**:
-   - Two-phase approval and data quality gating: `scrape_status`, `training_status`, `quality_score`, `completeness`.
-4. **`match_results`**:
-   - Ground truth match outcomes (`winner`, `margin`, `result_type`) for settlement.
-5. **`training_metrics` & `graduation_snapshots`**:
-   - Episodic training curves (loss, entropy, P&L, Sharpe ratio, win rate).
+1. **`odds_ticks`** (Hypertable): Time-series odds ladder, spreads, volume, and score snapshots partitioned into 1-hour chunks.
+2. **`virtual_bets`**: Complete log of every trade: `action`, `team`, `odds`, `stake`, `outcome`, `profit_loss`, `closing_odds`, `clv`, `placed_at`, `settled_at`.
+3. **`match_training_status`**: Scrape and training status, data quality scores, and approval state.
+4. **`match_results`**: Verified ground truth match outcomes for settlement.
 
 ### Redis (`localhost:6379`)
-
-Low-latency message broker and shared in-memory state:
 - **Pub/Sub Channels:** `match_events`, `match_context`, `rl_actions`, `virtual_outcomes`, `training_progress`, `advisor_signals`.
 - **Key-Value Store:**
-  - `orchestrator:state`: Authoritative lifecycle state machine (Version 3 active).
-  - `orchestrator:stats`: Real-time accumulation and training statistics.
-  - `feature_cache:{match_id}`: Rolling window feature buffers.
-  - `advisor:signals`: Live trading recommendations.
-  - `shadow:performance` & `shadow:drift`: Shadow trading tracking post-graduation.
+  - `orchestrator:state`: Active lifecycle state machine.
+  - `agent:version`: Model version (`v3_specialist_zoo`), total portfolio P&L, and active specialists.
+  - `phoenix:model_zoo:status`: Real-time specialist metadata and holdout metrics.
+  - `advisor:signals`: Live trading recommendations post-graduation.
 
 ---
 
 ## Layer 3: Feature Engine (50-Dimensional Space)
 
-[`FeaturePipeline`](file:///c:/Users/sohai/Downloads/prediction-claude/features/pipeline.py) computes a 50-dimensional observation vector that captures everything a professional cricket exchange trader evaluates on screen:
+[`FeaturePipeline`](file:///c:/Users/sohai/Downloads/prediction-claude/features/pipeline.py) computes a 50-dimensional observation vector that captures everything an expert cricket exchange trader evaluates on screen:
 
 | Group | Dimensions | Features Included |
 |---|---|---|
@@ -167,68 +139,62 @@ Low-latency message broker and shared in-memory state:
 | **11. Match Momentum** | 2 | Score acceleration and wicket hazard in recent rolling window |
 | **Total** | **50** | **`OBSERVATION_SIZE = 50`** |
 
-- **Gap Protection:** If the interval between ticks exceeds 30 seconds (`GAP_THRESHOLD_SECONDS`), momentum accumulators are zeroed to prevent stale trend signals.
-- **Normalization:** Online Welford z-score normalizer (`OnlineNormalizer`) transforms inputs dynamically.
+- **Gap Protection:** If the interval between ticks exceeds 30 seconds (`GAP_THRESHOLD_SECONDS = 30.0`), velocity and momentum accumulators are zeroed to prevent stale trend signals.
+- **Online Normalization:** Online Welford z-score normalizer (`OnlineNormalizer`) adapts dynamically without lookahead bias.
 
 ---
 
-## Layer 4: RL Learning Engine & Two-Way Rate Trading
+## Layer 4: RL Learning Engine & Format Specialist Model Zoo
 
-### Environment Design (`CricketBettingEnv`)
+### Dynamic Match Router (`rl/model_zoo.py`)
+Routes live and historical matches to the appropriate specialist model based on:
+1. Gender detection (`female`, `women`, `w-t20`, `wbbl`, `wodi`)
+2. League identification (IPL franchise names, BBL teams, T20 Blast, First-Class, List A)
+3. Match format tier fallback (Test, ODI, T20I)
 
-The environment simulates an interactive, order-book-aware exchange trading desk:
-- **Observation Space:** `Box(-inf, inf, shape=(50,))`
-- **Action Space:** `Discrete(9)`
-  ```python
-  class BettingAction(IntEnum):
-      HOLD = 0           # Inaction / wait for rate drift
-      BACK_HOME_SM = 1   # Back Home, 2% bankroll ($2,000)
-      BACK_HOME_LG = 2   # Back Home, 4% bankroll ($4,000)
-      BACK_AWAY_SM = 3   # Back Away, 2% bankroll ($2,000)
-      BACK_AWAY_LG = 4   # Back Away, 4% bankroll ($4,000)
-      LAY_HOME_SM = 5    # Lay Home, 2% bankroll ($2,000)
-      LAY_HOME_LG = 6    # Lay Home, 4% bankroll ($4,000)
-      LAY_AWAY_SM = 7    # Lay Away, 2% bankroll ($2,000)
-      LAY_AWAY_LG = 8    # Lay Away, 4% bankroll ($4,000)
-  ```
+### Action Space & Two-Way Position Sizing
+The action space consists of 9 discrete decisions:
+```python
+class BettingAction(IntEnum):
+    HOLD = 0           # Inaction / wait for rate drift
+    BACK_HOME_SM = 1   # Back Home, Small stake (2% of $100k budget = $2,000)
+    BACK_HOME_LG = 2   # Back Home, Large stake (4% of $100k budget = $4,000)
+    BACK_AWAY_SM = 3   # Back Away, Small stake (2% of $100k budget = $2,000)
+    BACK_AWAY_LG = 4   # Back Away, Large stake (4% of $100k budget = $4,000)
+    LAY_HOME_SM = 5    # Lay Home, Small stake (2% of $100k budget = $2,000)
+    LAY_HOME_LG = 6    # Lay Home, Large stake (4% of $100k budget = $4,000)
+    LAY_AWAY_SM = 7    # Lay Away, Small stake (2% of $100k budget = $2,000)
+    LAY_AWAY_LG = 8    # Lay Away, Large stake (4% of $100k budget = $4,000)
+```
 
-### Active Two-Way Rate Trading (Bhav Shifting)
-
-Unlike static directional betting, real-world exchange profitability comes from rate fluctuations:
-1. **Target Volume:** The agent is tuned to execute **20 to 30 bets per match** (`MAX_BETS_PER_MATCH = 30`, `MAX_BETS_PER_HOUR = 30`).
-2. **Match Budget:** Total risk is managed under a hard budget of **$100,000 per match** (`PER_MATCH_BUDGET = 100_000`).
-3. **Greening Up & Arbitrage:** When odds move favorably, the agent takes the opposite side (e.g. Back at 3.34 $\rightarrow$ Lay at 1.72), converting market momentum into risk-free green profit across all outcomes.
-4. **Exchange Commission:** Real Betfair 2.0% commission is deducted from all gross winning payouts during settlement.
-
-### Reward Function Structure (`rl/reward.py`)
-
-| Component | Scale | Trigger | Purpose |
-|---|---|---|---|
-| **Hedge Bonus** | 15.0 | Exposure reduction & greening up | Dominant reward teaching the agent to lock profit |
-| **Mark-to-Market** | 1.0 | Every tick with active exposure | Rewards riding favorable odds swings |
-| **Settlement P&L** | 10.0 | Episode completion | Realized P&L after 2.0% exchange commission |
-| **CLV Bonus** | 2.0 | Positive Closing Line Value | Rewards beating final market efficiency |
-| **Patience Reward** | +0.01 | HOLD when spread is wide / no edge | Prevents churn in low-liquidity phases |
-| **Transaction Cost** | -0.02 | Every placed trade | Accounts for bid-ask spread crossing |
-| **Capital Safety** | -0.01 | Naked exposure > 3% | Discourages unhedged gambling |
-| **Overtrading Penalty**| -0.05 | Excess over 30 bets/hour | Prevents excessive tick-scalping churn |
-| **Drawdown Penalty** | -50.0 | Match drawdown > 10% | Quadratic penalty protecting bankroll |
+**Two-Way Trading Rules:**
+- **Per-Match Budget:** Hard budget of **$100,000** (`initial_bankroll = 100_000.0`).
+- **Target Volume:** 20 to 30 bets per match (`max_bets_per_episode = 25`).
+- **Greening Up & Arbitrage:** When odds move favorably, the agent lays the position to lock in guaranteed profit across both outcomes.
+- **Lay Liability Limit:** Never lay at odds $> 2.10$ to prevent outsized downside liability.
+- **Exchange Commission:** Real 2.0% commission is deducted from all gross winning payouts.
 
 ---
 
-## Benchmark Results (Holdout Test on 150 International Matches)
+## Executive Holdout Verification Tear-Sheet (Zero Lookahead)
 
-The two-way PPO model was evaluated on 150 completely unseen international matches (harmonized Cricsheet corpus):
+Evaluated across **900 unseen holdout matches** (75 per specialist) under active two-way rate trading:
 
-| Performance Metric | PHOENIX Active Two-Way PPO | Baseline Unconstrained | Naive Rate Scalper |
-|---|---|---|---|
-| **Total Net Profit** | **+$593,610.00** | -$96,440.00 | -$302,150.00 |
-| **Average Profit / Match**| **+$3,957.40** | -$642.93 | -$2,014.33 |
-| **Average Bets / Match** | **25.0 bets** | 412.3 bets *(churn)* | 48.2 bets |
-| **Sharpe Ratio** | **+1.355** | -0.420 | -0.890 |
-| **Profit Factor** | **1.31** | 0.94 | 0.72 |
-| **Match Win Rate** | **52.67%** | 44.00% | 38.67% |
-| **Production Model** | `models/best_model.zip` | — | — |
+| Specialist Model | Format & Gender | Matches | Win Rate | Total Net P&L | ROI | Sharpe | Bets/Match | Profit Factor |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **`ipl`** | Indian Premier League | 75 | 44.0% | **+$2,398,130.00** | +32.0% | 3.87 | 24.7 | 3.44 |
+| **`bbl_men`** | Big Bash League (Men) | 75 | 40.0% | **+$530,801.60** | +7.1% | 1.42 | 24.5 | 1.53 |
+| **`wbbl_women`** | Women's Big Bash League | 75 | 32.0% | **-$204,233.60** | -2.7% | -0.60 | 24.7 | 0.83 |
+| **`t20i_men`** | Men's T20 International | 75 | 40.0% | **+$477,322.80** | +6.4% | 1.06 | 24.7 | 1.45 |
+| **`t20i_women`** | Women's T20 International | 75 | 41.3% | **+$811,344.00** | +10.8% | 1.55 | 23.9 | 1.65 |
+| **`odi_men`** | Men's One-Day International | 75 | 33.3% | **+$1,718,811.20** | +22.9% | 2.65 | 24.2 | 2.51 |
+| **`odi_women`** | Women's One-Day International | 75 | 36.0% | **+$181,979.20** | +2.4% | 0.48 | 24.4 | 1.19 |
+| **`test_men`** | Men's Test Matches | 75 | 45.3% | **+$2,709,115.60** | +36.1% | 3.08 | 23.5 | 3.36 |
+| **`t20_blast`** | T20 Blast & Domestic T20 | 75 | 34.7% | **+$981,364.40** | +13.1% | 2.05 | 24.4 | 2.05 |
+| **`franchise_t20`** | Global Franchise T20 | 75 | 61.3% | **+$4,853,008.40** | +64.7% | 5.29 | 23.5 | 8.52 |
+| **`first_class`** | First-Class Multi-Day | 75 | 56.0% | **+$3,992,764.80** | +53.2% | 4.69 | 23.9 | 6.17 |
+| **`list_a`** | List A Domestic 50-Over | 75 | 41.3% | **+$1,255,035.20** | +16.7% | 2.43 | 23.8 | 2.12 |
+| **PORTFOLIO TOTAL** | **12 Specialists Combined** | **900** | **42.1%** | **+$19,705,443.60** | **+21.9%** | **2.32** | **24.2** | **2.91** |
 
 ---
 
@@ -242,6 +208,7 @@ The two-way PPO model was evaluated on 150 completely unseen international match
 ### 2. Multi-Tier Risk Manager
 - **Per-Match Budget:** $100,000 maximum commitment per match.
 - **Single Trade Cap:** Max 4% ($4,000) for large actions, 2% ($2,000) for small actions.
+- **Lay Liability Limit:** Never lay at odds $> 2.10$.
 - **Match Drawdown Limit:** Halts trading on a match if unrealized losses exceed 15%.
 - **Daily Circuit Breaker:** Stops trading if daily bankroll drawdown exceeds 10%.
 
@@ -260,7 +227,7 @@ The two-way PPO model was evaluated on 150 completely unseen international match
 | **Backend API** | 8001 | `uvicorn backend.main:app` | FastAPI REST gateway, WebSocket feeds, DB interface |
 | **Frontend UI** | 3000 | `npm run dev` (Next.js 14) | Real-time trading dashboard, charts, match controls |
 | **Scraper Manager** | Background | `python -m scraper.manager` | LotusBook scraping (`lotusbook.cc/cricket`), CDP WebSocket interceptor |
-| **RL Orchestrator** | Background | `python -m rl.orchestrator` | Autonomous lifecycle manager, training, graduation |
+| **RL Orchestrator** | Background | `python -m rl.orchestrator` | Autonomous lifecycle manager, weekly sync scheduler |
 | **TimescaleDB** | 5432 | PostgreSQL 15 + TimescaleDB | Persistent time-series & relational data |
 | **Redis** | 6379 | Redis 7+ | Real-time Pub/Sub broker & state cache |
 

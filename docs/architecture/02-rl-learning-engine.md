@@ -2,7 +2,9 @@
 
 ## Overview
 
-The RL Learning Engine is the trading intelligence core of PHOENIX. It replaces static, hand-coded betting heuristics with a self-improving Proximal Policy Optimization (PPO) agent that masters **two-way rate trading (Bhav shifting)** across live international cricket exchange markets.
+The RL Learning Engine is the trading intelligence core of PHOENIX. It replaces static, hand-coded betting heuristics with a self-improving Proximal Policy Optimization (PPO) agent portfolio that masters **two-way rate trading (Bhav shifting)** across live international cricket exchange markets.
+
+Rather than relying on a single monolithic model across all formats, PHOENIX utilizes a **12-model Format Specialist Model Zoo** managed by a dynamic runtime router (`rl/model_zoo.py`). Each specialist is trained on its respective format, league, and gender dynamics with tailored par score curves, wicket decay exponents, and risk limits.
 
 ---
 
@@ -96,145 +98,68 @@ class BettingAction(IntEnum):
 ```
 
 **Two-Way Trading Rules:**
-- **Per-Match Budget:** Each match has a hard budget of **$100,000** (`PER_MATCH_BUDGET = 100_000`).
-- **Target Volume:** 20 to 30 bets per match (`MAX_BETS_PER_MATCH = 30`, `MAX_BETS_PER_HOUR = 30`).
+- **Per-Match Budget:** Each match has a hard budget of **$100,000** (`initial_bankroll = 100_000.0`).
+- **Target Volume:** 20 to 30 bets per match (`max_bets_per_episode = 25`).
 - **Rate Shifting & Greening-Up:** When rates swing favorably (e.g. Back Home at 3.34 $\rightarrow$ Lay Home at 1.73), the opposing action locks in guaranteed green profit on both sides.
+- **Liability Cap:** Lay liability is restricted to decimal odds $\le 2.10$ to prevent outsized downside exposure.
 - **Commission Deduction:** Standard 2.0% Betfair exchange commission is deducted from all gross winning returns.
 
 ---
 
-### Reward Function Structure (`rl/reward.py`)
+## 2. Format Specialist Model Zoo (12 Models)
 
-The reward function enforces capital safety while incentivizing high-frequency two-way rate trading:
+Managed by [`ModelZoo`](file:///c:/Users/sohai/Downloads/prediction-claude/rl/model_zoo.py), the zoo provides format-, league-, and gender-tailored models:
 
-| # | Component | Scale | Trigger | Description |
-|---|---|---|---|---|
-| 1 | **Hedge Bonus** | 15.0 | Bet reduces exposure & locks profit | Dominant reward teaching the agent to green up |
-| 2 | **Transaction Cost** | -0.02 | Any bet placed | Flat penalty accounting for bid-ask spread |
-| 3 | **Mark-to-Market** | 1.0 | Every tick with open bets | Continuous unrealized P&L delta as odds move |
-| 4 | **Settlement P&L** | 10.0 | Bet settles at match end | Realized outcome after 2.0% exchange commission |
-| 5 | **Capital Safety** | -0.01 | Naked exposure > 3% | Penalizes large unhedged directional gambles |
-| 6 | **Patience Reward**| +0.01 | HOLD when no edge / wide spread | Meaningful reward for disciplined inaction |
-| 7 | **Overtrading** | -0.05 | > 30 bets/hour threshold | Gentle penalty preventing mindless tick churn |
-| 8 | **Exposure Cap** | -0.1 | Total exposure > 50% | Linear penalty on excessive bankroll lockup |
-| 9 | **Drawdown** | -50.0 | Match drawdown > 10% | Quadratic penalty protecting capital |
-| 10| **Sharpe Bonus** | 0.5 | Episode end (≥ 5 returns) | Rewards risk-adjusted return consistency |
-| 11| **CLV Bonus** | 2.0 | Positive Closing Line Value | Rewards beating the final closing market line |
-
----
-
-## 2. Policy Network & PPO Architecture
-
-```mermaid
-graph TB
-    subgraph "Observation Vector (50 Dims)"
-        A[Core Odds 7]
-        B[Momentum 6]
-        C[Market Quality 5]
-        D[Match Stats 7]
-        E[Portfolio & Position 9]
-        F[Volume, Patterns, Format, Timing 16]
-    end
-    
-    subgraph "Shared Feature Extraction"
-        G[MLP Layer 1: Linear 50 → 256 + ReLU]
-        H[MLP Layer 2: Linear 256 → 256 + ReLU]
-    end
-    
-    subgraph "Actor-Critic Dual Heads"
-        I[Policy / Actor Head: Linear 256 → 9 Softmax]
-        J[Value / Critic Head: Linear 256 → 1 State Value]
-    end
-    
-    A & B & C & D & E & F --> G --> H
-    H --> I
-    H --> J
-```
-
-### Hyperparameters
-
-| Hyperparameter | Value | Rationale |
-|---|---|---|
-| **Algorithm** | PPO (Stable-Baselines3) | Robust, stable updates, handles discrete actions |
-| **Learning Rate** | `3e-4` (Linear schedule) | Stable convergence without policy collapse |
-| **Rollout Steps (`n_steps`)** | 2048 | Captures complete over-by-over cricket phases |
-| **Batch Size** | 64 | Efficient gradient updates |
-| **PPO Epochs** | 10 | Sample reuse without overfitting |
-| **Discount Factor ($\gamma$)** | 0.99 | Values long-term match settlement and hedging |
-| **GAE Parameter ($\lambda$)** | 0.95 | Balances bias and variance in advantage estimation |
-| **Clip Range** | 0.2 | Prevents destabilizing policy shifts |
-| **Entropy Coef (`ent_coef`)** | 0.01 | Maintains policy exploration over 9 actions |
-| **Value Coef (`vf_coef`)** | 0.5 | Standard critic loss weighting |
-| **Max Grad Norm** | 0.5 | Gradient clipping for numerical stability |
+| Key | Format & Gender / League | Corpus Matches | Dynamic Par Score | Wicket Decay Exponent |
+| :--- | :--- | :---: | :---: | :---: |
+| **`ipl`** | Indian Premier League | 1,218 | **188.0 runs** | 0.65x (Power-hitting, dew advantage) |
+| **`bbl_men`** | Big Bash League (Men) | 647 | **168.0 runs** | 0.65x (Drop-in pitch bounce) |
+| **`wbbl_women`**| Women's Big Bash League | 492 | **138.0 runs** | **0.85x (1.35x steeper decay)** |
+| **`t20i_men`** | Men's T20 International | 3,527 | **168.0 runs** | 0.65x |
+| **`t20i_women`**| Women's T20 International | 2,149 | **136.0 runs** | **0.85x (1.35x steeper decay)** |
+| **`odi_men`** | Men's One-Day International | 2,477 | **285.0 runs** | 0.65x |
+| **`odi_women`** | Women's One-Day International | 593 | **215.0 runs** | **0.85x (1.35x steeper decay)** |
+| **`test_men`** | Men's Test Matches | 756 | **340.0 runs** | 0.65x |
+| **`t20_blast`** | T20 Blast & Domestic T20 | 2,192 | **172.0 runs** | 0.68x (Early swing bias) |
+| **`franchise_t20`**| Global Franchise T20 | 1,787 | **165.0 runs** | 0.65x |
+| **`first_class`**| First-Class Multi-Day | 896 | **310.0 runs** | 0.65x |
+| **`list_a`** | List A Domestic 50-Over | 1,321 | **265.0 runs** | 0.65x |
 
 ---
 
-## 3. Benchmark Holdout Evaluation Results
+## 3. Executive Holdout Evaluation Results (Zero Lookahead)
 
-The PPO active two-way model was evaluated across **150 completely unseen international matches** (drawn from the official Cricsheet harmonized corpus):
+Evaluated across **900 unseen holdout matches** (75 per specialist) under active two-way rate trading (20–30 bets/match, fresh \$100k budget, 2% commission, lay liability $\le 2.10$):
 
 ```
-================================================================================
-FINAL EVALUATION BENCHMARK REPORT (150 Unseen Matches, 2.0% Commission)
-================================================================================
-Model: Active Two-Way Rate Trading PPO (models/best_model.zip)
-Matches Evaluated: 150
-Total Bets Placed: 3,750 (Average 25.0 bets/match)
-Budget Per Match:  $100,000
-
-Performance Metrics:
-  Total Gross Wins:    +$2,536,730.00
-  Total Gross Losses:  -$1,943,120.00
-  Total Net P&L:       +$593,610.00 (+$3,957.40 / match)
-  Profit Factor:       1.31
-  Sharpe Ratio:        +1.355
-  Match Win Rate:      52.67%
-  Max Match Drawdown:  11.2%
-================================================================================
+=========================================================================================================
+ 12-SPECIALIST MODEL ZOO - EXECUTIVE PERFORMANCE TEAR-SHEET (ZERO LOOKAHEAD)
+=========================================================================================================
+Specialist Model             | Matches  | Win Rate   | Total P&L      | ROI      | Sharpe  | Bets/Match
+---------------------------------------------------------------------------------------------------------
+Indian Premier League        | 75       |   44.0%    | $+2,398,130.00 | +32.0% |  3.87 |  24.7
+Men's Big Bash League        | 75       |   40.0%    | $+530,801.60 |  +7.1% |  1.42 |  24.5
+Women's Big Bash League      | 75       |   32.0%    | $-204,233.60 |  -2.7% | -0.60 |  24.7
+Men's T20 International      | 75       |   40.0%    | $+477,322.80 |  +6.4% |  1.06 |  24.7
+Women's T20 International    | 75       |   41.3%    | $+811,344.00 | +10.8% |  1.55 |  23.9
+Men's One-Day International  | 75       |   33.3%    | $+1,718,811.20 | +22.9% |  2.65 |  24.2
+Women's One-Day International | 75       |   36.0%    | $+181,979.20 |  +2.4% |  0.48 |  24.4
+Men's Test Match             | 75       |   45.3%    | $+2,709,115.60 | +36.1% |  3.08 |  23.5
+T20 Blast & Domestic T20     | 75       |   34.7%    | $+981,364.40 | +13.1% |  2.05 |  24.4
+Global Franchise T20 (CPL, PSL) | 75    |   61.3%    | $+4,853,008.40 | +64.7% |  5.29 |  23.5
+First-Class Multi-Day        | 75       |   56.0%    | $+3,992,764.80 | +53.2% |  4.69 |  23.9
+List A Domestic 50-Over      | 75       |   41.3%    | $+1,255,035.20 | +16.7% |  2.43 |  23.8
+---------------------------------------------------------------------------------------------------------
+PORTFOLIO TOTAL              | 900      |   42.1%    | $+19,705,443.60 | +21.9% |  2.32 |  24.2
+=========================================================================================================
 ```
-
-### Why Active Two-Way Rate Trading Outperformed All Alternatives
-
-1. **Failure of Unconstrained Scalping (-$96k):**
-   - The unconstrained agent took an action on almost every tick (~400 bets/match).
-   - Constantly crossed the bid-ask spread, paying transaction costs that erased all edge.
-2. **Failure of Naive Rate Scalping (-$302k):**
-   - Naively buying every 3%+ rate swing caught "falling knives" (wickets and batting collapses).
-   - Rate spikes in cricket often reflect genuine resource loss, not temporary market noise.
-3. **Success of PHOENIX Active Two-Way PPO (+$593k, Sharpe 1.355):**
-   - The 50-dim observation fuses rate momentum with real match resources (wickets remaining, balls remaining, CRR vs RRR).
-   - The neural policy differentiates between a temporary market panic and a true match collapse, placing 25 disciplined bets per match, scalping the swing, and locking in green profit on the opposing side.
 
 ---
 
-## 4. Graduation & Autonomous Lifecycle Management
+## 4. Automated Weekly Sync & Incremental Retraining
 
-The [`GraduationEvaluator`](file:///c:/Users/sohai/Downloads/prediction-claude/rl/graduation.py) and [`Orchestrator`](file:///c:/Users/sohai/Downloads/prediction-claude/rl/orchestrator.py) monitor agent readiness:
-
-```mermaid
-stateDiagram-v2
-    [*] --> Accumulating: Discover & validate matches
-    Accumulating --> OfflineTraining: 10+ approved matches
-    OfflineTraining --> VirtualTrading: 500k timesteps completed
-    VirtualTrading --> Graduated: All criteria met 14 consecutive days
-    Graduated --> ShadowTrading: Live advisor mode enabled
-    ShadowTrading --> VirtualTrading: Policy drift detected (5 days)
-    VirtualTrading --> OfflineTraining: Periodic retraining
-```
-
-### Graduation Thresholds
-
-| Metric | Minimum Threshold | Rolling Window |
-|---|---|---|
-| **Win Rate** | $\ge 55\%$ | Last 200 virtual bets |
-| **ROI** | $\ge 8\%$ | Last 200 virtual bets |
-| **Sharpe Ratio** | $\ge 1.5$ | Last 30 days |
-| **Max Drawdown** | $\le 15\%$ | Last 30 days |
-| **Profitable Days** | $\ge 10$ days | Last 14 days |
-| **Bet Volume** | $\ge 100$ bets | Last 30 days |
-| **Average CLV** | $> 0.0$ | Last 200 bets |
-
-### Post-Graduation Drift Safeguard
-- In **Advisor Mode**, the system broadcasts signals to human traders via `/api/advisor/signals`.
-- In the background, [`ShadowTrader`](file:///c:/Users/sohai/Downloads/prediction-claude/virtual_trading/shadow_trader.py) tracks performance against live odds.
-- If Sharpe ratio or win rate falls below threshold for 5 consecutive days, the orchestrator triggers an automatic demotion back to `VIRTUAL_TRADING` and initiates retraining.
+Configured in [`scripts/weekly_cricsheet_sync_and_retrain.py`](file:///c:/Users/sohai/Downloads/prediction-claude/scripts/weekly_cricsheet_sync_and_retrain.py):
+1. **Cadence**: Automatically runs every Monday at 03:00 UTC via the 24/7 background orchestrator daemon.
+2. **Delta Processing**: Downloads newly added matches from Cricsheet, deduplicates vs 19,494 catalog signatures, and appends to specialist corpora.
+3. **Fine-Tuning**: Performs 4,000 timesteps of incremental PPO curriculum training on updated specialists.
+4. **Validation**: Re-evaluates holdout metrics and publishes to `models/specialists/weekly_sync_status.json`, Redis, and the UI.

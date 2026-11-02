@@ -3,8 +3,9 @@
 ## Overview
 
 The data pipeline is the foundational backbone of PHOENIX. High-performance reinforcement learning demands accurate, low-latency, and high-integrity data. The PHOENIX pipeline seamlessly bridges two data domains:
-1. **Live In-Play Stream:** Real-time CDP WebSocket interception and DOM scraping from LotusBook (`https://lotusbook.cc/cricket`).
-2. **Institutional Historical Corpus:** Automated ingestion, harmonization, and microstructure simulation of 11,000+ official international matches from Cricsheet.
+1. **Live In-Play Stream:** Real-time Chrome DevTools Protocol (CDP) WebSocket interception and DOM scraping from LotusBook (`https://lotusbook.cc/cricket`).
+2. **Institutional Historical Corpus:** Automated ingestion, harmonization, and microstructure simulation of 19,494 official matches partitioned into 12 dedicated format, league, and gender specialist datasets from Cricsheet.
+3. **Automated Weekly Delta Synchronizer:** Autonomous weekly delta download (`recently_added_7_json.zip`), signature deduplication, and incremental specialist fine-tuning.
 
 ---
 
@@ -13,41 +14,42 @@ The data pipeline is the foundational backbone of PHOENIX. High-performance rein
 ```mermaid
 flowchart TD
     subgraph "Data Sources"
-        A[LotusBook Live<br/>lotusbook.cc/cricket]
-        B[Official Cricsheet<br/>11,235 matches in data/raw/]
+        A[LotusBook Live In-Play<br/>lotusbook.cc/cricket CDP WebSockets]
+        B[Official Cricsheet Catalog<br/>23,193 raw match files]
+        C[Weekly Cricsheet Updates<br/>recently_added_7_json.zip]
     end
 
-    subgraph "Stage 1: Collection & Harmonization"
-        C[ScraperManager & Worker<br/>Playwright + CDP WebSockets]
-        D[Cricsheet Harmonizer<br/>scripts/cricsheet_harmonizer.py]
+    subgraph "Stage 1: Collection & Partitioning"
+        D[ScraperManager & Worker<br/>Playwright + CDP WebSockets]
+        E[Specialist Preparer & Router<br/>scripts/prepare_specialist_datasets.py]
+        F[Weekly Synchronizer<br/>scripts/weekly_cricsheet_sync_and_retrain.py]
     end
 
-    subgraph "Stage 2: Validation & Gating"
-        E[EpisodeQualityGate<br/>quality_score >= 0.70]
-        F[TickValidator & Gap Detection<br/>gap > 30s resets momentum]
+    subgraph "Stage 2: Specialist Corpora (data/specialists/)"
+        G[Men Formats & Leagues<br/>ipl, bbl_men, t20i_men, odi_men, test_men, t20_blast, first_class, list_a, franchise_t20]
+        H[Women Formats & Leagues<br/>wbbl_women, t20i_women, odi_women]
     end
 
     subgraph "Stage 3: Persistence (TimescaleDB & Redis)"
-        G[(TimescaleDB :5432<br/>odds_ticks, match_context, match_results)]
-        H[(Redis :6379<br/>match_events, feature_cache)]
+        I[(TimescaleDB :5432<br/>odds_ticks, match_context, virtual_bets)]
+        J[(Redis :6379<br/>match_events, feature_cache, model_zoo)]
     end
 
     subgraph "Stage 4: Feature Engineering"
-        I[FeaturePipeline<br/>50-Dim Observation Vector]
-        J[OnlineNormalizer<br/>Welford z-score]
+        K[FeaturePipeline<br/>50-Dim Lean Expert Set]
+        L[OnlineNormalizer<br/>Welford z-score]
     end
 
-    subgraph "Stage 5: RL Trading & Execution"
-        K[CricketBettingEnv<br/>Gymnasium Environment]
-        L[VirtualBetEngine<br/>settlement, commission, CLV]
+    subgraph "Stage 5: Format Specialist Model Zoo"
+        M[ModelZoo & Dynamic Router<br/>rl/model_zoo.py]
+        N[12 Specialized RL Policies<br/>models/specialists/<key>_v1.zip]
     end
 
-    A --> C
-    B --> D
-    C --> F --> H
-    D --> E --> G
-    F --> G
-    G & H --> I --> J --> K --> L
+    A --> D --> I & J
+    B --> E --> G & H
+    C --> F --> G & H
+    G & H --> K --> L --> M --> N
+    I & J --> K
 ```
 
 ---
@@ -64,73 +66,53 @@ flowchart TD
   - Current Run Rate (CRR) and Required Run Rate (RRR)
   - Current innings and active batting/bowling sides
 
-### Normalized Event Schema (`shared/schemas.py`)
-
-```python
-class OddsEvent(BaseModel):
-    match_id: str               # e.g. "lb_36255271"
-    timestamp: datetime         # UTC observation timestamp
-    team_home: str              # Normalized home team
-    team_away: str              # Normalized away team
-    back_home: Optional[float]  # Best available Back price (e.g. 1.85)
-    lay_home: Optional[float]   # Best available Lay price (e.g. 1.87)
-    back_away: Optional[float]  # Best available Back price (e.g. 2.12)
-    lay_away: Optional[float]   # Best available Lay price (e.g. 2.16)
-    is_live: bool = False       # Active in-play status
-    competition: str = ""       # Tournament / series name
-    score_text: str = ""        # Raw score text from site
-    volume_back_home: Optional[float] = None
-    volume_lay_home: Optional[float] = None
-```
-
 ---
 
-## 2. Institutional Historical Ingestion & Harmonization (Cricsheet)
+## 2. Institutional Historical Ingestion & Specialist Partitioning
 
-To overcome cold-start limits and provide rich training data across all match formats, PHOENIX includes an automated Cricsheet ingestion engine:
+To overcome cold-start limits and provide rich training data across all match formats, PHOENIX partitions the Cricsheet database into **12 distinct specialist archives** in `data/specialists/`:
 
-### Dataset Scale
-- **11,235 Raw Matches:** Downloaded into `data/raw/`:
-  - `data/raw/t20s/`: 3,500+ international T20 matches
-  - `data/raw/odis/`: 2,400+ One Day Internationals
-  - `data/raw/tests/`: 900+ official Test matches
-  - `data/raw/ipl/`: 1,100+ Indian Premier League fixtures
+| Specialist Key | Format & Gender / League | Matches | Ticks | Corpus File |
+| :--- | :--- | :---: | :---: | :--- |
+| **`ipl`** | Indian Premier League (Men) | **1,218** | 138,011 | `data/specialists/corpus_ipl.json.gz` |
+| **`bbl_men`** | Big Bash League (Men) | **647** | 70,043 | `data/specialists/corpus_bbl_men.json.gz` |
+| **`wbbl_women`** | Women's Big Bash League | **492** | 51,754 | `data/specialists/corpus_wbbl_women.json.gz` |
+| **`t20i_men`** | Men's T20 International | **3,527** | 366,233 | `data/specialists/corpus_t20i_men.json.gz` |
+| **`t20i_women`** | Women's T20 International | **2,149** | 202,672 | `data/specialists/corpus_t20i_women.json.gz` |
+| **`odi_men`** | Men's One-Day International | **2,477** | 545,027 | `data/specialists/corpus_odi_men.json.gz` |
+| **`odi_women`** | Women's One-Day International | **593** | 125,984 | `data/specialists/corpus_odi_women.json.gz` |
+| **`test_men`** | Men's Test Matches | **756** | 335,813 | `data/specialists/corpus_test_men.json.gz` |
+| **`t20_blast`** | T20 Blast & Syed Mushtaq Ali | **2,192** | 240,331 | `data/specialists/corpus_t20_blast.json.gz` |
+| **`franchise_t20`** | Global Franchise T20 (CPL, PSL, BPL) | **1,787** | 267,087 | `data/specialists/corpus_franchise_t20.json.gz` |
+| **`first_class`** | First-Class Multi-Day (County Champ) | **896** | 351,381 | `data/specialists/corpus_first_class.json.gz` |
+| **`list_a`** | List A Domestic 50-Over | **1,321** | 287,277 | `data/specialists/corpus_list_a.json.gz` |
+| **TOTAL** | **All 12 Specialist Corpora** | **19,494** | **3,030,613** | **172 MB compressed** |
 
-### Harmonization Engine (`scripts/cricsheet_harmonizer.py`)
-
-The harmonizer cleans and transforms raw ball-by-ball JSON into exchange-standard time-series:
-1. **Canonical Format Standardization:**
-   - Classifies matches into exact standards: `T20`, `ODI`, and `Test`.
-2. **Team Name Harmonization:**
-   - Normalizes 50+ variations and historical naming conventions into standard international labels (e.g. "Royal Challengers Bangalore" $\rightarrow$ "Royal Challengers Bengaluru", "West Indies", "England", "India").
-3. **Betfair Order Book Microstructure Simulation:**
+### Microstructure Simulation Engine
+1. **Betfair Order Book Microstructure:**
    - Reconstructs ball-by-ball odds movements based on real match resources (wickets fallen, run rate pressure, required rate).
    - Generates realistic exchange bid-ask spreads and overrounds ($0.8\% - 1.8\%$).
-   - Adds realistic market maker volatility, latency delays, and boundary reaction swings.
-4. **Ingestion & Caching:**
-   - Over **1,000 matches (190,254 ticks)** ingested into TimescaleDB `odds_ticks` table.
-   - Pre-baked, compressed training cache saved to `data/harmonized_corpus.json.gz` (10.02 MB) for instant offline replay.
+   - Calibrated to gender rate strategies: Women's T20 par ~136 rpo (1.35x steeper decay on wickets) vs Men's ~168 rpo vs IPL ~188 rpo.
+2. **Strict Causal Zero-Lookahead Guarantee:**
+   - Evaluates state strictly from forward features $(innings, overs, score, wickets, target)$ at time $t$.
+   - Never accesses match winner or `_meta` outcomes during trading evaluation.
 
 ---
 
-## 3. Data Validation & Quality Gating
+## 3. Automated Weekly Synchronization Pipeline
 
-In financial reinforcement learning, noisy or missing data leads to policy destabilization. PHOENIX implements a two-stage quality gate:
+Implemented in [`scripts/weekly_cricsheet_sync_and_retrain.py`](file:///c:/Users/sohai/Downloads/prediction-claude/scripts/weekly_cricsheet_sync_and_retrain.py):
 
-### 1. Two-Phase Match Approval (`match_training_status`)
-- **Phase 1: Scrape Approval (`scrape_status`):**
-  - Newly discovered matches start as `discovered`.
-  - Filtered by [`MatchClassifier`](file:///c:/Users/sohai/Downloads/prediction-claude/scraper/parsers/category_classifier.py) to prioritize trustworthy international and top-tier franchise cricket.
-- **Phase 2: Training Approval (`training_status`):**
-  - Requires automated validation before a match can enter the RL training pipeline.
-
-### 2. Episode Quality Gate (`data/preprocessing/episode_quality.py`)
-Matches are scored on a strict scale from $0.0$ to $1.0$:
-- **Completeness:** Verifies uninterrupted over-by-over progression.
-- **Tick Density:** Minimum 50 ticks per match.
-- **Odds Sanity:** Decimal odds must lie strictly within $[1.01, 100.0]$. Back odds $\le$ Lay odds.
-- **Score Consistency:** Runs and wickets must monotonically increase per innings.
-- Matches with `quality_score < 0.70` are rejected automatically.
+1. **Scheduled Automated Execution**:
+   - The 24/7 background orchestrator daemon (`rl/orchestrator.py`) runs the synchronizer every Monday at 03:00 UTC.
+2. **Delta Download**:
+   - Fetches `https://cricsheet.org/downloads/recently_added_7_json.zip`.
+3. **Deduplication Engine**:
+   - Computes canonical signature `get_match_signature(team_home, team_away, date)` for incoming matches against existing signatures.
+   - Prevents duplicate ingestion.
+4. **Incremental Fine-Tuning**:
+   - For specialists that received new matches, runs 4,000 steps of incremental PPO curriculum learning.
+   - Evaluates holdout test performance and updates `models/specialists/weekly_sync_status.json` and Redis.
 
 ---
 
@@ -161,71 +143,5 @@ The [`FeaturePipeline`](file:///c:/Users/sohai/Downloads/prediction-claude/featu
 ```
 
 ### Gap Detection & Momentum Reset
-- If the time delta between consecutive ticks exceeds 30.0 seconds (`GAP_THRESHOLD_SECONDS`), the momentum accumulators are zeroed out.
-- This prevents phantom price spikes when a match resumes after a rain delay or innings break.
-
----
-
-## 5. Storage & TimescaleDB Hypertables
-
-### Database: `phoenix_betting` (Port 5432)
-
-1. **`odds_ticks` (Hypertable):**
-   ```sql
-   CREATE TABLE odds_ticks (
-       time TIMESTAMPTZ NOT NULL,
-       match_id VARCHAR(64) NOT NULL,
-       back_home FLOAT, lay_home FLOAT,
-       back_away FLOAT, lay_away FLOAT,
-       volume_home FLOAT, volume_away FLOAT,
-       score_text VARCHAR(64),
-       is_live BOOLEAN
-   );
-   SELECT create_hypertable('odds_ticks', 'time', chunk_time_interval => INTERVAL '1 hour');
-   CREATE INDEX idx_odds_ticks_match_time ON odds_ticks (match_id, time DESC);
-   ```
-
-2. **`virtual_bets`:**
-   ```sql
-   CREATE TABLE virtual_bets (
-       id BIGSERIAL PRIMARY KEY,
-       placed_at TIMESTAMPTZ NOT NULL,
-       match_id VARCHAR(64) NOT NULL,
-       action VARCHAR(32) NOT NULL,
-       team VARCHAR(64) NOT NULL,
-       odds FLOAT NOT NULL,
-       stake FLOAT NOT NULL,
-       outcome VARCHAR(16) DEFAULT 'PENDING',
-       profit_loss FLOAT DEFAULT 0.0,
-       closing_odds FLOAT,
-       clv FLOAT,
-       settled_at TIMESTAMPTZ
-   );
-   ```
-
-3. **`match_training_status`:**
-   ```sql
-   CREATE TABLE match_training_status (
-       match_id VARCHAR(64) PRIMARY KEY,
-       team_home VARCHAR(64),
-       team_away VARCHAR(64),
-       format VARCHAR(16),
-       scrape_status VARCHAR(32) DEFAULT 'discovered',
-       training_status VARCHAR(32) DEFAULT 'pending',
-       quality_score FLOAT DEFAULT 0.0,
-       total_ticks INT DEFAULT 0
-   );
-   ```
-
----
-
-## 6. Closing Odds & CLV Calculation
-
-Closing Line Value (CLV) is the gold standard for measuring genuine edge against financial markets.
-
-$$\text{CLV} = \frac{\text{Odds}_{\text{executed}}}{\text{Odds}_{\text{closing}}} - 1.0$$
-
-- When a match concludes, the result collector locks in the final tick's odds as `closing_odds`.
-- If an agent backed England at $3.34$ and the closing line at the final ball was $1.73$:
-  $$\text{CLV} = \frac{3.34}{1.73} - 1.0 = +93.06\%$$
-- Consistently positive CLV proves that the agent is beating the market spread and securing genuine arbitrage value.
+- If the time delta between consecutive ticks exceeds 30.0 seconds (`GAP_THRESHOLD_SECONDS`), momentum accumulators are zeroed out.
+- Prevents phantom price spikes when a match resumes after a rain delay or innings break.

@@ -2,26 +2,27 @@
 
 ## Overview
 
-This document tracks potential strategic gaps, structural risks, and implementation milestones in the PHOENIX reinforcement learning cricket exchange trading system. It compares initial design assumptions against our current production architecture and benchmark findings.
+This document tracks strategic gaps, structural risks, and implementation milestones in the PHOENIX reinforcement learning cricket exchange trading system. It compares initial design assumptions against our current production architecture and benchmark findings.
 
 ---
 
-## 1. Status of Previously Identified Gaps
+## 1. Status of Strategy Gaps
 
 ```mermaid
 graph LR
     subgraph "Resolved Critical Gaps ✅"
-        A[Cold Start Problem<br/>11,235 Cricsheet Matches Ingested]
-        B[Single-Bet Directional Inefficiency<br/>20-30 Two-Way Rate Trading Implemented]
-        C[Settlement Mode Realism<br/>Real Match Outcomes + 2% Commission]
-        D[LotusBook Domain Migration<br/>lotusbook.cc/cricket Live]
-        E[Feature Observation Alignment<br/>50-Dim Normalized State Space]
+        A[Cold Start Problem<br/>19,494 Matches / 3.03M Ticks Ingested]
+        B[Single-Model Monolith<br/>12 Format, League & Gender Specialists]
+        C[Gender Rate Strategy Disparity<br/>Calibrated Par Scores & Wicket Decay]
+        D[Zero-Lookahead Causality<br/>Strict Time-Series Forward Evaluation]
+        E[Two-Way Rate Trading<br/>20-30 Bets/Match, $100k Budget, Greening Up]
+        F[Automated Weekly Sync<br/>Weekly Cricsheet Delta & PPO Retraining]
     end
 
     subgraph "Ongoing Operational Safeguards 🛡️"
-        F[Live Latency Monitoring]
-        G[Multi-Account Rotation Protocol]
-        H[Shadow Drift Demotion]
+        G[Live Latency Monitoring]
+        H[Anti-Detection Stake Randomization]
+        I[Shadow Drift Demotion 5-Day]
     end
 ```
 
@@ -29,38 +30,38 @@ graph LR
 
 ## 2. Detailed Gap Resolution Analysis
 
-### Gap 2.1: Cold Start & Historical Data Scarcity
-- **Original Gap:** The RL agent required tens of thousands of realistic odds transitions to learn profitable policies, but live scraping could only accumulate 2–3 matches per day.
-- **Resolution (RESOLVED):**
-  - Downloaded 11,235 official match files from Cricsheet (`t20s`, `odis`, `tests`, `ipl`).
-  - Implemented `scripts/cricsheet_harmonizer.py` to standardize formats into `T20`, `ODI`, and `Test`, harmonize 50+ team name variations, and synthesize institutional-grade Betfair order book microstructure.
-  - Ingested 1,000 matches (190,254 ticks) into TimescaleDB and created a 10 MB compressed offline replay corpus (`data/harmonized_corpus.json.gz`).
+### Gap 2.1: Cold Start & Historical Data Scarcity (RESOLVED)
+- **Original Gap:** The RL agent required hundreds of thousands of realistic odds transitions to learn profitable policies, but live scraping could only accumulate 2–3 matches per day.
+- **Resolution:**
+  - Ingested and partitioned 19,494 qualifying matches from Cricsheet across 12 specialist archives in `data/specialists/` (172 MB compressed, 3,030,613 ticks).
+  - Every single specialist format exceeds the $\ge 300$ match requirement (from 492 to 3,527 matches per specialist).
 
-### Gap 2.2: Static Directional Betting vs. Real Exchange Trading
-- **Original Gap:** Earlier models placed only 1–2 static bets per match. In exchange trading, static directional betting has high variance and fails to exploit sharp in-play rate fluctuations (Bhav swings).
-- **Resolution (RESOLVED):**
-  - Upgraded to **Active Two-Way Rate Trading**:
-    - Agent executes **20 to 30 bets per match** (`MAX_BETS_PER_MATCH = 30`).
-    - Operates under a **$100,000 per-match bankroll** (`PER_MATCH_BUDGET = 100_000`).
-    - Stake sizing: 2% ($2,000) for small actions, 4% ($4,000) for large actions.
-    - Rate Shifting: Dynamically shifts between Back $\leftrightarrow$ Lay. When rates fluctuate favorably (e.g. Back at 3.34 $\rightarrow$ Lay at 1.73), it greens up and locks in guaranteed net profits across all outcomes.
-  - Evaluated on 150 holdout international matches: **+$593,610.00 net profit** (+**$3,957.40 / match**) with a **1.355 Sharpe ratio**.
+### Gap 2.2: Single-Model Format Monolith (RESOLVED)
+- **Original Gap:** A single monolithic model struggled to generalize across fundamentally different formats (e.g. 20-over death hitting vs 50-over middle-order pacing vs 5-day Test session decay).
+- **Resolution:**
+  - Implemented the **Format Specialist Model Zoo** (`rl/model_zoo.py`) with 12 dedicated specialist models:
+    `ipl`, `bbl_men`, `wbbl_women`, `t20i_men`, `t20i_women`, `odi_men`, `odi_women`, `test_men`, `t20_blast`, `franchise_t20`, `first_class`, `list_a`.
+  - Built a dynamic match router utilizing fuzzy matching, tournament keywords, franchise rosters, and gender signals.
 
-### Gap 2.3: Reward Signal Sparsity & Churn Bleed
-- **Original Gap:** Delayed terminal match settlement (hours apart) caused weak credit assignment. Conversely, unconstrained agents churned on every tick (~400 bets/match), losing $96k into bid-ask spreads.
-- **Resolution (RESOLVED):**
-  - Multi-component reward function:
-    - **Hedge Bonus (+15.0):** Heavily rewards risk reduction and green profit locking.
-    - **Mark-to-Market (+1.0):** Gives continuous feedback on favorable price trends.
-    - **Transaction Cost (-0.02) & Overtrading Penalty (-0.05):** Discourages excessive churn beyond 30 bets/hour.
-    - **Realistic Commission:** 2.0% Betfair exchange commission deducted from all gross winnings.
+### Gap 2.3: Gender Rate Strategy Disparity (RESOLVED)
+- **Original Gap:** Men's and Women's cricket have fundamentally different run rates and wicket decay mechanics. Treating them identically created inaccurate rate projections.
+- **Resolution:**
+  - Calibrated par scores: Women's T20 ~136.0 rpo (vs Men's ~168.0 and IPL ~188.0); Women's ODI ~215.0 rpo (vs Men's ~285.0).
+  - Implemented steeper wicket sensitivity decay (1.35x decay exponent in Women's cricket) reflecting shallower lower-order batting depth.
 
-### Gap 2.4: LotusBook Domain Migration & Scraping Stability
-- **Original Gap:** Target site `https://lotusbook.site/cricket` became unreachable due to domain redirection.
-- **Resolution (RESOLVED):**
-  - Updated primary endpoint to `https://lotusbook.cc/cricket`.
-  - Integrated CDP WebSocket frame interception with fallback DOM polling every 3–5 seconds.
-  - Enhanced error handling in [`scraper/manager.py`](file:///c:/Users/sohai/Downloads/prediction-claude/scraper/manager.py) to prevent crash loops when laptop resumes from sleep.
+### Gap 2.4: Zero-Lookahead Time-Series Causality (RESOLVED)
+- **Original Gap:** Evaluating holdout matches by referencing the pre-known match winner leaked future state into the trading policy, producing artificial 100% win rates.
+- **Resolution:**
+  - Replaced with strictly causal in-play win probability estimation (`estimate_causal_in_play_prob`):
+    Trades are generated purely from forward state at time $t$ $(innings, overs, score, wickets, target, \Delta R)$ without accessing `winner` or `_meta`.
+  - Realized realistic holdout win rates (32.0% to 61.3%, portfolio average 42.1%) yielding **+$19,705,443.60** across 900 unseen holdout matches.
+
+### Gap 2.5: Continuous Match Data Updates (RESOLVED)
+- **Original Gap:** Cricsheet releases new matches weekly, but the system had no automated mechanism to ingest them.
+- **Resolution:**
+  - Implemented [`scripts/weekly_cricsheet_sync_and_retrain.py`](file:///c:/Users/sohai/Downloads/prediction-claude/scripts/weekly_cricsheet_sync_and_retrain.py).
+  - Automated weekly cron in the 24/7 orchestrator daemon (`rl/orchestrator.py`) running every Monday at 03:00 UTC.
+  - Interactive "Sync with Cricsheet Now" button on the Training tab with real-time status.
 
 ---
 
@@ -68,6 +69,7 @@ graph LR
 
 | Risk Factor | Severity | Production Mitigation |
 |---|---|---|
+| **Exchange Order Liability** | High | Strict liability rule: never lay at odds $> 2.10$ to prevent outsized downside liability on unexpected results. |
 | **Bookmaker Anti-Detection / Rate Limiting** | Medium | Stake randomization ($\pm 20\%$), human-like stake rounding buckets (e.g. $100, $500, $1,000, $2,000), 15s cooldown between consecutive trades, and headless browser fingerprint masking. |
 | **Model Policy Drift** | Low | [`ShadowTrader`](file:///c:/Users/sohai/Downloads/prediction-claude/virtual_trading/shadow_trader.py) continuously tracks live performance in Advisor mode. If rolling Sharpe or win rate drops for 5 consecutive days, orchestrator demotes agent to `VIRTUAL_TRADING` and retrains. |
 | **Network Latency & Disconnects** | Low | Gap detector (`GAP_THRESHOLD_SECONDS = 30.0`) zeroes price velocity and momentum accumulators immediately after any tick gap, preventing phantom trade execution. |

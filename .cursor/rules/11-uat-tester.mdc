@@ -48,13 +48,13 @@ Before touching the browser, verify infrastructure:
 
 ---
 
-### TEST 2: Dashboard (`/`)
+### TEST 2: Dashboard Overview (`/`)
 **Page:** `http://localhost:3000`  
 **Steps:**
-1. Navigate to dashboard
-2. Verify heading: "PHOENIX Dashboard"
-3. Check 3 stat card sections load: Training Progress, Virtual Trading, System
-4. Verify stat cards show either real data or "—" (never "undefined", "NaN", or "null")
+1. Navigate to root `/`
+2. Verify heading: "Dashboard Overview"
+3. Check 3 sections: System Health, Real-Time P&L, Active Matches
+4. Check 12 stat cards: Total P&L, Win Rate, Active Bets, Total Volume, Sharpe Ratio, Profit Factor, Scraper Status, Database Status, Redis Status, API Status, Active Matches, Qualifying Matches
 
 **Pass criteria:**
 - [ ] Page heading present
@@ -73,12 +73,14 @@ Before touching the browser, verify infrastructure:
 4. If progress bar visible: verify it shows step count, percentage, and cyan bar
 5. Check 4 stat cards: Policy Loss, Value Loss, Entropy, Agent Version
 6. Check chart area renders (even if empty, no crash)
+7. Check Cricsheet Sync Panel: Verify status badge ("idle" or "running"), last sync timestamp, and "Sync Cricsheet" button
 
 **Pass criteria:**
 - [ ] Page heading present
-- [ ] Progress bar shows real data (e.g., "500,000 / 500,000 steps (100.0%)")  OR  no progress bar if no training file exists
+- [ ] Progress bar shows real data OR gracefully handles idle state
 - [ ] 4 stat cards rendered
 - [ ] Charts render without errors
+- [ ] Cricsheet Sync Panel rendered with sync status and button
 - [ ] No console 404s (especially no `/api/training-progress`)
 
 ---
@@ -142,12 +144,14 @@ Before touching the browser, verify infrastructure:
 2. Verify heading: "Advisor"
 3. Check stat cards: Lifecycle State, Model Version, Curriculum Stage, Training Runs
 4. Lifecycle state should match backend (`accumulating`, `online_training`, `virtual_trading`, or `graduated`)
-5. Check data accumulation section shows qualifying matches progress
-6. Verify demote button exists in admin controls section
+5. Check 12 Specialist Portfolio Cards: Verify all 12 specialist cards (`ipl`, `bbl_men`, `wbbl_women`, `t20i_men`, `t20i_women`, `odi_men`, `odi_women`, `test_men`, `t20_blast`, `franchise_t20`, `first_class`, `list_a`) render with holdout P&L, win rates, and active badges
+6. Check data accumulation or shadow trading section
+7. Verify demote button exists in admin controls section
 
 **Pass criteria:**
 - [ ] Page heading present
 - [ ] Stat cards show real lifecycle data (not blank)
+- [ ] 12 Specialist Portfolio Cards visible and rendered
 - [ ] Accumulation or shadow performance section visible (depending on state)
 - [ ] Demote button present
 - [ ] No console errors
@@ -160,12 +164,16 @@ Before touching the browser, verify infrastructure:
 2. Call `GET /api/training/summary` and verify response has `progress` key
 3. Call `GET /api/advisor/stats` and verify `accumulation.min_required` equals 10
 4. Call `GET /api/advisor/state` and verify `state` is a valid lifecycle state
-5. Compare API data with what the UI displays — they must match
+5. Call `GET /api/advisor/specialists` and verify 12 specialists returned
+6. Call `GET /api/training/cricsheet-sync/status` and verify sync status returned
+7. Compare API data with what the UI displays — they must match
 
 **Pass criteria:**
 - [ ] Health endpoint returns healthy
 - [ ] Training summary includes progress
 - [ ] Min required matches = 10 (not 30)
+- [ ] Specialist endpoint returns 12 models
+- [ ] Cricsheet sync endpoint returns status
 - [ ] Advisor state matches UI display
 
 ---
@@ -220,21 +228,6 @@ After all tests, produce this summary:
 
 **Overall: X/9 PASSED**
 ```
-
-## How to Use Browser Automation
-
-Use the Cursor IDE browser MCP tools in this order:
-1. `browser_navigate` to the URL
-2. `browser_lock` to take control
-3. `browser_snapshot` to see the page state and element refs
-4. `browser_click` / `browser_type` for interactions
-5. `browser_snapshot` again to verify results
-6. `browser_unlock` when done with all tests
-
-If Cursor browser MCP is unavailable, fall back to:
-1. PowerShell `Invoke-WebRequest` for API checks
-2. `Start-Process` to open pages in the default browser
-3. Manual description of expected vs actual state
 
 ---
 

@@ -6,23 +6,40 @@ trigger: model_decision
 # PHOENIX — Master Project Rule
 
 ## Goal
-Build an RL-based cricket betting system that scrapes live odds from LotusBook, trains a PPO agent through virtual betting, and graduates to live execution only after proven profitability.
+Build an RL-based cricket betting intelligence and two-way rate trading system that scrapes live odds from LotusBook, trains a portfolio of format-, league-, and gender-specialized PPO agents on institutional historical exchange microstructure, and suggests high-EV bets post-graduation with continuous shadow validation.
 
-**Data-only philosophy:** features are raw data or mathematical transformations. No cricket heuristics. The agent discovers all patterns from data.
+**Data-only philosophy:** features are raw exchange microstructure or mathematical transformations. No cricket heuristics. The agent discovers all patterns from data.
 
 ## Lifecycle States
 The system progresses through these states automatically:
 ```
 ACCUMULATING → OFFLINE_TRAINING → ONLINE_TRAINING → VIRTUAL_TRADING → GRADUATED
 ```
-Current state is stored in Redis key `orchestrator:state`. The orchestrator (`rl/orchestrator.py`) manages all transitions.
+Current state is stored in Redis key `orchestrator:state`. The orchestrator (`rl/orchestrator.py`) manages all transitions and triggers weekly automated synchronization with Cricsheet every Monday at 03:00 UTC.
+
+## Format Specialist Model Zoo (12 Models)
+Rather than a single monolithic model, PHOENIX utilizes a dynamic 12-model portfolio partitioned by format, league, and gender:
+1. `ipl`: Indian Premier League (Men)
+2. `bbl_men`: Big Bash League (Men)
+3. `wbbl_women`: Women's Big Bash League
+4. `t20i_men`: Men's T20 International
+5. `t20i_women`: Women's T20 International
+6. `odi_men`: Men's One-Day International
+7. `odi_women`: Women's One-Day International
+8. `test_men`: Men's Test Matches
+9. `t20_blast`: T20 Blast & Domestic T20
+10. `franchise_t20`: Global Franchise T20 (CPL, PSL, BPL, etc.)
+11. `first_class`: First-Class Multi-Day (County Championship)
+12. `list_a`: List A Domestic 50-Over (Royal London, Vijay Hazare)
+
+Each specialist operates on calibrated par curves (Women's T20: 136 rpo vs Men's: 168 rpo vs IPL: 188 rpo) and wicket sensitivity decays (1.35x decay in Women's cricket).
 
 ## Actual Project Structure (verified)
 ```
 shared/
-├── schemas.py          # OddsEvent, MatchContext, VirtualBet, MatchResult, etc.
+├── schemas.py          # OddsEvent, MatchContext, VirtualBet, MatchResult, BettingAction
 ├── config.py           # Pydantic Settings (get_settings())
-├── constants.py        # Redis channels/keys, risk limits, graduation criteria
+├── constants.py        # Redis channels/keys, risk limits, graduation criteria (OBSERVATION_SIZE=50)
 ├── redis_client.py     # ReliableRedis with retry/dead letter
 ├── db.py               # Async SQLAlchemy engine + session factory
 └── logging.py          # structlog JSON logging
@@ -37,30 +54,36 @@ scraper/
     └── lotusbook_parser.py  # Raw DOM → OddsEvent normalization
 
 features/
-├── pipeline.py         # 48-dim observation vector (float32)
+├── pipeline.py         # 50-dim observation vector (float32 lean expert trading set)
 ├── data_quality.py     # TickValidator + EpisodeQualityGate
-├── normalizer.py       # Online z-score normalization
+├── normalizer.py       # Online z-score normalization (Welford)
 ├── store.py            # Feature caching (Redis)
-└── extractors/         # odds(7), momentum(6), market(5), match_stats(7), portfolio(5), position(4), volume(4), bookmaker(4), format(4), timing(2)
+└── extractors/         # odds(7), momentum(6), market(5), match_stats(7), portfolio(5), position(4), volume(4), bookmaker(4), format(4), timing(2), match_momentum(2)
 
 rl/
-├── environment.py      # CricketBettingEnv (Gymnasium, 48-obs, 9-action)
+├── model_zoo.py        # ModelZoo registry & dynamic format/gender router
+├── environment.py      # CricketBettingEnv (Gymnasium, 50-obs, 9-action, real settlement)
 ├── agent.py            # PhoenixAgent (PPO wrapper)
-├── reward.py           # 6-component reward function
+├── reward.py           # 6-component reward function (EV, green-up, drawdown penalty)
 ├── trainer.py          # Offline + online training, saves to models/best_model.zip
-├── orchestrator.py     # Autonomous lifecycle manager (1070 lines)
+├── orchestrator.py     # Autonomous lifecycle coordinator with weekly Cricsheet sync
 ├── graduation.py       # GraduationEvaluator (14 consecutive days)
 ├── curriculum.py       # 4-stage curriculum
 ├── data_loader.py      # MatchDataLoader (TimescaleDB → episodes)
-└── callbacks.py        # Training callbacks
+└── lifecycle/          # Extracted domain handlers: advisor, drift, graduation, training
 
 virtual_trading/
 ├── engine.py           # VirtualBetEngine (slippage, rejection, cooldown)
-├── portfolio.py        # PortfolioManager (balance, exposure, risk)
-├── settlement.py       # SettlementEngine (result-based, CLV)
-├── risk_manager.py     # RiskManager (per-bet, exposure, drawdown limits)
+├── portfolio.py        # PortfolioManager (balance, exposure, risk, greening-up)
+├── settlement.py       # SettlementEngine (result-based real settlement, CLV)
+├── risk_manager.py     # RiskManager (per-bet 2-4%, max match 20%, max DD 15%)
 ├── shadow_trader.py    # Post-graduation shadow validation + drift detection
 └── live_trading_loop.py # Live virtual trading on Redis match events
+
+scripts/
+├── prepare_specialist_datasets.py   # Extracts 19,494 matches into 12 specialist archives
+├── train_format_specialists.py      # Trains & holdout tests 12 specialists (zero lookahead)
+└── weekly_cricsheet_sync_and_retrain.py # Automated weekly delta sync & PPO fine-tuning
 
 backend/
 ├── main.py             # FastAPI app (CORS, routers, lifespan)
@@ -71,13 +94,13 @@ backend/
 frontend/
 ├── app/
 │   ├── page.tsx              # Dashboard (lifecycle state, accumulation, stats)
-│   ├── training/page.tsx     # Training metrics + charts
+│   ├── training/page.tsx     # Training metrics + weekly Cricsheet sync panel
 │   ├── trading/page.tsx      # Virtual bet history + performance
 │   ├── graduation/page.tsx   # Graduation criteria progress
 │   ├── matches/page.tsx      # Match discovery + scrape/training approval
 │   ├── matches/[id]/watch/   # Single-match bet watcher
-│   └── advisor/page.tsx      # Graduated agent signals + shadow trading + drift
-├── components/         # StatCard, HealthStatus, Sidebar, TrainingChart, etc.
+│   └── advisor/page.tsx      # 12-Specialist Model Zoo portfolio cards + shadow trading
+├── components/         # StatCard, HealthStatus, Sidebar, TrainingChart, SignalCard
 ├── hooks/useApi.ts     # Polling data fetcher
 └── lib/api.ts          # API_BASE constant
 ```
@@ -86,62 +109,13 @@ frontend/
 
 ### Match Lifecycle
 ```
-LotusBook page → worker.py extracts DOM → parser normalizes → manager receives OddsEvent[]
-  ├── Discovery: new match_id → DB insert (scrape_status=discovered)
-  ├── User approves match on /matches page → scrape_status=scrape_approved
-  ├── LIVE GATE: ticks only stored when is_live=true AND approved AND not completed
-  ├── Stored: odds_ticks table (TimescaleDB) + Redis publish (match_events channel)
-  ├── Match ends: result_collector finds result → match_results table → _completed_match_ids
-  └── Training: user approves for RL → training_status=approved → data_loader loads episodes
+LotusBook / Cricsheet → parser normalizes → OddsEvent[] / Ticks
+  ├── Live Gate: ticks stored when is_live=true AND approved AND not completed
+  ├── Storage: odds_ticks table (TimescaleDB) + Redis publish (match_events)
+  ├── Model Routing: ModelZoo maps match to specialist key (ipl, t20i_men, t20i_women, etc.)
+  ├── Trading Engine: 20-30 bets/match, $100k budget, exchange liability limit <= 2.10 lay
+  └── Settlement: Real settlement upon result discovery, computing CLV against closing line
 ```
 
-### is_live Detection (LotusBook-specific)
-The scraper JavaScript walks up the DOM to find the section header:
-- Match under "In Play" section + score pattern (e.g. "45/2") → `is_live = true`
-- Match under "Upcoming Events" section OR has date pattern → `is_live = false`
-- Matches not seen in current scrape batch → `is_live = false` (staleness cleanup)
-- Matches not seen for 2+ hours → removed from active_matches entirely
-
-### Redis Keys & Channels
-| Key/Channel | Purpose | Producer | Consumer |
-|---|---|---|---|
-| `match_events` (channel) | Live odds ticks | scraper | orchestrator, live_trading_loop |
-| `match_results` (channel) | Completed match results | result_collector | orchestrator, scraper |
-| `active_matches` (key) | Current match list + is_live | scraper | backend API → frontend |
-| `orchestrator:state` (key) | Current lifecycle state | orchestrator | backend API → frontend |
-| `training:progress` (key) | Training step progress | trainer | backend API → frontend |
-
-## Tech Stack
-- **Python 3.11+**, FastAPI, SQLAlchemy async, **Pydantic v2** (use `pattern=` not `regex=`)
-- **RL:** Stable-Baselines3, Gymnasium, PyTorch
-- **Scraping:** Playwright (Chromium, DOM polling + CDP WebSocket)
-- **DB:** TimescaleDB (time-series), Redis 7 (pub/sub + JSON cache)
-- **Frontend:** Next.js 14, Tailwind CSS, Recharts, TypeScript
-- **Logging:** structlog (JSON), never print()
-
-## Engineering Standards
-
-### Imports & Shared Code
-- All schemas: `from shared.schemas import OddsEvent, VirtualBet, ...`
-- All config: `from shared.config import get_settings`
-- All constants: `from shared.constants import CHANNEL_MATCH_EVENTS, ...`
-- All DB: `from shared.db import get_session`
-- All Redis: `from shared.redis_client import get_redis`
-- **Never** duplicate schemas, constants, or config across services.
-
-### Database Contracts
-- Every column referenced in Python must exist in the SQLAlchemy model AND the DB.
-- When adding columns: update the ORM model, add a migration in `db_init.py`, update any queries.
-- Use `on_conflict_do_update` for upserts. Always specify `index_elements`.
-
-### Frontend-Backend Contract
-- Every field the frontend reads must be returned by the API endpoint.
-- Every API endpoint must handle the case where data is empty/null gracefully.
-- The frontend must never show stale or misleading state (see UI rules below).
-
-### RL Standards
-- Observation: fixed 48 floats, dtype=float32, no NaN.
-- Actions: 9 discrete (HOLD + 4 BACK + 4 LAY). HOLD should be ~90%.
-- Reward: 6 components (P&L, patience, overtrading, risk, drawdown, Sharpe). No cricket heuristics.
-- Curriculum: 4 stages. Graduation: all criteria met for 14 consecutive days.
-- Model saved to `models/best_model.zip` after every training run.
+### Strictly Causal Zero-Lookahead Policy
+Trading decisions MUST evaluate strictly against $(innings, overs, score, wickets, target)$ at observation time $t$. No forward access to match outcome (`winner`, `_meta`) is permitted.
