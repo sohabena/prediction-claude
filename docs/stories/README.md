@@ -152,6 +152,7 @@ Model tier = suggested executor. **Sonnet** implements every story (each needs d
 | [S41](S41-betfair-exchange-adapter.md) | Betfair market-data adapter (read-only), closing price | P1 | Sonnet | S40 | `scraper/parsers/betfair_parser.py`, new `scraper/betfair_stream.py`, `scraper/betfair_store.py`, `scraper/match_mapper.py` |
 | [S42](S42-go-live-gate-and-kill-switch.md) | Signal trust gate (CLV vs Betfair close) + signal kill switch | P1 | Sonnet | S40 (S41) | `rl/graduation.py`, `rl/lifecycle/graduation_handler.py`, `shared/constants.py` (GRADUATION/KILL), new `virtual_trading/kill_switch.py`, `virtual_trading/risk_manager.py` |
 | [S43](S43-signal-path-integration.md) | Signal-path integration: one manual execution model, backtest = live strategy, ratings wired | P0 | Haiku | S38, S39, S40 | `backtesting/execution.py` (presets), `strategy/runner.py` (`live_execution`), `scripts/run_real_backtest.py`, `virtual_trading/live_trading_loop.py` (runner/result), new `strategy/live_context.py` |
+| [S44](S44-trust-and-kill-wiring.md) | Wire trust labels and kill switch into the live signal path; persist missed signals | P0 | Haiku | S42, S43 | `virtual_trading/live_trading_loop.py` (runner), `strategy/runner.py` (outcome log), `rl/orchestrator.py` (nightly), `scripts/audit_clv.py` (`--source`), new `scripts/signals_admin.py` |
 | [S24](S24-in-house-cricsheet-elo-engine.md) | In-house chronological Cricket Elo engine from Cricsheet | P1 | Sonnet | — | scripts/compute_cricsheet_elo.py, shared/elo.py, 	ests/unit/test_s24_cricsheet_elo.py |
 | [S25](S25-venue-and-toss-priors-engine.md) | In-house venue par and toss prior engine from Cricsheet | P1 | Sonnet | — | scripts/compute_venue_priors.py, shared/venue_priors.py, 	ests/unit/test_s25_venue_priors.py |
 | [S26](S26-observation-vector-expansion.md) | Observation vector expansion: incorporate Elo, venue, and toss priors | P1 | Sonnet | S24, S25 | shared/constants.py, eatures/pipeline.py, eatures/extractors/prior_features.py, 	ests/unit/test_s11_feature_parity.py, 	ests/unit/test_features.py |
@@ -188,6 +189,7 @@ Stories in the same wave own disjoint files and can run concurrently.
   - **Wave 11 (parallel):** S36 alignment, S38 fair value v2 (needs S24, S25), S39 real backtester, S32 portfolio risk, S33 CLV auditor
   - **Wave 12 (parallel):** S40 strategy engine, S41 Betfair adapter, S29 player resources (as S38 v3 features)
   - **Wave 13 (parallel):** S42 signal trust gate + kill switch (after S32), S43 signal-path integration
+  - **Wave 14:** S44 trust and kill wiring (after S42 and S43)
   - **Later / P2:** S34 UI, S28 (Betfair → DB ingestion, after S35), S22, S23
   - **Shelved:** S26 (observation expansion), S30 (zoo retraining). Both feed PPO trained on the synthetic market, which pays a no-skill policy (S18 report, S22 evidence).
   - **Superseded:** S27 by S40 (same goal; S40 runs the backtested strategy object). S31 by S39's execution model plus S40's latency-matched placement. Both also own `live_trading_loop.py` and `engine.py`, which S40 owns.
