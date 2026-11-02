@@ -47,6 +47,7 @@ def _make_loop(monkeypatch) -> LiveVirtualTradingLoop:
 
 # ----------------------------------------------------------- embedded context
 async def test_embedded_context_used_not_cache(monkeypatch):
+    monkeypatch.setenv("PHOENIX_STRATEGY", "ppo")  # exercises the PPO decision path (value is the S40 default)
     loop = _make_loop(monkeypatch)
     cache = AsyncMock(side_effect=AssertionError("cache must not be read"))
     monkeypatch.setattr(loop_mod, "get_match_context", cache)

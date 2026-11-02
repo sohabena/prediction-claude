@@ -25,7 +25,10 @@ from datetime import date
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
 
 from shared.elo import CricketEloTracker, family_for_match_type
+from shared.logging import setup_logging
 from shared.venue_priors import VenuePriors, canonical_venue
+
+logger = setup_logging("ratings")
 
 HOME_ADVANTAGE_ELO = 35.0
 HOME_MIN_MATCHES = 3
@@ -275,6 +278,8 @@ class CricketRatings:
         self._league.freeze()
         self._venue_dates = {k: [d for d, _ in v] for k, v in self._venue_hist.items()}
         self._priors = VenuePriors.build(factory())
+        self._live_cache: Dict[tuple, Dict[str, float]] = {}
+        self._unknown_logged: set[tuple] = set()
 
     # ------------------------------------------------------------------ home ground
     def _home_ground(self, team: str, gender: str, cutoff_iso: str) -> Optional[str]:
@@ -351,6 +356,113 @@ class CricketRatings:
             "pm_venue_n": float(priors["venue_n"]),
             "pm_tier": float(row.tier),
         }
+
+    def pre_match_live(
+        self,
+        team_home: str,
+        team_away: str,
+        family: str,
+        gender: str,
+        as_of: str,
+        *,
+        venue: Optional[str] = None,
+        city: Optional[str] = None,
+        players: Optional[Mapping[str, Sequence[str]]] = None,
+        toss_winner: Optional[str] = None,
+        toss_decision: Optional[str] = None,
+        tier: Optional[int] = None,
+        normalize_team: Optional[Callable[[str], Optional[str]]] = None,
+    ) -> Dict[str, float]:
+        """Pre-match ``pm_*`` fields for a live match that has no Cricsheet id yet (S40).
+
+        Same keys and units as ``pre_match``, using only information dated before ``as_of``. Team names go through
+        ``normalize_team`` (the caller's canonicalizer, which may return None) and fall back to ``strip``. Home
+        ground and venue priors need a known venue; XI strength needs both XIs; toss needs the winner. Anything
+        missing is neutral (no information), so a live match with only teams and a date gets Elo alone. Unknown
+        teams get the base Elo and are logged once. Results are cached per (teams, family, gender, date, inputs).
+        """
+        cutoff = date.fromisoformat(str(as_of)[:10]).isoformat()
+        gen = str(gender or "").strip().lower()
+        fam = str(family)
+
+        def _name(team: Optional[str]) -> str:
+            canon = normalize_team(team) if (normalize_team and team) else None
+            return canon or str(team or "").strip()
+
+        home, away = _name(team_home), _name(team_away)
+        players_key = None
+        if players is not None:
+            players_key = tuple(sorted((_name(k), tuple(v)) for k, v in players.items()))
+        cache_key = (home, away, fam, gen, cutoff, venue, city, toss_winner, toss_decision, tier, players_key)
+        if cache_key in self._live_cache:
+            return dict(self._live_cache[cache_key])
+
+        def at_home(team: str, venue_key: str) -> float:
+            ground = self._home_ground(team, gen, cutoff) if venue_key else None
+            return 1.0 if ground and ground == venue_key else 0.0
+
+        def elo(team: str) -> float:
+            if not self._team_known(team, fam, gen):
+                self._log_unknown_team(team, fam, gen)
+                return self._elo.base
+            return self._elo.rating(team, fam, gen, cutoff)
+
+        venue_key = canonical_venue(venue) if venue else ""
+        elo_home = elo(home) + HOME_ADVANTAGE_ELO * at_home(home, venue_key)
+        elo_away = elo(away) + HOME_ADVANTAGE_ELO * at_home(away, venue_key)
+
+        toss_name = _name(toss_winner) if toss_winner else ""
+        if toss_name and toss_name == home:
+            toss_home = 1.0
+        elif toss_name and toss_name == away:
+            toss_home = -1.0
+        else:
+            toss_home = 0.0
+        toss_bat = 1.0 if toss_decision == "bat" else 0.0 if toss_decision == "field" else 0.5
+
+        if venue_key:
+            priors = self._priors.get(venue, fam, gen, cutoff, city=city or None)
+            chase = priors["chase_win_pct"]
+            venue_n = float(priors["venue_n"])
+        else:
+            chase, venue_n = None, 0.0
+
+        xi_home = xi_away = 0.0
+        if players:
+            names_home = players.get(team_home) or players.get(home)
+            names_away = players.get(team_away) or players.get(away)
+            if names_home and names_away:
+                xi_home = self.xi_strength(fam, gen, list(names_home), cutoff)
+                xi_away = self.xi_strength(fam, gen, list(names_away), cutoff)
+
+        out = {
+            "pm_elo_home": float(elo_home),
+            "pm_elo_away": float(elo_away),
+            "pm_xi_home": float(xi_home),
+            "pm_xi_away": float(xi_away),
+            "pm_toss_home": toss_home,
+            "pm_toss_bat": toss_bat,
+            "pm_venue_chase_pct": 50.0 if chase is None else float(chase),
+            "pm_venue_n": venue_n,
+            "pm_tier": 2.0 if tier is None else float(tier),
+        }
+        self._live_cache[cache_key] = dict(out)
+        return out
+
+    def _team_known(self, team: str, family: str, gender: str) -> bool:
+        """True when the corpus has at least one dated result for ``team`` in this family and gender."""
+        try:
+            key = self._elo._key(team, family, gender)
+        except ValueError:
+            return False
+        return key in self._elo._timeline_dates
+
+    def _log_unknown_team(self, team: str, family: str, gender: str) -> None:
+        marker = (team, family, gender)
+        if marker in self._unknown_logged:
+            return
+        self._unknown_logged.add(marker)
+        logger.info("prematch_unknown_team_neutral", team=team, family=family, gender=gender)
 
 
 def _state_tick(base: Dict[str, Any], meta: Dict[str, Any], *, when: str, innings_no: int, bat: str, bowl: str,

@@ -250,3 +250,23 @@ FRANCHISE_TEAMS: dict[str, set[str]] = {
         "washington freedom",
     },
 }
+
+# ---------------------------------------------------------------------------
+# S40 signal engine: manual-bet signals from the backtested strategy. No code
+# path places a real bet; signals are paper-tracked only.
+# ---------------------------------------------------------------------------
+MANUAL_LATENCY_SECONDS = 60.0            # a person reads a signal and places the bet by hand
+STRATEGY_MODE_ENV = "PHOENIX_STRATEGY"   # "value" (signals, default) or "ppo" (legacy paper path)
+STRATEGY_DEFAULT_MODE = "value"
+STRATEGY_MIN_EDGE = 0.02                 # net edge (fraction of stake) an entry must clear at its price limit
+STRATEGY_COMMISSION = 0.02               # exchange commission on net winnings (fraction)
+STRATEGY_GREEN_UP_AT = 0.5               # exit once locked profit reaches this share of the entry edge
+STRATEGY_MAX_BETS_PER_MATCH = 25
+STRATEGY_PRICE_TICK = 0.01               # price rounding for limits (conservative direction)
+STRATEGY_QUIET_AFTER_CHANGE_SECONDS = 30.0   # no signals this long after an innings, wicket or over change
+STRATEGY_NO_SIGNAL_LAST_OVERS = 0.0      # 0 disables; enable only if backtests show edges fail under manual latency
+SIGNAL_VALID_SECONDS = 120.0             # valid_until = created_at + this
+SIGNAL_MIN_STAKE = 10.0                  # suggested stakes below this are not signalled
+SIGNAL_CHANNEL = "signals"               # Redis channel for the UI
+SIGNAL_WEBHOOK_ENV = "SIGNAL_WEBHOOK_URL"    # optional; never hard-coded
+SIGNAL_LOG_PATH = "logs/signals.jsonl"

@@ -209,7 +209,7 @@ class VirtualBetEngine:
         odds = max(1.01, base_odds * (1.0 + random.gauss(0, self.slippage_pct)))
         pf = self.portfolio
         match_id = event.match_id
-        pf.register_match(match_id, event.team_home, event.team_away)
+        pf.register_match(match_id, event.team_home, event.team_away, competition=event.competition)
         bankroll = pf.state.current_balance
         budget = self._match_budget()
         ceiling = budget * (1.0 + BUDGET_TOLERANCE_PERCENT)

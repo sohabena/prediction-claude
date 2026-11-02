@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import random
 import time
 from datetime import datetime, timezone
@@ -25,6 +26,8 @@ from shared.constants import (
     CHANNEL_MATCH_EVENTS,
     CHANNEL_MATCH_RESULTS,
     KEY_WATCHED_MATCH_ID,
+    STRATEGY_DEFAULT_MODE,
+    STRATEGY_MODE_ENV,
 )
 from shared.db import get_session
 from shared.logging import setup_logging
@@ -44,6 +47,38 @@ MAX_FILL_SLIPPAGE_TICKS = 2          # max adverse Betfair ticks between decisio
 CONTEXT_STALE_SECONDS = 10.0         # fallback context older than odds by more -> context_stale
 WATCHED_ID_CACHE_SECONDS = 2.0       # cache for KEY_WATCHED_MATCH_ID
 MODEL_RELOAD_INTERVAL_SECONDS = 300.0
+
+
+def _strategy_mode() -> str:
+    """``PHOENIX_STRATEGY``: "value" (manual-bet signals from the backtested strategy, default) or "ppo"."""
+    raw = os.environ.get(STRATEGY_MODE_ENV, STRATEGY_DEFAULT_MODE).strip().lower() or STRATEGY_DEFAULT_MODE
+    if raw not in ("value", "ppo"):
+        logger.warning("strategy_mode_unknown", requested=raw, using=STRATEGY_DEFAULT_MODE)
+        return STRATEGY_DEFAULT_MODE
+    return raw
+
+
+def _placement_delay() -> float:
+    """Anti-detection delay for the legacy PPO placement path. Off unless ``PLACEMENT_DELAY_MODE=random``."""
+    if os.environ.get("PLACEMENT_DELAY_MODE", "").strip().lower() == "random":
+        return random.uniform(BET_DELAY_MIN_SECONDS, BET_DELAY_MAX_SECONDS)
+    return 0.0
+
+
+def _load_fair_models() -> dict[str, Any]:
+    """Load the v2 fair-value model per format family (blocking; call via asyncio.to_thread)."""
+    from strategy.fair_value import FAMILIES, FairValueModel, model_path
+
+    models: dict[str, Any] = {}
+    for family in FAMILIES:
+        path = model_path(family, None, "v2")
+        try:
+            models[family] = FairValueModel.load(path)
+        except FileNotFoundError:
+            logger.warning("fair_model_missing", family=family, path=str(path))
+        except Exception as e:
+            logger.warning("fair_model_load_failed", family=family, error=type(e).__name__)
+    return models
 
 
 class LiveVirtualTradingLoop:
@@ -93,6 +128,9 @@ class LiveVirtualTradingLoop:
         self._seen_ticks = BoundedDedupe()
         # Only decision ticks (ball events / over boundaries) reach features + policy, as in training
         self._decision_gate = DecisionGate()
+        # S40: signal runner (value mode), built on the first decision tick; never places a real bet
+        self._strategy_mode = _strategy_mode()
+        self._runner: Optional[Any] = None
 
     async def start(self) -> None:
         """Start the live trading loop (subscribe and process)."""
@@ -211,8 +249,9 @@ class LiveVirtualTradingLoop:
         action_name = proposal.action.name
         committed = False
         try:
-            delay = random.uniform(BET_DELAY_MIN_SECONDS, BET_DELAY_MAX_SECONDS)
-            await asyncio.sleep(delay)
+            delay = _placement_delay()
+            if delay > 0:
+                await asyncio.sleep(delay)
             if not self._running:
                 return
             latest = self._latest_events.get(match_id)
@@ -309,6 +348,101 @@ class LiveVirtualTradingLoop:
                 pass  # naive vs aware timestamps; cannot compare
         return context
 
+    async def _get_runner(self) -> Any:
+        """Build the signal runner once. Fair models load off the event loop; a missing model skips its family."""
+        if self._runner is None:
+            from strategy.runner import StrategyRunner
+            from strategy.signals import SignalBus
+            from strategy.value_policy import ValueStrategy
+
+            models = await asyncio.to_thread(_load_fair_models)
+
+            def factory(tick: dict[str, Any]) -> Optional[Any]:
+                model = models.get(tick.get("family"))
+                return None if model is None else ValueStrategy(model)
+
+            redis = await get_redis()
+            self._runner = StrategyRunner(factory, self._engine, self._risk_manager, SignalBus(redis=redis))
+            logger.info("signal_runner_ready", families=sorted(models))
+        return self._runner
+
+    @staticmethod
+    def _tick_from_event(event: OddsEvent, context: Optional[MatchContext]) -> dict[str, Any]:
+        """Strategy tick (backtest tick shape) from the live odds event and match context."""
+        from strategy.fair_value import family_of
+
+        ts = event.timestamp if event.timestamp.tzinfo else event.timestamp.replace(tzinfo=timezone.utc)
+        tick: dict[str, Any] = {
+            "match_id": event.match_id,
+            "time": ts.isoformat(),
+            "team_home": event.team_home,
+            "team_away": event.team_away,
+            "competition": event.competition,
+            "is_live": event.is_live,
+            "back_home": event.back_home,
+            "lay_home": event.lay_home,
+            "back_away": event.back_away,
+            "lay_away": event.lay_away,
+            "family": None,
+            "match_format": None,
+        }
+        if context is not None and context.match_format:
+            tick.update({
+                "match_format": context.match_format,
+                "family": family_of(context.match_format),
+                "innings": context.innings,
+                "wickets": context.wickets,
+                "overs": context.overs,
+                "score": context.score,
+                "run_rate": context.run_rate,
+                "req_run_rate": context.required_run_rate,
+                "balls_remaining": context.balls_remaining,
+                "batting_team": context.batting_team,
+                "bowling_team": context.bowling_team,
+            })
+        return tick
+
+    def _shadow_action(self, obs: Any) -> Optional[int]:
+        """PPO's action for logging only. Never routed to a bet."""
+        agent = self._get_agent() if self._get_agent else self._agent
+        if agent is None:
+            return None
+        try:
+            action, _ = agent.predict(obs, deterministic=True)
+            return int(action)
+        except Exception as e:
+            logger.debug("shadow_predict_failed", error=str(e))
+            return None
+
+    async def _value_decision(self, event: OddsEvent, context: Optional[MatchContext], obs: Any) -> None:
+        """Value mode: emit manual-bet signals and paper-track them. No real bet is placed."""
+        shadow = self._shadow_action(obs)
+        if shadow is not None:
+            logger.info(
+                "shadow_decision",
+                match_id=event.match_id,
+                action=BettingAction(shadow).name,
+                mode="ppo_shadow",
+                signalled=False,
+            )
+        runner = await self._get_runner()
+        outcome = await runner.on_tick(self._tick_from_event(event, context), wall_now=time.time())
+        for fill in outcome.paper:
+            if fill.status == "filled" and fill.bet is not None:
+                self._open_bets.setdefault(event.match_id, []).append((fill.bet, fill.bet.placed_at))
+                await persist_bet(fill.bet, agent_version=fill.agent_version)
+            logger.info(
+                "paper_signal_outcome",
+                match_id=event.match_id,
+                side=fill.side,
+                selection=fill.selection,
+                status=fill.status,
+                price=fill.price,
+                stake=fill.stake,
+                price_limit=fill.price_limit,
+                signal_id=fill.signal_id,
+            )
+
     async def _handle_match_event(self, data: dict[str, Any]) -> None:
         """Process a match event: compute obs, predict, place bet, persist."""
         try:
@@ -354,6 +488,11 @@ class LiveVirtualTradingLoop:
 
             # Populate feature cache for advisor fast path (orchestrator._generate_signal)
             await self._feature_store.store(event.match_id, np.asarray(obs, dtype=np.float32))
+
+            # S40: value mode emits signals only; the PPO action is logged as a shadow decision
+            if self._strategy_mode == "value":
+                await self._value_decision(event, context, obs)
+                return
 
             agent = self._get_agent() if self._get_agent else self._agent
             model_version = self._agent_version
