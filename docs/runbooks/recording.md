@@ -149,3 +149,45 @@ WHERE time > NOW() - INTERVAL '1 day'
 GROUP BY match_id, market_type
 ORDER BY last_seen DESC;
 ```
+
+## 7. 30-day recording run in Docker (2026-11-02)
+
+**What runs:** `docker compose --profile recording up -d scraper` starts `phoenix-scraper` (with `phoenix-timescaledb`
+and `phoenix-redis`). The container runs the S37 watchdog, which restarts the scraper on a crash or a stall. Docker
+restarts the container (`restart: unless-stopped`) whenever Docker Desktop is running.
+
+**What is recorded:** every real match on the LotusBook cricket page (simulated SRL matches are always rejected):
+
+- live matches: prices plus score state (`match_context`) on every change;
+- upcoming matches: pre-match prices, only when a price changes (at most every 30 s per match, plus a 15-minute heartbeat).
+
+`SCRAPER_INTERNATIONAL_ONLY` is false for this run. The Redis override `config:scraper:international_only` must also
+be `false`: `docker exec phoenix-redis redis-cli SET config:scraper:international_only false`.
+
+**Database state after setup:** migration 002 was applied by hand (alembic is not stamped on this DB):
+
+- `odds_ticks.tick_seq` is a sequence default, because hypertables cannot take an identity column;
+- `odds_ticks_historical` exists;
+- the `virtual_bets` key is `(placed_at, bet_id)`.
+
+**No retention policy** on `odds_ticks`: recorded LotusBook ticks are the only real price history. `db_init` adds
+retention only with `ODDS_TICKS_RETENTION=on`.
+
+Pre-run backup: `data/backups/phoenix_pre_recording_20261102.dump`. Restore with `pg_restore`, as in the 002 runbook.
+
+**Keeping it running for 30 days:**
+
+1. Docker Desktop → Settings → General → **Start Docker Desktop when you sign in**: on. Without it, a reboot stops
+   recording until Docker is opened.
+2. Sleep: no program can record while the PC is asleep.
+   - Idle sleep is already "Never" in this PC's power plan (checked 2026-11-02).
+   - Keep the lid open, or set the lid action to "Do nothing" when plugged in:
+     `powercfg /setacvalueindex SCHEME_CURRENT SUB_BUTTONS LIDACTION 0` then `powercfg /setactive SCHEME_CURRENT`.
+   - Optional safety net that does not change settings:
+     `powershell -ExecutionPolicy Bypass -File scripts\install_keep_awake_task.ps1`. It keeps Windows from idle-sleeping
+     only while `phoenix-scraper` runs.
+3. Check daily:
+   - `docker ps` (phoenix-scraper Up);
+   - `python scripts/recording_health.py`;
+   - the tick count: `docker exec phoenix-timescaledb psql -U phoenix -d phoenix_betting -c "SELECT date(time), is_live,
+     count(*), count(distinct match_id) FROM odds_ticks WHERE source='lotusbook' GROUP BY 1,2 ORDER BY 1 DESC LIMIT 6"`.

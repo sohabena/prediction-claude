@@ -27,16 +27,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy installed packages from builder
 COPY --from=builder /install /usr/local
 
-# Install Playwright browsers
-RUN playwright install chromium
+# Install Playwright browsers to a shared path: the build runs as root, the scraper as `phoenix`
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN playwright install chromium && chmod -R a+rx /ms-playwright
 
-# Copy application code
+# Copy application code (the scraper stores rows through backend.models; the watchdog is a script)
 COPY shared/ /app/shared/
 COPY scraper/ /app/scraper/
 COPY features/ /app/features/
+COPY backend/__init__.py /app/backend/__init__.py
+COPY backend/models/ /app/backend/models/
+COPY scripts/run_scraper_forever.py /app/scripts/run_scraper_forever.py
 
-# Create non-root user
-RUN useradd --create-home phoenix
+# Create non-root user; logs/ is bind-mounted from the host so heartbeats are visible there
+RUN useradd --create-home phoenix && mkdir -p /app/logs && chown -R phoenix /app/logs
 USER phoenix
 
-CMD ["python", "-m", "scraper.manager"]
+# The watchdog runs `python -m scraper.manager` as a child and restarts it on crash or stall
+# (no live tick stored for SCRAPER_STALL_MINUTES); Docker restarts the container if the watchdog dies.
+CMD ["python", "scripts/run_scraper_forever.py"]

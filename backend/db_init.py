@@ -15,6 +15,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import os
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -192,9 +193,17 @@ async def init_database() -> None:
         except Exception as e:
             logger.warning(f"{kind}_skip", statement=stmt[:60], error=str(e))
 
-    # Retention safety: only (re)apply the live 90-day policy once the historical copy is complete.
+    # Retention is opt-in (ODDS_TICKS_RETENTION=on). Recorded LotusBook ticks are the project's only real
+    # price history (Betfair is unavailable) and the historical copy only moves synthetic rows, so a
+    # default retention policy would delete real data. When enabled, it still waits for the historical copy.
     try:
-        if await _historical_copy_complete(engine):
+        retention_on = os.getenv("ODDS_TICKS_RETENTION", "off").strip().lower() in ("on", "1", "true")
+        if not retention_on:
+            for stmt in SAFETY_STATEMENTS:
+                async with engine.begin() as conn:
+                    await conn.execute(text(stmt))
+            print("db_init: retention disabled (ODDS_TICKS_RETENTION=off) -> no retention policy on odds_ticks")
+        elif await _historical_copy_complete(engine):
             for stmt in RETENTION_STATEMENTS:
                 async with engine.begin() as conn:
                     await conn.execute(text(stmt))

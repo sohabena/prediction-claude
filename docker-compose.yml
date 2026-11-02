@@ -98,16 +98,32 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - POSTGRES_HOST=timescaledb
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-phoenix}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-phoenix_secure_2026}
+      - POSTGRES_DB=${POSTGRES_DB:-phoenix_betting}
       - SCRAPER_BETTING_SITE_URL=${SCRAPER_BETTING_SITE_URL:-https://lotusbook.cc/cricket}
       - SCRAPER_HEADLESS=${SCRAPER_HEADLESS:-true}
       - SCRAPER_POLL_INTERVAL=${SCRAPER_POLL_INTERVAL:-3}
+      # Recording run: every real match (simulated SRL is always rejected), live and pre-match
+      - SCRAPER_INTERNATIONAL_ONLY=${SCRAPER_RECORD_INTERNATIONAL_ONLY:-false}
+      - SCRAPER_RECORD_ALL=1
+      - SCRAPER_RECORD_PREMATCH=1
+      - SCRAPER_MARKET_PAGES=${SCRAPER_MARKET_PAGES:-0}
+      - SCRAPER_STALL_MINUTES=${SCRAPER_STALL_MINUTES:-10}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - LOG_FORMAT=json
+    volumes:
+      - ./logs:/app/logs
+    shm_size: "1gb"   # Chromium crashes with Docker's default 64 MB /dev/shm
     depends_on:
       redis:
         condition: service_healthy
+      timescaledb:
+        condition: service_healthy
     restart: unless-stopped
-    profiles: ["dev", "prod"]
+    profiles: ["dev", "prod", "recording"]
     networks:
       - phoenix-data
 

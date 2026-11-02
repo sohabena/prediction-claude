@@ -97,11 +97,15 @@ class ScraperManager:
         self._scrape_approved_ids: set[str] = set()  # cached from DB
         self._completed_match_ids: set[str] = set()
         self._last_stored_fingerprint: dict[str, str] = {}  # matches with results
-        self._quality_stats = {"stored": 0, "warnings": 0, "rejected": 0, "recorded_unapproved": 0}
+        self._quality_stats = {"stored": 0, "warnings": 0, "rejected": 0, "recorded_unapproved": 0,
+                               "recorded_prematch": 0}
         self._result_detector = LotusResultDetector()
         self._last_approved_refresh: datetime | None = None
         # S37: record every qualifying live match. Approval only controls live publishing.
         self._record_all = _env_flag("SCRAPER_RECORD_ALL", default=True)
+        # Pre-match prices of upcoming matches (stored only on change; see _prematch_due).
+        self._record_prematch = _env_flag("SCRAPER_RECORD_PREMATCH", default=True)
+        self._prematch_last: dict[str, tuple[tuple, datetime]] = {}
         self._last_live_event_at: str | None = None
         # S47: one read-only market-page worker per eligible live match.
         self._listing_page: Any = None
@@ -347,11 +351,12 @@ class ScraperManager:
             if not approved and not self._record_all:
                 continue
 
-            # ── LIVE GATE: only collect ticks during live matches ──
-            # Not-yet-live matches wait; completed matches stop.
+            # ── LIVE GATE: completed matches stop. Upcoming (not-live) matches are recorded pre-match
+            # when SCRAPER_RECORD_PREMATCH is on, but only on a price change (see _prematch_due).
             if event.match_id in self._completed_match_ids:
                 continue
-            if not event.is_live:
+            prematch = not event.is_live
+            if prematch and not (self._record_prematch and self._prematch_due(event, now)):
                 continue
 
             # ── SCHEDULE GATE: approved matches wait for their scheduled time ──
@@ -411,26 +416,33 @@ class ScraperManager:
                     )
                     continue  # Skip storing this tick
 
-            # Publish to Redis for live consumers (AFTER quality gates, approved matches only)
-            # Derive MatchContext FIRST so the odds message carries the in-sync context
+            # Derive MatchContext for every recorded live match (score state is part of the recording);
+            # publish to Redis for live consumers only for approved matches.
             context = None
-            if approved:
+            if not prematch:
                 context = self._live_match_tracker.update(event)
+            if approved and not prematch:
                 event_data = event.model_dump(mode="json")
                 if context is not None:
                     event_data["context"] = context.model_dump(mode="json")
                 await redis.publish_event(CHANNEL_MATCH_EVENTS, event_data)
-            else:
+            elif not approved:
                 self._quality_stats["recorded_unapproved"] += 1
+            if prematch:
+                self._quality_stats["recorded_prematch"] += 1
 
             # Store to DB (recording, independent of approval)
             self._quality_stats["stored"] += 1
             await self._store_odds_tick(event)
-            await self._ensure_market_worker(event)
+            if prematch:
+                # Marked only once stored, so a tick rejected by the quality gates does not reset the throttle
+                self._prematch_last[event.match_id] = (self._prices(event), now)
+            else:
+                await self._ensure_market_worker(event)
 
-            # Publish MatchContext for other consumers (channel + cache + DB)
+            # Store MatchContext for every recorded match; publish it only for approved matches
             if context is not None:
-                await self._publish_match_context(redis, context)
+                await self._publish_match_context(redis, context, publish=approved)
                 # Feed score data into result detector for cross-referencing
                 tracker_state = self._live_match_tracker._matches.get(event.match_id)
                 fi_total = tracker_state.first_innings_total() if tracker_state else None
@@ -513,23 +525,50 @@ class ScraperManager:
             quality_rejected=self._quality_stats["rejected"],
         )
 
-    async def _publish_match_context(self, redis: Any, context: Any) -> None:
-        """Publish derived MatchContext to Redis and store to DB.
+    PREMATCH_MIN_INTERVAL_S = 30.0     # at most one stored pre-match tick per match per 30 s
+    PREMATCH_HEARTBEAT_S = 900.0       # store an unchanged pre-match price at least every 15 min
+
+    def _prematch_due(self, event: OddsEvent, now: datetime) -> bool:
+        """True when a not-yet-live match's prices should be stored now.
+
+        Pre-match markets on the listing page move slowly, and the page is polled every few seconds,
+        so storing every poll would multiply volume for nothing. Store when any price changed (and
+        at least ``PREMATCH_MIN_INTERVAL_S`` passed), or as a heartbeat every ``PREMATCH_HEARTBEAT_S``.
+        """
+        prices = self._prices(event)
+        last = self._prematch_last.get(event.match_id)
+        if last is not None:
+            last_prices, last_at = last
+            elapsed = (now - last_at).total_seconds()
+            if elapsed < self.PREMATCH_MIN_INTERVAL_S:
+                return False
+            if prices == last_prices and elapsed < self.PREMATCH_HEARTBEAT_S:
+                return False
+        return True
+
+    @staticmethod
+    def _prices(event: OddsEvent) -> tuple:
+        return (event.back_home, event.lay_home, event.back_draw, event.lay_draw, event.back_away, event.lay_away)
+
+    async def _publish_match_context(self, redis: Any, context: Any, publish: bool = True) -> None:
+        """Store derived MatchContext to DB, and publish it to Redis when ``publish``.
 
         Context is derived inline from LotusBook score_text with zero
-        latency gap vs odds data.
+        latency gap vs odds data. Every recorded match stores its context (it is part of
+        the recording); only approved matches are published to live consumers.
         """
         from backend.models.match import MatchContextRecord
 
         try:
-            ctx_data = context.model_dump(mode="json")
+            if publish:
+                ctx_data = context.model_dump(mode="json")
 
-            # Publish to Redis pub/sub (consumed by LiveTradingLoop, FeaturePipeline)
-            await redis.publish_event(CHANNEL_MATCH_CONTEXT, ctx_data)
+                # Publish to Redis pub/sub (consumed by LiveTradingLoop, FeaturePipeline)
+                await redis.publish_event(CHANNEL_MATCH_CONTEXT, ctx_data)
 
-            # Cache in Redis (consumed by context_resolver.get_match_context)
-            key = KEY_MATCH_CONTEXT.format(match_id=context.match_id)
-            await redis.set_json(key, ctx_data, ttl=60)
+                # Cache in Redis (consumed by context_resolver.get_match_context)
+                key = KEY_MATCH_CONTEXT.format(match_id=context.match_id)
+                await redis.set_json(key, ctx_data, ttl=60)
 
             # Store to TimescaleDB
             async with get_session() as session:
