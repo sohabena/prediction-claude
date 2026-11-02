@@ -26,9 +26,38 @@ SPECIALISTS_DIR = Path("data/specialists")
 # Target quotas (all exceeding user's >= 300 requirement)
 DEFAULT_TARGET_MATCHES = 350
 
+# Keys that describe the match RESULT. They exist only so the environment can settle
+# bets after an episode ends. The feature pipeline / agent observation must never read
+# them, and no price or probability in this module may be derived from them.
+SETTLEMENT_ONLY_KEYS = ("_meta", "winner", "loser", "winner_is_home")
+
+SYNTHETIC_SOURCE = "synthetic_cricsheet"
+
+
+class MarketNoise:
+    """Outcome-independent mean-reverting random walk in log-odds space.
+
+    x_{t+1} = (1 - theta) * x_t + sigma * N(0, 1), seeded by the match index only.
+    Defaults: sigma = 0.08 per tick, theta = 0.10 (stationary std ~ 0.18 log-odds).
+    """
+
+    def __init__(self, seed: int, sigma: float = 0.08, theta: float = 0.10) -> None:
+        self._rng = random.Random(seed * 7919 + 13)
+        self._sigma = sigma
+        self._theta = theta
+        self._x = 0.0
+
+    def step(self) -> float:
+        self._x = (1.0 - self._theta) * self._x + self._rng.gauss(0.0, self._sigma)
+        return self._x
+
 
 class CricketWinProbModel:
-    """Computes dynamic in-play win probabilities for cricket match states."""
+    """Computes dynamic in-play win probabilities for cricket match states.
+
+    The result is a pure function of the match state (plus an optional outcome-independent
+    ``noise_logit`` offset from ``MarketNoise``). It never sees the match result.
+    """
 
     @staticmethod
     def calculate_win_prob(
@@ -39,9 +68,9 @@ class CricketWinProbModel:
         wickets: int,
         target: Optional[int],
         batting_is_home: bool,
-        winner_is_home: bool,
         is_women: bool = False,
         specialist_key: str = "",
+        noise_logit: float = 0.0,
     ) -> float:
         fmt_upper = fmt.upper()
         is_t20 = "T20" in fmt_upper or "IPL" in fmt_upper
@@ -71,7 +100,10 @@ class CricketWinProbModel:
                 par_rr = 3.4  # ~340 in Men's Test
             wicket_decay = 1.05
 
-        if innings == 1:
+        # Chase logic applies to the 2nd innings of limited-overs games and the 4th of a Test.
+        is_chase = innings == 4 or (innings == 2 and max_overs < 100.0)
+
+        if not is_chase:
             projected_score = score + (balls_remaining / 6.0) * par_rr * ((wickets_left / 10.0) ** (0.65 * wicket_decay))
             par_total = max_overs * par_rr
             diff = max(-500.0, min(500.0, projected_score - par_total))
@@ -96,13 +128,9 @@ class CricketWinProbModel:
 
             p_home = p_batting if batting_is_home else (1.0 - p_batting)
 
-        # Drift toward actual match winner so odds realistically capture in-game edge
-        match_progress = balls_bowled / max(1, max_balls * (2 if innings == 2 else 1))
-        bias = 0.15 * (match_progress ** 1.5)
-        if winner_is_home:
-            p_home = min(0.99, p_home + bias * (1.0 - p_home))
-        else:
-            p_home = max(0.01, p_home - bias * p_home)
+        if noise_logit:
+            p_c = max(1e-4, min(1.0 - 1e-4, p_home))
+            p_home = 1.0 / (1.0 + math.exp(-(math.log(p_c / (1.0 - p_c)) + noise_logit)))
 
         return max(0.025, min(0.975, p_home))
 
@@ -155,16 +183,29 @@ def parse_cricsheet_json(
     if not team_home or not team_away or team_home == team_away:
         return None
 
+    is_multiday = fmt_category.upper() not in ("T20", "ODI", "IPL")
     outcome = info.get("outcome", {})
     winner = outcome.get("winner")
+    result_type = "win"
     if not winner:
-        return None
-    winner = str(winner).strip()
-    if winner not in (team_home, team_away):
-        return None
+        # Drawn multi-day matches are retained (marked) so the trainer can void them;
+        # ties / no-results in limited-overs formats are dropped by the caller.
+        if is_multiday and str(outcome.get("result", "")).lower() == "draw":
+            result_type = "draw"
+            winner = ""
+        else:
+            return None
+    else:
+        winner = str(winner).strip()
+        if winner not in (team_home, team_away):
+            return None
 
-    loser = team_away if winner == team_home else team_home
-    winner_is_home = (winner == team_home)
+    if result_type == "draw":
+        loser = ""
+        winner_is_home = None
+    else:
+        loser = team_away if winner == team_home else team_home
+        winner_is_home = (winner == team_home)
 
     info_gender = str(info.get("gender", "male")).lower()
     is_women = ("female" in info_gender) or ("women" in specialist_key.lower())
@@ -190,8 +231,11 @@ def parse_cricsheet_json(
     tick_time = match_date + timedelta(hours=14)
     tick_idx = 0
     first_inn_target: Optional[int] = None
+    inn_totals: List[int] = []
+    noise = MarketNoise(match_index)
+    max_innings = 4 if is_multiday else 2
 
-    for inn_idx, inn_data in enumerate(innings_list[:2]):
+    for inn_idx, inn_data in enumerate(innings_list[:max_innings]):
         innings_num = inn_idx + 1
         batting_team = str(inn_data.get("team", "")).strip() or (team_home if inn_idx == 0 else team_away)
         bowling_team = team_away if batting_team == team_home else team_home
@@ -200,6 +244,12 @@ def parse_cricsheet_json(
         overs_data = inn_data.get("overs", [])
         total_runs = 0
         total_wickets = 0
+        if innings_num == 4:
+            inn_target: Optional[int] = max(1, inn_totals[0] + inn_totals[2] - inn_totals[1] + 1) if len(inn_totals) >= 3 else None
+        elif innings_num == 2 and not is_multiday:
+            inn_target = first_inn_target
+        else:
+            inn_target = None
 
         for over_item in overs_data:
             over_num = over_item.get("over", 0)
@@ -235,11 +285,11 @@ def parse_cricsheet_json(
                     overs=overs_float,
                     score=total_runs,
                     wickets=total_wickets,
-                    target=first_inn_target,
+                    target=inn_target,
                     batting_is_home=batting_is_home,
-                    winner_is_home=winner_is_home,
                     is_women=is_women,
                     specialist_key=specialist_key,
+                    noise_logit=noise.step(),
                 )
 
                 b_home, l_home, b_away, l_away, ovr = synthesize_exchange_ticks(
@@ -248,8 +298,8 @@ def parse_cricsheet_json(
 
                 crr = round((total_runs / max(1, balls_bowled)) * 6.0, 2)
                 rrr = 0.0
-                if innings_num == 2 and first_inn_target:
-                    rrr = round((max(0, first_inn_target - total_runs) / max(1, balls_rem)) * 6.0, 2)
+                if inn_target:
+                    rrr = round((max(0, inn_target - total_runs) / max(1, balls_rem)) * 6.0, 2)
 
                 if "ipl" in specialist_key.lower():
                     vol_base = 350000.0
@@ -295,11 +345,14 @@ def parse_cricsheet_json(
                     "volume_lay_home": round(vol_base * vol_jitter * 0.9, 2),
                     "volume_back_away": round(vol_base * vol_jitter, 2),
                     "volume_lay_away": round(vol_base * vol_jitter * 0.9, 2),
-                    "source": "betfair",
+                    "source": SYNTHETIC_SOURCE,
                     "_meta": {
                         "winner": winner,
                         "loser": loser,
                         "winner_is_home": winner_is_home,
+                        "result_type": result_type,
+                        "team_home": team_home,
+                        "team_away": team_away,
                         "gender": gender_str,
                     },
                 }
@@ -307,6 +360,7 @@ def parse_cricsheet_json(
                 tick_time += timedelta(seconds=random.Random(tick_idx).randint(45, 90))
                 tick_idx += 1
 
+        inn_totals.append(total_runs)
         if innings_num == 1:
             first_inn_target = total_runs + 1
 
@@ -323,6 +377,7 @@ def parse_cricsheet_json(
         "specialist_key": specialist_key,
         "winner": winner,
         "loser": loser,
+        "result_type": result_type,
         "start_time": match_date.isoformat(),
         "total_ticks": len(ticks),
         "ticks": ticks,
@@ -412,6 +467,7 @@ def build_specialist_dataset(
     print(f"            Parallel extracting from {len(candidate_files)} candidate files...")
 
     matches = []
+    dropped = 0
     with ProcessPoolExecutor(max_workers=6) as executor:
         futures = [
             executor.submit(parse_cricsheet_json, fpath, format_label, idx + 1, specialist_key)
@@ -423,9 +479,13 @@ def build_specialist_dataset(
                 matches.append(res)
                 if target_count > 0 and len(matches) >= target_count:
                     break
+            else:
+                dropped += 1
 
     total_ticks = sum(m["total_ticks"] for m in matches)
+    drawn = sum(1 for m in matches if m.get("result_type") == "draw")
     print(f"            Harmonized {len(matches)} official matches ({total_ticks:,} ticks).")
+    print(f"            kept={len(matches)} (decisive={len(matches) - drawn}, drawn={drawn}) dropped={dropped}")
 
     with gzip.open(out_file, "wt", encoding="utf-8") as f:
         json.dump(matches, f)

@@ -18,11 +18,15 @@ Generates an expanded, high-fidelity cricket dataset with:
 
 from __future__ import annotations
 
+import math
 import random
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Optional
+
+
+SYNTHETIC_SOURCE = "synthetic_archetype"
 
 
 class MatchArchetype(str, Enum):
@@ -103,6 +107,36 @@ class RealisticCorpusGenerator:
 
         return matches
 
+    @staticmethod
+    def _state_home_win_prob(score: int, wickets: int, balls_remaining: int, target: int) -> float:
+        """P(home wins) for the home side chasing `target`; a pure function of match state."""
+        runs_needed = target - score
+        wickets_left = max(0, 10 - wickets)
+        if runs_needed <= 0:
+            return 0.99
+        if balls_remaining <= 0 or wickets_left <= 0:
+            return 0.01
+        req_rr = (runs_needed / max(1, balls_remaining)) * 6.0
+        pressure = req_rr / 8.6
+        z = 2.2 * (wickets_left / 10.0) ** 1.1 - 1.4 * pressure
+        z = max(-50.0, min(50.0, z))
+        return 1.0 / (1.0 + math.exp(-z))
+
+    @staticmethod
+    def _decide_winner(
+        final_score: int, target: int, team_home: str, team_away: str, tiebreak_rng: random.Random
+    ) -> str:
+        """Winner is a consequence of the terminal state (chase succeeded or not).
+
+        A tied score (final == target - 1) goes to a super over decided by a *separate* rng so
+        the main path stream is never consumed by the result.
+        """
+        if final_score >= target:
+            return team_home
+        if final_score == target - 1:
+            return team_home if tiebreak_rng.random() < 0.5 else team_away
+        return team_away
+
     def _generate_single_match(
         self,
         match_id: str,
@@ -112,112 +146,92 @@ class RealisticCorpusGenerator:
         archetype: MatchArchetype,
         start_time: datetime,
     ) -> SimulatedCricketMatch:
-        # Determine total ticks (120 to 200 ticks per match)
-        ticks_count = self.rng.randint(150, 220)
-        total_overs = 20.0  # T20 match
+        """Generate the score path first, price it from state only, then derive the winner.
 
-        # Home team pre-match win probability
-        p_home_init = self.rng.uniform(0.42, 0.58)
+        Archetype parameters shape the PATH only (final score ratio, score/wicket curves).
+        Prices = state-only chase model + outcome-independent log-odds noise.
+        """
+        rng = self.rng
+        tiebreak_rng = random.Random(f"{match_id}:tiebreak")
+        ticks_count = rng.randint(150, 220)
+        total_overs = 20.0
 
-        # Target score for 2nd innings
-        target_score = self.rng.randint(145, 195)
-        current_score = 0
-        current_wickets = 0
+        target = rng.randint(145, 195)
+        if archetype == MatchArchetype.COMFORTABLE_CHASE:
+            ratio = rng.gauss(1.06, 0.07)
+            score_exp, wkt_exp = 1.0, 1.2
+        elif archetype == MatchArchetype.SUDDEN_COLLAPSE:
+            ratio = rng.gauss(0.86, 0.10)
+            score_exp, wkt_exp = 0.7, 2.5
+        elif archetype == MatchArchetype.THRILLER_FINISH:
+            ratio = rng.uniform(0.94, 1.05)
+            score_exp, wkt_exp = 1.0, 1.0
+        elif archetype == MatchArchetype.LOW_SCORING_DEFENSE:
+            target = rng.randint(125, 145)
+            ratio = rng.gauss(0.92, 0.08)
+            score_exp, wkt_exp = 1.1, 0.9
+        else:  # BLOWOUT: either the chase is routine or it collapses early
+            ratio = rng.gauss(1.25, 0.10) if rng.random() < 0.6 else rng.gauss(0.60, 0.08)
+            score_exp, wkt_exp = 0.9, 1.0
 
-        p_home = p_home_init
+        final_score = max(20, int(round(ratio * target)))
+        chase_succeeds = final_score >= target
+        if chase_succeeds:
+            end_progress = rng.uniform(0.80, 1.0)
+            final_wickets = rng.randint(2, 7)
+        else:
+            end_progress = 1.0 if rng.random() < 0.6 else rng.uniform(0.7, 1.0)
+            final_wickets = 10 if end_progress < 1.0 else rng.choice([6, 7, 8, 9, 10])
+
+        noise_rng = random.Random(f"{match_id}:noise")
+        noise_x = 0.0
+
         ticks: list[dict[str, Any]] = []
         curr_time = start_time
-
-        # Pre-determine winner based on archetype
-        if archetype == MatchArchetype.COMFORTABLE_CHASE:
-            home_wins = self.rng.random() < 0.70
-        elif archetype == MatchArchetype.SUDDEN_COLLAPSE:
-            home_wins = False if self.rng.random() < 0.80 else True
-        elif archetype == MatchArchetype.THRILLER_FINISH:
-            home_wins = self.rng.random() < 0.50
-        elif archetype == MatchArchetype.LOW_SCORING_DEFENSE:
-            target_score = self.rng.randint(125, 145)
-            home_wins = self.rng.random() < 0.60
-        else:  # BLOWOUT
-            home_wins = self.rng.random() < 0.85
+        prev_score = 0
+        prev_wickets = 0
 
         for step in range(ticks_count):
-            progress = (step + 1) / float(ticks_count)
+            frac = (step + 1) / float(ticks_count)
+            progress = frac * end_progress
             overs = round(progress * total_overs, 1)
             balls_bowled = int(progress * 120)
             balls_remaining = 120 - balls_bowled
 
-            # Update match context score and wickets based on archetype
-            if archetype == MatchArchetype.COMFORTABLE_CHASE:
-                # Steady scoring, few wickets
-                current_score = int(progress * (target_score + 4 if home_wins else target_score - 10))
-                current_wickets = min(9, int(progress * 4) + (1 if self.rng.random() < 0.3 else 0))
-                # Probability drifts smoothly
-                target_p = 0.98 if home_wins else 0.02
-                p_home += (target_p - p_home) * (progress ** 1.5) * 0.12 + self.rng.gauss(0, 0.02)
+            score = int(final_score * (frac ** score_exp) + rng.gauss(0, 1.5))
+            score = max(prev_score, min(score, final_score))
+            if chase_succeeds and step < ticks_count - 1:
+                score = min(score, target - 1)
+            if step == ticks_count - 1:
+                score = final_score
+            wickets = int(round(final_wickets * (frac ** wkt_exp)))
+            wickets = max(prev_wickets, min(10, wickets))
+            prev_score, prev_wickets = score, wickets
 
-            elif archetype == MatchArchetype.SUDDEN_COLLAPSE:
-                # Favorite starts strong, then sudden collapse at progress 0.65 - 0.80
-                if progress < 0.65:
-                    current_score = int(progress * target_score * 1.1)
-                    current_wickets = min(2, int(progress * 2))
-                    p_home = 0.85 + self.rng.gauss(0, 0.02)
-                elif 0.65 <= progress < 0.85:
-                    # Rapid collapse: 4 wickets fall
-                    current_score += self.rng.randint(0, 3)
-                    current_wickets = min(8, current_wickets + self.rng.choice([1, 1, 2]))
-                    p_home -= 0.18 + self.rng.gauss(0, 0.04)  # Sudden odds crash!
-                else:
-                    current_score += self.rng.randint(2, 6)
-                    target_p = 0.98 if home_wins else 0.02
-                    p_home += (target_p - p_home) * 0.25
-
-            elif archetype == MatchArchetype.THRILLER_FINISH:
-                # Close run-rate, high oscillation throughout
-                current_score = int(progress * (target_score - 5 + self.rng.randint(-4, 4)))
-                current_wickets = min(8, int(progress * 6))
-                # Odds oscillate around 0.50 until very end
-                if progress < 0.85:
-                    p_home += self.rng.gauss(0, 0.06)
-                else:
-                    target_p = 0.98 if home_wins else 0.02
-                    p_home += (target_p - p_home) * 0.35 + self.rng.gauss(0, 0.08)
-
-            elif archetype == MatchArchetype.LOW_SCORING_DEFENSE:
-                # Low boundaries, high dot balls, regular wickets
-                current_score = int(progress * (target_score - 8 if not home_wins else target_score + 2))
-                current_wickets = min(9, int(progress * 8))
-                target_p = 0.98 if home_wins else 0.02
-                p_home += (target_p - p_home) * (progress ** 1.3) * 0.10 + self.rng.gauss(0, 0.025)
-
-            else:  # BLOWOUT
-                # Immediate divergence
-                current_score = int(progress * target_score * (1.3 if home_wins else 0.6))
-                current_wickets = min(9, int(progress * (3 if home_wins else 9)))
-                target_p = 0.99 if home_wins else 0.01
-                p_home += (target_p - p_home) * 0.18 + self.rng.gauss(0, 0.015)
-
-            # Bound probability
+            # Outcome-independent market noise: mean-reverting walk in log-odds space
+            # (theta=0.10, sigma=0.08 per tick).
+            noise_x = 0.9 * noise_x + noise_rng.gauss(0.0, 0.08)
+            p_state = self._state_home_win_prob(score, wickets, balls_remaining, target)
+            p_c = max(1e-4, min(1.0 - 1e-4, p_state))
+            p_home = 1.0 / (1.0 + math.exp(-(math.log(p_c / (1.0 - p_c)) + noise_x)))
             p_home = max(0.01, min(0.99, p_home))
             p_away = 1.0 - p_home
 
-            # Run rates
-            crr = round((current_score / max(overs, 0.1)), 2)
-            rrr = round(((target_score - current_score) / max(balls_remaining / 6.0, 0.1)), 2) if balls_remaining > 0 else 0.0
+            crr = round((score / max(overs, 0.1)), 2)
+            rrr = round(((target - score) / max(balls_remaining / 6.0, 0.1)), 2) if balls_remaining > 0 else 0.0
 
-            # Derive prices with 1.2% exchange margin
             back_h = max(1.02, min(50.0, round(1.0 / (p_home * 1.012), 2)))
-            lay_h = max(round(back_h * 1.01, 2), round(back_h + self.rng.choice([0.01, 0.02, 0.03]), 2))
+            lay_h = max(round(back_h * 1.01, 2), round(back_h + rng.choice([0.01, 0.02, 0.03]), 2))
 
             back_a = max(1.02, min(50.0, round(1.0 / (p_away * 1.012), 2)))
-            lay_a = max(round(back_a * 1.01, 2), round(back_a + self.rng.choice([0.01, 0.02, 0.03]), 2))
+            lay_a = max(round(back_a * 1.01, 2), round(back_a + rng.choice([0.01, 0.02, 0.03]), 2))
 
             ip_h = round(1.0 / back_h, 4)
             ip_a = round(1.0 / back_a, 4)
             overround = round(ip_h + ip_a - 1.0, 4)
 
-            vol_h = round(self.rng.uniform(1500, 25000), 0)
-            vol_a = round(self.rng.uniform(1500, 25000), 0)
+            vol_h = round(rng.uniform(1500, 25000), 0)
+            vol_a = round(rng.uniform(1500, 25000), 0)
 
             ticks.append({
                 "match_id": match_id,
@@ -240,19 +254,21 @@ class RealisticCorpusGenerator:
                 "overround": overround,
                 "is_live": True,
                 # FULL CRICKET CONTEXT
-                "score": current_score,
-                "wickets": current_wickets,
+                "score": score,
+                "wickets": wickets,
                 "overs": overs,
                 "run_rate": crr,
                 "req_run_rate": rrr,
                 "innings": 2,
                 "balls_remaining": balls_remaining,
+                "source": SYNTHETIC_SOURCE,
             })
 
-            curr_time += timedelta(seconds=self.rng.randint(3, 5))
+            curr_time += timedelta(seconds=rng.randint(3, 5))
 
-        winner = team_home if home_wins else team_away
-        loser = team_away if home_wins else team_home
+        # Winner is derived from the terminal state AFTER the whole path has been priced.
+        winner = self._decide_winner(prev_score, target, team_home, team_away, tiebreak_rng)
+        loser = team_away if winner == team_home else team_home
 
         return SimulatedCricketMatch(
             match_id=match_id,
@@ -266,4 +282,3 @@ class RealisticCorpusGenerator:
             loser=loser,
             ticks=ticks,
         )
-

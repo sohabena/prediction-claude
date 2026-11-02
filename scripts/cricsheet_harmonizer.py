@@ -29,6 +29,12 @@ from shared.logging import setup_logging
 
 logger = setup_logging("cricsheet_harmonizer")
 
+# Result-describing keys: used only to settle bets after an episode; never an input to
+# prices, probabilities or features.
+SETTLEMENT_ONLY_KEYS = ("_meta", "winner", "loser", "winner_is_home")
+
+SYNTHETIC_SOURCE = "synthetic_cricsheet"
+
 # Canonical formats strictly as requested by user
 FORMAT_T20 = "T20"
 FORMAT_ODI = "ODI"
@@ -84,10 +90,31 @@ def canonicalize_team(name: str) -> Optional[str]:
     return CANONICAL_TEAMS.get(name.strip())
 
 
+class MarketNoise:
+    """Outcome-independent mean-reverting random walk in log-odds space.
+
+    x_{t+1} = (1 - theta) * x_t + sigma * N(0, 1), seeded by the match index only.
+    Defaults: sigma = 0.08 per tick, theta = 0.10 (stationary std ~ 0.18 log-odds).
+    """
+
+    def __init__(self, seed: int, sigma: float = 0.08, theta: float = 0.10) -> None:
+        self._rng = random.Random(seed * 7919 + 13)
+        self._sigma = sigma
+        self._theta = theta
+        self._x = 0.0
+
+    def step(self) -> float:
+        self._x = (1.0 - self._theta) * self._x + self._rng.gauss(0.0, self._sigma)
+        return self._x
+
+
 class CricketWinProbModel:
     """
     Computes realistic dynamic in-play win probabilities for cricket match states.
     Calibrated against standard Duckworth-Lewis-Stern resource decay curves.
+
+    The probability is a pure function of the match state. It never sees the result;
+    ``noise_logit`` is an optional outcome-independent offset from ``MarketNoise``.
     """
 
     @staticmethod
@@ -99,11 +126,11 @@ class CricketWinProbModel:
         wickets: int,
         target: Optional[int],
         batting_is_home: bool,
-        winner_is_home: bool,
+        noise_logit: float = 0.0,
     ) -> float:
         """
         Calculate probability that Home Team wins given current match context.
-        Returns a float in [0.01, 0.99] during play, converging toward actual winner at close.
+        Returns a float in [0.025, 0.975]; depends on state only, never on the result.
         """
         max_overs = 20.0 if fmt == FORMAT_T20 else (50.0 if fmt == FORMAT_ODI else 100.0)
         max_balls = int(max_overs * 6)
@@ -117,7 +144,8 @@ class CricketWinProbModel:
         # Baseline par run rates by format
         par_rr = 8.5 if fmt == FORMAT_T20 else (5.6 if fmt == FORMAT_ODI else 3.2)
         
-        if innings == 1:
+        is_chase = innings == 4 or (innings == 2 and max_overs < 100.0)
+        if not is_chase:
             # First innings: batting team tries to post par or above par
             projected_score = score + (balls_remaining / 6.0) * par_rr * (wickets_left / 10.0) ** 0.65
             par_total = max_overs * par_rr
@@ -153,13 +181,9 @@ class CricketWinProbModel:
                 
             p_home = p_batting if batting_is_home else (1.0 - p_batting)
 
-        # Subtle drift toward actual match winner so odds realistically capture in-game edge
-        match_progress = balls_bowled / max(1, max_balls * (2 if innings == 2 else 1))
-        bias = 0.15 * (match_progress ** 1.5)
-        if winner_is_home:
-            p_home = min(0.99, p_home + bias * (1.0 - p_home))
-        else:
-            p_home = max(0.01, p_home - bias * p_home)
+        if noise_logit:
+            p_c = max(1e-4, min(1.0 - 1e-4, p_home))
+            p_home = 1.0 / (1.0 + math.exp(-(math.log(p_c / (1.0 - p_c)) + noise_logit)))
 
         return max(0.025, min(0.975, p_home))
 
@@ -221,21 +245,28 @@ def parse_and_harmonize_match(
 
     outcome = info.get("outcome", {})
     winner_raw = outcome.get("winner")
+    is_multiday = fmt_category == FORMAT_TEST
+    result_type = "win"
     if not winner_raw:
-        return None
-
-    winner = canonicalize_team(winner_raw)
-    if not winner:
-        # If winner name is exact match to either canonical team
-        if winner_raw == team_home:
-            winner = team_home
-        elif winner_raw == team_away:
-            winner = team_away
+        # Drawn multi-day matches are retained (marked) so the trainer can void them.
+        if is_multiday and str(outcome.get("result", "")).lower() == "draw":
+            result_type = "draw"
+            winner = ""
+            loser = ""
         else:
             return None
+    else:
+        winner = canonicalize_team(winner_raw)
+        if not winner:
+            # If winner name is exact match to either canonical team
+            if winner_raw == team_home:
+                winner = team_home
+            elif winner_raw == team_away:
+                winner = team_away
+            else:
+                return None
 
-    loser = team_away if winner == team_home else team_home
-    winner_is_home = (winner == team_home)
+        loser = team_away if winner == team_home else team_home
 
     dates = info.get("dates", [])
     date_str = dates[0] if dates else "2023-01-01"
@@ -258,8 +289,11 @@ def parse_and_harmonize_match(
     tick_time = match_date + timedelta(hours=14)  # typical match start
     tick_idx = 0
     first_inn_target: Optional[int] = None
+    inn_totals: List[int] = []
+    noise = MarketNoise(match_index)
+    max_innings = 4 if is_multiday else 2
 
-    for inn_idx, inn_data in enumerate(innings_list[:2]):  # Innings 1 and 2
+    for inn_idx, inn_data in enumerate(innings_list[:max_innings]):
         innings_num = inn_idx + 1
         batting_raw = inn_data.get("team", "")
         batting_team = canonicalize_team(batting_raw) or (team_home if inn_idx == 0 else team_away)
@@ -269,6 +303,14 @@ def parse_and_harmonize_match(
         overs_data = inn_data.get("overs", [])
         total_runs = 0
         total_wickets = 0
+        if innings_num == 4:
+            inn_target: Optional[int] = (
+                max(1, inn_totals[0] + inn_totals[2] - inn_totals[1] + 1) if len(inn_totals) >= 3 else None
+            )
+        elif innings_num == 2 and not is_multiday:
+            inn_target = first_inn_target
+        else:
+            inn_target = None
 
         for over_item in overs_data:
             over_num = over_item.get("over", 0)
@@ -300,8 +342,8 @@ def parse_and_harmonize_match(
 
                 run_rate = round((total_runs / max(1, balls_bowled)) * 6.0, 2)
                 req_run_rate = 0.0
-                if innings_num == 2 and first_inn_target is not None:
-                    runs_left = max(0, first_inn_target - total_runs)
+                if inn_target is not None:
+                    runs_left = max(0, inn_target - total_runs)
                     req_run_rate = round((runs_left / max(1, balls_rem)) * 6.0, 2)
 
                 # Compute dynamic win probability
@@ -311,9 +353,9 @@ def parse_and_harmonize_match(
                     overs=overs_float,
                     score=total_runs,
                     wickets=total_wickets,
-                    target=first_inn_target,
+                    target=inn_target,
                     batting_is_home=batting_is_home,
-                    winner_is_home=winner_is_home,
+                    noise_logit=noise.step(),
                 )
 
                 # Synthesize exchange microstructure
@@ -355,10 +397,11 @@ def parse_and_harmonize_match(
                     "volume_lay_home": round(vol_base * p_home * 1.05, 1),
                     "volume_back_away": round(vol_base * (1.0 - p_home), 1),
                     "volume_lay_away": round(vol_base * (1.0 - p_home) * 1.05, 1),
-                    "source": "cricsheet_official",
+                    "source": SYNTHETIC_SOURCE,
                 }
                 ticks.append(tick)
 
+        inn_totals.append(total_runs)
         if innings_num == 1:
             first_inn_target = total_runs + 1
 
@@ -371,8 +414,8 @@ def parse_and_harmonize_match(
         "loser": loser,
         "team_home": team_home,
         "team_away": team_away,
-        "result_type": "win",
-        "has_real_outcome": True,
+        "result_type": result_type,
+        "has_real_outcome": result_type == "win",
     }
 
     match_id = f"cric_{fmt_category.lower()}_{match_index:04d}"
@@ -384,6 +427,7 @@ def parse_and_harmonize_match(
         "match_format": fmt_category,
         "winner": winner,
         "loser": loser,
+        "result_type": result_type,
         "start_time": match_date.isoformat(),
         "total_ticks": len(ticks),
         "ticks": ticks,
@@ -399,7 +443,7 @@ async def insert_into_database(episodes: List[Dict[str, Any]], clear_existing: b
         if clear_existing:
             # Clear historical ticks to guarantee fresh, pristine official data
             print("           Clearing existing historical odds_ticks & match_training_status...")
-            await session.execute(text("DELETE FROM odds_ticks WHERE source = 'cricsheet_official' OR match_id LIKE 'cric_%'"))
+            await session.execute(text("DELETE FROM odds_ticks WHERE source IN ('cricsheet_official', 'synthetic_cricsheet') OR match_id LIKE 'cric_%'"))
             await session.execute(text("DELETE FROM match_training_status WHERE match_id LIKE 'cric_%'"))
             await session.commit()
 
@@ -530,23 +574,29 @@ def build_harmonized_dataset(
         random.Random(42).shuffle(files)
         
         admitted = 0
+        dropped = 0
+        drawn = 0
         for f in files:
             if admitted >= quota:
                 break
             ep = parse_and_harmonize_match(f, fmt, global_idx)
             if not ep:
+                dropped += 1
                 continue
 
             # Quality gate validation
             report = gate.evaluate(ep["ticks"])
             if not report.passed:
+                dropped += 1
                 continue
 
             all_episodes.append(ep)
             global_idx += 1
             admitted += 1
+            if ep.get("result_type") == "draw":
+                drawn += 1
 
-        print(f"            Admitted: {admitted} verified {fmt} matches.")
+        print(f"            Admitted: {admitted} verified {fmt} matches (drawn={drawn}, dropped={dropped}).")
 
     print("\n" + "=" * 65)
     print(f" Harmonization Complete! Total Verified Matches: {len(all_episodes)}")
