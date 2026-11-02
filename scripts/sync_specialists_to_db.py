@@ -141,3 +141,4 @@ async def sync_specialists() -> None:
 
 if __name__ == "__main__":
     asyncio.run(sync_specialists())
+
