@@ -155,10 +155,11 @@ S03 must emit, and S04 may rely on, these keys from `CricketBettingEnv.step()`:
 | `equity_delta` | float | equity change since previous step (after commission estimate) |
 | `peak_equity` | float | running max of equity this episode |
 | `current_drawdown` | float | 1 − equity/peak_equity |
-| `total_liability` | float | sum of liabilities of open bets |
+| `total_liability` | float | **net** worst-case loss of the open book: `max(0, -worst_case_pnl)` (as implemented by S03) |
+| `gross_liability` | float | sum of per-bet liabilities of open bets (added by S03) |
 | `worst_case_pnl` | float | min over outcomes (home wins / away wins) of book P&L |
 | `best_case_pnl` | float | max over outcomes of book P&L |
-| `clv_delta` | float | stake-weighted change in CLV of open bets since previous step (signed) |
+| `clv_delta` | float | stake-weighted change in CLV of open bets since previous step, divided by bankroll; **positive = favourable** (BACK `stake·(1/close − 1/entry)`, LAY `stake·(1/entry − 1/close)`) |
 | `profit_loss` | float | realised P&L settled this step, net of commission |
 | `bet_settled` | bool | any settlement this step |
 | `commission_paid` | float | commission charged this step |
@@ -173,6 +174,15 @@ Existing readers of `info["step_info"]` that must keep working: `rl/callbacks.py
 
 Keys removed from the old contract: `hedge_locked_pnl`, `is_hedge`, `clv_improvement`,
 `unrealized_pnl_delta`, `bets_last_hour`. S04 must not read them.
+
+Notes from S03 (committed `0b7e921`):
+- `rl/environment.py` still emits those legacy keys (plus `net_exposure_*`, `odds_change`,
+  `exposure_pct`, `episode_returns`) marked `# TODO(S04)`. S04 does not own the env, so it
+  just stops reading them; removing them is a follow-up.
+- On the terminal step the book is cleared after settlement, so `worst_case_pnl`,
+  `best_case_pnl` and `total_liability` read 0 there.
+- `exchange_commission` defaults to 0.0; realistic training must pass 0.02.
+- Default `episode_sampling` is `"random"`; deterministic evaluation passes `"sequential"`.
 
 ## Out of scope (research backlog, no story yet)
 
