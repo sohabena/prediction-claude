@@ -410,11 +410,7 @@ class LiveVirtualTradingLoop:
                 confidence = None
 
             # Size + reserve, then risk-check the actual proposal
-            if confidence is None:
-                # engine.propose requires a float (S12 gap: engine.py not owned); use its default
-                proposal = self._engine.propose(action, event)
-            else:
-                proposal = self._engine.propose(action, event, confidence=confidence)
+            proposal = self._engine.propose(action, event, confidence=confidence)
             if proposal is None:
                 return
             decision = self._risk_manager.check(proposal)

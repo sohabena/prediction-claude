@@ -48,7 +48,7 @@ class BetProposal:
     stake: float
     liability: float          # stake for back, stake*(odds-1) for lay
     reduces_liability: bool   # True if it lowers the match's worst-case loss
-    confidence: float
+    confidence: Optional[float]
     reservation_id: str
 
 

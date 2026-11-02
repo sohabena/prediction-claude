@@ -142,10 +142,13 @@ class VirtualBetEngine:
         odds: float,
         bankroll: float,
         budget: float,
-        confidence: float,
+        confidence: Optional[float],
         win_prob: Optional[float],
     ) -> Optional[float]:
-        """Target liability before noise/rounding/caps; None means no edge."""
+        """Target liability before noise/rounding/caps; None means no edge.
+
+        ``confidence=None`` means no confidence scaling (factor 1.0).
+        """
         large = action in _LARGE_ACTIONS
         if win_prob is not None:
             # Fractional Kelly on the calibrated probability that the selection wins.
@@ -160,7 +163,9 @@ class VirtualBetEngine:
             # Fixed fractional sizing (no probability model available)
             frac = LARGE_STAKE_BUDGET_FRACTION if large else SMALL_STAKE_BUDGET_FRACTION
             target = budget * frac
-        # Confidence may only scale the stake down
+        # Confidence may only scale the stake down; None = no scaling
+        if confidence is None:
+            return target
         return target * (0.25 + 0.75 * max(0.0, min(1.0, confidence)))
 
     # ------------------------------------------------------------ pipeline
@@ -168,7 +173,7 @@ class VirtualBetEngine:
         self,
         action: int,
         event: OddsEvent,
-        confidence: float = 0.5,
+        confidence: Optional[float] = None,
         win_prob: Optional[float] = None,
     ) -> Optional[BetProposal]:
         """Size a bet by liability and reserve it; returns None if nothing to place.
@@ -176,7 +181,9 @@ class VirtualBetEngine:
         Args:
             action: Integer action from the agent.
             event: Current odds event.
-            confidence: Policy confidence (0..1); only scales stake down.
+            confidence: Policy confidence (0..1) or None; only scales stake down.
+                None applies no scaling and is stored as NULL (S19: callers that
+                relied on the old 0.5 default now get factor 1.0 instead of 0.625).
             win_prob: Optional calibrated P(selection wins); enables fractional Kelly.
         """
         betting_action = BettingAction(action)
@@ -314,7 +321,7 @@ class VirtualBetEngine:
         self,
         action: int,
         event: OddsEvent,
-        confidence: float = 0.5,
+        confidence: Optional[float] = None,
         win_prob: Optional[float] = None,
     ) -> Optional[VirtualBet]:
         """Thin wrapper: propose -> risk check -> commit."""
