@@ -11,10 +11,14 @@ Provides strictly causal zero-lookahead routing based on match format, tournamen
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 import re
+import threading
+import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 
@@ -31,6 +35,7 @@ logger = setup_logging("model_zoo")
 SPECIALISTS_DIR = Path("models/specialists")
 METADATA_FILE = SPECIALISTS_DIR / "metadata.json"
 DEFAULT_MODEL_PATH = Path("models/best_model.zip")
+LOAD_FAILURE_TTL_SECONDS = 600.0  # negative cache for failed model loads
 
 ALL_SPECIALIST_DEFS: List[Tuple[str, str]] = [
     ("ipl", "IPL (Indian Premier League)"),
@@ -92,6 +97,9 @@ class ModelZoo:
         self.metadata_file = self.models_dir / "metadata.json"
         self._models: Dict[str, PhoenixAgent] = {}
         self._default_agent: Optional[PhoenixAgent] = None
+        self._model_info: Dict[str, Dict[str, Any]] = {}
+        self._load_failures: Dict[str, float] = {}
+        self._lock = threading.RLock()
         self._metadata: Dict[str, Any] = {}
         self._classifier = MatchCategoryClassifier()
         self._load_metadata()
@@ -291,59 +299,158 @@ class ModelZoo:
 
         return "default"
 
-    def get_agent(self, key: str = "default") -> Optional[PhoenixAgent]:
+    # ------------------------------------------------------------ loading
+    def _candidate_paths(self, key: str) -> List[Path]:
+        """Ordered candidate weight files for a specialist key."""
+        resolved_key = KEY_ALIASES.get(key, key)
+        paths = [
+            self.models_dir / f"{resolved_key}_v1.zip",
+            self.models_dir / f"{resolved_key}.zip",
+            self.models_dir / f"{key}_v1.zip",
+            self.models_dir / f"{key}.zip",
+        ]
+        for alias_k, target_k in KEY_ALIASES.items():
+            if target_k == resolved_key or target_k == key:
+                paths.append(self.models_dir / f"{alias_k}_v1.zip")
+                paths.append(self.models_dir / f"{alias_k}.zip")
+        if resolved_key in self._metadata and "path" in self._metadata[resolved_key]:
+            paths.insert(0, Path(self._metadata[resolved_key]["path"]))
+        if key in self._metadata and "path" in self._metadata[key]:
+            paths.insert(0, Path(self._metadata[key]["path"]))
+        return paths
+
+    def _recently_failed(self, path: Path) -> bool:
+        ts = self._load_failures.get(str(path))
+        return ts is not None and (time.monotonic() - ts) < LOAD_FAILURE_TTL_SECONDS
+
+    @staticmethod
+    def _file_info(key: str, path: Path) -> Dict[str, Any]:
+        """Version record: key, path, mtime and sha256[:12] of the weights."""
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        return {
+            "key": key,
+            "path": str(path),
+            "mtime": path.stat().st_mtime_ns,
+            "sha256": h.hexdigest()[:12],
+        }
+
+    def _try_load(self, key: str, path: Path) -> Optional[Tuple[PhoenixAgent, Dict[str, Any]]]:
+        """Load weights from path; failures are cached for LOAD_FAILURE_TTL_SECONDS."""
+        if self._recently_failed(path):
+            return None
+        try:
+            info = self._file_info(key, path)
+            agent = PhoenixAgent.load(path, env=None)
+            self._load_failures.pop(str(path), None)
+            return agent, info
+        except Exception as e:
+            self._load_failures[str(path)] = time.monotonic()
+            logger.error("error_loading_specialist", key=key, path=str(path), error=str(e))
+            return None
+
+    @staticmethod
+    def _version_str(info: Dict[str, Any]) -> str:
+        return f"{info['key']}@{info['sha256']}"
+
+    def get_agent_version(self, key: str = "default") -> str:
+        """Version id (``key@sha256[:12]``) of the weights serving this key, or ''."""
+        resolved = KEY_ALIASES.get(key, key)
+        info = self._model_info.get(resolved) or self._model_info.get(key)
+        return self._version_str(info) if info else ""
+
+    def get_agent(self, key: str = "default", allow_load: bool = True) -> Optional[PhoenixAgent]:
         """
         Retrieve agent for a specific specialist key, loading on-demand.
         Falls back to default champion if the specialist is not trained yet.
+
+        Failed loads are cached for 10 minutes. Async callers pass allow_load=False so
+        they only serve already-loaded models (loading belongs in preload/reload).
         """
-        # Check alias if given
         resolved_key = KEY_ALIASES.get(key, key)
         if resolved_key in self._models:
             return self._models[resolved_key]
         if key in self._models:
             return self._models[key]
 
-        # Check candidate file paths
-        candidate_paths = [
-            self.models_dir / f"{resolved_key}_v1.zip",
-            self.models_dir / f"{resolved_key}.zip",
-            self.models_dir / f"{key}_v1.zip",
-            self.models_dir / f"{key}.zip",
-        ]
-
-        # Reverse check aliases
-        for alias_k, target_k in KEY_ALIASES.items():
-            if target_k == resolved_key or target_k == key:
-                candidate_paths.append(self.models_dir / f"{alias_k}_v1.zip")
-                candidate_paths.append(self.models_dir / f"{alias_k}.zip")
-
-        # Check metadata for path
-        if resolved_key in self._metadata and "path" in self._metadata[resolved_key]:
-            candidate_paths.insert(0, Path(self._metadata[resolved_key]["path"]))
-        if key in self._metadata and "path" in self._metadata[key]:
-            candidate_paths.insert(0, Path(self._metadata[key]["path"]))
-
-        for path in candidate_paths:
-            if path.exists():
-                try:
-                    agent = PhoenixAgent.load(path, env=None)
+        if allow_load:
+            for path in self._candidate_paths(key):
+                if not path.exists():
+                    continue
+                loaded = self._try_load(resolved_key, path)
+                if loaded is None:
+                    continue
+                agent, info = loaded
+                with self._lock:
                     self._models[resolved_key] = agent
+                    self._model_info[resolved_key] = info
                     if key != resolved_key:
                         self._models[key] = agent
-                    logger.info("loaded_specialist_agent", key=resolved_key, path=str(path))
-                    return agent
-                except Exception as e:
-                    logger.error("error_loading_specialist", key=resolved_key, path=str(path), error=str(e))
+                logger.info("loaded_specialist_agent", key=resolved_key, path=str(path))
+                return agent
 
-        # Fallback to default champion model
-        if self._default_agent is None and DEFAULT_MODEL_PATH.exists():
-            try:
-                self._default_agent = PhoenixAgent.load(DEFAULT_MODEL_PATH, env=None)
-                logger.info("loaded_default_agent", path=str(DEFAULT_MODEL_PATH))
-            except Exception as e:
-                logger.error("error_loading_default_agent", error=str(e))
+            if self._default_agent is None and DEFAULT_MODEL_PATH.exists():
+                loaded = self._try_load("default", DEFAULT_MODEL_PATH)
+                if loaded is not None:
+                    with self._lock:
+                        self._default_agent, self._model_info["default"] = loaded
+                    logger.info("loaded_default_agent", path=str(DEFAULT_MODEL_PATH))
 
         return self._default_agent
+
+    def preload(self, keys: Optional[Iterable[str]] = None) -> Dict[str, str]:
+        """Load specialists (default: all known) plus the default model.
+
+        Blocking: call via ``asyncio.to_thread`` from async code. Returns {key: version}.
+        """
+        for key in (list(keys) if keys is not None else [k for k, _ in ALL_SPECIALIST_DEFS]):
+            self.get_agent(key)
+        self.get_agent("default")
+        return {k: self._version_str(i) for k, i in self._model_info.items()}
+
+    async def reload_if_changed(self) -> List[str]:
+        """Reload weights whose file changed (or newly appeared), off the event loop.
+
+        New agents are fully built before being swapped in, so readers never see a
+        half-loaded model. Returns the keys that were swapped.
+        """
+        return await asyncio.to_thread(self._reload_sync)
+
+    def _reload_sync(self) -> List[str]:
+        swapped: List[str] = []
+        for key, info in list(self._model_info.items()):
+            path = Path(info["path"])
+            try:
+                if not path.exists() or path.stat().st_mtime_ns == info["mtime"]:
+                    continue
+            except OSError:
+                continue
+            self._load_failures.pop(str(path), None)
+            loaded = self._try_load(info["key"], path)
+            if loaded is None:
+                continue
+            agent, new_info = loaded
+            with self._lock:
+                if key == "default":
+                    self._default_agent = agent
+                else:
+                    old = self._models.get(key)
+                    for k, v in list(self._models.items()):
+                        if v is old:
+                            self._models[k] = agent
+                self._model_info[key] = new_info
+            if new_info["sha256"] != info["sha256"]:
+                swapped.append(key)
+                logger.info("specialist_reloaded", key=key, version=self._version_str(new_info))
+        # Specialists whose weights appeared after startup
+        for key, _ in ALL_SPECIALIST_DEFS:
+            if key not in self._models:
+                self.get_agent(key)
+                if key in self._models:
+                    swapped.append(key)
+        return swapped
 
     def get_agent_for_match(
         self,
@@ -352,6 +459,7 @@ class ModelZoo:
         match_name: str = "",
         team_home: str = "",
         team_away: str = "",
+        allow_load: bool = True,
     ) -> Tuple[Optional[PhoenixAgent], str]:
         """
         Resolve match details to specialist key and return the loaded agent.
@@ -364,7 +472,7 @@ class ModelZoo:
             team_home=team_home,
             team_away=team_away,
         )
-        agent = self.get_agent(key)
+        agent = self.get_agent(key, allow_load=allow_load)
         if key in self._models:
             return self._models[key], key
         resolved = KEY_ALIASES.get(key, key)

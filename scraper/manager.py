@@ -354,15 +354,18 @@ class ScraperManager:
                     continue  # Skip storing this tick
 
             # Publish to Redis for live consumers (AFTER quality gates)
+            # Derive MatchContext FIRST so the odds message carries the in-sync context
+            context = self._live_match_tracker.update(event)
             event_data = event.model_dump(mode="json")
+            if context is not None:
+                event_data["context"] = context.model_dump(mode="json")
             await redis.publish_event(CHANNEL_MATCH_EVENTS, event_data)
 
             # Store to DB
             self._quality_stats["stored"] += 1
             await self._store_odds_tick(event)
 
-            # Derive and publish MatchContext from LotusBook data
-            context = self._live_match_tracker.update(event)
+            # Publish MatchContext for other consumers (channel + cache + DB)
             if context is not None:
                 await self._publish_match_context(redis, context)
                 # Feed score data into result detector for cross-referencing

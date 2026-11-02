@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import random
+import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Awaitable, Optional
 
@@ -28,14 +29,20 @@ from shared.constants import (
 from shared.db import get_session
 from shared.logging import setup_logging
 from shared.redis_client import get_redis
-from shared.schemas import BettingAction, OddsEvent, PortfolioState, VirtualBet
+from rl.environment import shift_price
+from shared.schemas import BettingAction, MatchContext, OddsEvent, PortfolioState, VirtualBet
 from virtual_trading.bet_persister import persist_bet, update_settled_bet
-from virtual_trading.engine import VirtualBetEngine
-from virtual_trading.portfolio import PortfolioManager
+from virtual_trading.engine import BetRejectedError, VirtualBetEngine
+from virtual_trading.portfolio import BetProposal, PortfolioManager, bet_liability
 from virtual_trading.risk_manager import RiskManager
 from virtual_trading.settlement import SettlementEngine
 
 logger = setup_logging("live_trading_loop")
+
+MAX_FILL_SLIPPAGE_TICKS = 2          # max adverse Betfair ticks between decision and fill
+CONTEXT_STALE_SECONDS = 10.0         # fallback context older than odds by more -> context_stale
+WATCHED_ID_CACHE_SECONDS = 2.0       # cache for KEY_WATCHED_MATCH_ID
+MODEL_RELOAD_INTERVAL_SECONDS = 300.0
 
 
 class LiveVirtualTradingLoop:
@@ -76,6 +83,11 @@ class LiveVirtualTradingLoop:
         self._pending_bet_tasks: set[asyncio.Task] = set()
         # Completed match IDs (loaded from DB, prevents betting on finished matches)
         self._completed_match_ids: set[str] = set()
+        # Latest odds per match (delayed fills re-read the price at placement time)
+        self._latest_events: dict[str, OddsEvent] = {}
+        self._watched_id: Optional[str] = None
+        self._watched_checked_at: float = float('-inf')
+        self._reload_task: Optional[asyncio.Task] = None
 
     async def start(self) -> None:
         """Start the live trading loop (subscribe and process)."""
@@ -93,6 +105,16 @@ class LiveVirtualTradingLoop:
 
         # Settle any orphaned pending bets that have match results in DB
         await self._settle_pending_from_db()
+
+        # Load every specialist off the event loop (never lazily on the first tick)
+        try:
+            from rl.model_zoo import get_model_zoo
+
+            versions = await asyncio.to_thread(get_model_zoo().preload)
+            logger.info("model_zoo_preloaded", versions=versions)
+            self._reload_task = asyncio.create_task(self._reload_models_periodically())
+        except Exception as e:
+            logger.warning("model_zoo_preload_failed", error=str(e))
 
         redis = await get_redis()
         self._pubsub = await redis.subscribe(CHANNEL_MATCH_EVENTS, CHANNEL_MATCH_RESULTS)
@@ -128,12 +150,16 @@ class LiveVirtualTradingLoop:
         except asyncio.CancelledError:
             pass
         finally:
+            if self._reload_task is not None:
+                self._reload_task.cancel()
             logger.info("live_trading_loop_stopped")
 
     async def stop(self) -> None:
         """Stop the loop."""
         self._running = False
-        # Cancel pending bet tasks
+        if self._reload_task is not None:
+            self._reload_task.cancel()
+        # Cancel pending bet tasks (each releases its reservation on cancellation)
         for t in list(self._pending_bet_tasks):
             t.cancel()
         if self._pending_bet_tasks:
@@ -141,33 +167,157 @@ class LiveVirtualTradingLoop:
         if self._pubsub:
             await self._pubsub.close()
 
-    async def _delayed_persist_bet(
-        self, bet: VirtualBet, match_id: str, action_name: str
+    async def _reload_models_periodically(self) -> None:
+        """Pick up retrained weights every MODEL_RELOAD_INTERVAL_SECONDS (off-loop)."""
+        from rl.model_zoo import get_model_zoo
+
+        while self._running:
+            await asyncio.sleep(MODEL_RELOAD_INTERVAL_SECONDS)
+            try:
+                swapped = await get_model_zoo().reload_if_changed()
+                if swapped:
+                    logger.info("model_zoo_reloaded", keys=swapped)
+            except Exception as e:
+                logger.warning("model_zoo_reload_failed", error=str(e))
+
+    async def _get_watched_match_id(self) -> Optional[str]:
+        """Watched-match id from Redis, cached for WATCHED_ID_CACHE_SECONDS."""
+        now = time.monotonic()
+        if now - self._watched_checked_at >= WATCHED_ID_CACHE_SECONDS:
+            redis = await get_redis()
+            watched = await redis.client.get(KEY_WATCHED_MATCH_ID)
+            if isinstance(watched, bytes):
+                watched = watched.decode("utf-8")
+            self._watched_id = watched or None
+            self._watched_checked_at = now
+        return self._watched_id
+
+    async def _delayed_place_bet(
+        self,
+        proposal: BetProposal,
+        decision_price: float,
+        model_version: str,
     ) -> None:
-        """Apply anti-detection delay then persist bet."""
-        delay = random.uniform(BET_DELAY_MIN_SECONDS, BET_DELAY_MAX_SECONDS)
-        await asyncio.sleep(delay)
-        if not self._running:
-            return
-        bet.agent_version = self._agent_version
-        if match_id not in self._open_bets:
-            self._open_bets[match_id] = []
-        self._open_bets[match_id].append((bet, bet.placed_at))
-        await persist_bet(bet, agent_version=self._agent_version)
-        logger.info(
-            "virtual_bet_placed",
-            match_id=match_id,
-            action=action_name,
-            odds=bet.odds,
-            stake=round(bet.stake, 2),
+        """Anti-detection delay, then fill at the price that exists NOW (or miss).
+
+        The reservation is always released: committed on a fill, released on a miss,
+        cancellation, stop, or if the match is no longer live.
+        """
+        match_id = proposal.match_id
+        action_name = proposal.action.name
+        committed = False
+        try:
+            delay = random.uniform(BET_DELAY_MIN_SECONDS, BET_DELAY_MAX_SECONDS)
+            await asyncio.sleep(delay)
+            if not self._running:
+                return
+            latest = self._latest_events.get(match_id)
+            if latest is None or not latest.is_live or match_id in self._completed_match_ids:
+                logger.info("bet_missed_match_not_live", match_id=match_id, action=action_name)
+                return
+
+            _team, latest_price = self._engine._resolve_action(proposal.action, latest)
+            if not latest_price or latest_price <= 1.0 or not self._fill_acceptable(
+                proposal.side, decision_price, latest_price
+            ):
+                logger.info(
+                    "bet_missed_price_moved",
+                    match_id=match_id,
+                    action=action_name,
+                    decision_odds=decision_price,
+                    latest_odds=latest_price,
+                    max_ticks=MAX_FILL_SLIPPAGE_TICKS,
+                )
+                return
+
+            try:
+                bet = self._engine.commit(proposal, fill_odds=latest_price)
+            except BetRejectedError as e:
+                logger.info("bet_rejected_at_fill", match_id=match_id, error=str(e))
+                return
+            committed = True
+
+            bet.agent_version = model_version
+            self._open_bets.setdefault(match_id, []).append((bet, bet.placed_at))
+            await persist_bet(bet, agent_version=model_version)
+            logger.info(
+                "virtual_bet_placed",
+                match_id=match_id,
+                action=action_name,
+                decision_odds=decision_price,
+                fill_odds=bet.odds,
+                delay_seconds=round(delay, 2),
+                stake=round(bet.stake, 2),
+                agent_version=model_version,
+            )
+        finally:
+            if not committed:
+                self._engine.release(proposal)
+
+    def _schedule_placement(
+        self, proposal: BetProposal, decision_price: float, model_version: str
+    ) -> asyncio.Task:
+        """Create the delayed-placement task; its reservation is released on completion
+        or cancellation (even if cancelled before the coroutine's first step)."""
+        task = asyncio.create_task(
+            self._delayed_place_bet(proposal, decision_price, model_version)
         )
+        self._pending_bet_tasks.add(task)
+
+        def _done(t: asyncio.Task) -> None:
+            self._pending_bet_tasks.discard(t)
+            # Idempotent: no-op if commit/finally already released it
+            self._engine.release(proposal)
+
+        task.add_done_callback(_done)
+        return task
+
+    @staticmethod
+    def _fill_acceptable(side: str, decision_price: float, latest_price: float) -> bool:
+        """True if latest_price is no worse than decision_price by > MAX_FILL_SLIPPAGE_TICKS.
+
+        Back: lower odds are worse. Lay: higher odds are worse.
+        """
+        direction = -MAX_FILL_SLIPPAGE_TICKS if side == "back" else MAX_FILL_SLIPPAGE_TICKS
+        limit = shift_price(decision_price, direction)
+        if side == "back":
+            return latest_price >= limit - 1e-9
+        return latest_price <= limit + 1e-9
+
+    async def _resolve_context(
+        self, event: OddsEvent, embedded: Any
+    ) -> Optional[MatchContext]:
+        """Prefer the context embedded in the odds message; else fall back to the cache."""
+        if embedded:
+            try:
+                return MatchContext.model_validate(embedded)
+            except Exception as e:
+                logger.debug("embedded_context_invalid", match_id=event.match_id, error=str(e))
+        context = await get_match_context(event.match_id)
+        if context is not None:
+            try:
+                age = (event.timestamp - context.timestamp).total_seconds()
+                if age > CONTEXT_STALE_SECONDS:
+                    logger.warning(
+                        "context_stale", match_id=event.match_id, age_seconds=round(age, 1)
+                    )
+            except TypeError:
+                pass  # naive vs aware timestamps; cannot compare
+        return context
 
     async def _handle_match_event(self, data: dict[str, Any]) -> None:
         """Process a match event: compute obs, predict, place bet, persist."""
         try:
+            t_received = time.time()
+            t_start = time.perf_counter()
+            embedded_context = data.get("context")
+            data = {k: v for k, v in data.items() if k != "context"}
             event = OddsEvent.from_redis_data(data)
             if event is None:
                 return
+
+            # Latest odds per match, used by delayed fills
+            self._latest_events[event.match_id] = event
 
             # LIVE GATE: only trade on live matches
             if not event.is_live:
@@ -179,13 +329,12 @@ class LiveVirtualTradingLoop:
                 return
 
             # Watch mode: only process events for the user-selected match
-            redis = await get_redis()
-            watched_id = await redis.client.get(KEY_WATCHED_MATCH_ID)
+            watched_id = await self._get_watched_match_id()
             if watched_id and event.match_id != watched_id:
                 return
 
-            context = await get_match_context(event.match_id)
-            portfolio = self._build_portfolio_state()
+            context = await self._resolve_context(event, embedded_context)
+            portfolio = self._build_portfolio_state(event.match_id)
             position_state = self._build_position_state(event)
             obs = self._feature_pipeline.compute(
                 match_id=event.match_id,
@@ -194,34 +343,52 @@ class LiveVirtualTradingLoop:
                 portfolio=portfolio,
                 position_state=position_state,
             )
+            t_obs = time.perf_counter()
 
             # Populate feature cache for advisor fast path (orchestrator._generate_signal)
             await self._feature_store.store(event.match_id, np.asarray(obs, dtype=np.float32))
 
             agent = self._get_agent() if self._get_agent else self._agent
+            model_version = self._agent_version
 
-            # Resolve format specialist from ModelZoo if available
+            # Resolve format specialist from ModelZoo (already loaded; never loads here)
             try:
                 from rl.model_zoo import get_model_zoo
                 zoo = get_model_zoo()
                 fmt_str = getattr(context, 'match_format', getattr(context, 'format', ''))
                 comp_str = getattr(context, 'competition', '')
-                spec_agent, _ = zoo.get_agent_for_match(
+                spec_agent, spec_key = zoo.get_agent_for_match(
                     format_name=str(fmt_str),
                     event_name=str(comp_str),
                     match_name=f'{event.team_home} vs {event.team_away}',
                     team_home=event.team_home,
                     team_away=event.team_away,
+                    allow_load=False,
                 )
                 if spec_agent is not None:
                     agent = spec_agent
+                    model_version = zoo.get_agent_version(spec_key) or model_version
             except Exception as e:
                 logger.debug('model_zoo_route_fallback', error=str(e))
 
             if agent is None:
                 return
 
+            # Left inline: median predict latency < 5 ms, asserted by
+            # tests/unit/test_s06_live_path.py::test_predict_latency_median_under_5ms
             action, _ = agent.predict(obs, deterministic=True)
+            t_action = time.perf_counter()
+            logger.info(
+                "tick_latency",
+                match_id=event.match_id,
+                t_scraped=event.timestamp.timestamp(),
+                t_received=t_received,
+                t_obs=t_received + (t_obs - t_start),
+                t_action=t_received + (t_action - t_start),
+                scraped_to_received_ms=round((t_received - event.timestamp.timestamp()) * 1000, 1),
+                received_to_obs_ms=round((t_obs - t_start) * 1000, 2),
+                obs_to_action_ms=round((t_action - t_obs) * 1000, 2),
+            )
 
             if action == BettingAction.HOLD:
                 return
@@ -233,26 +400,20 @@ class LiveVirtualTradingLoop:
             except AttributeError:
                 confidence = 0.5  # Fallback if agent doesn't support probability distribution
 
-            # Risk check
-            stake_pct = 0.03 if "LG" in BettingAction(action).name else 0.01
-            proposed_stake = self._portfolio.state.current_balance * stake_pct
-            risk = self._risk_manager.check_all(proposed_stake, event.match_id)
-            if not risk["allowed"]:
-                logger.debug("bet_rejected_risk", match_id=event.match_id, violations=risk["violations"])
+            # Size + reserve, then risk-check the actual proposal
+            proposal = self._engine.propose(action, event, confidence=confidence)
+            if proposal is None:
+                return
+            decision = self._risk_manager.check(proposal)
+            if not decision.allowed:
+                self._engine.release(proposal)
+                logger.debug("bet_rejected_risk", match_id=event.match_id, violations=decision.violations)
                 return
 
-            bet = self._engine.execute_action(action, event, confidence=confidence)
-            if bet is None:
-                return
+            _team, decision_price = self._engine._resolve_action(proposal.action, event)
 
-            self._risk_manager.record_bet()
-
-            # Anti-detection: random delay 5-15s before placing (never bet immediately after odds change)
-            task = asyncio.create_task(
-                self._delayed_persist_bet(bet, event.match_id, BettingAction(action).name)
-            )
-            self._pending_bet_tasks.add(task)
-            task.add_done_callback(self._pending_bet_tasks.discard)
+            # Anti-detection: random delay 5-15s before placing; fills at the price then
+            self._schedule_placement(proposal, decision_price or proposal.odds, model_version)
 
         except Exception as e:
             logger.error("handle_match_event_error", error=str(e))
@@ -432,19 +593,46 @@ class LiveVirtualTradingLoop:
             "best_entry_lay_away": best_lay_away,
         }
 
-    def _build_portfolio_state(self) -> PortfolioState:
-        """Build portfolio state for feature pipeline."""
+    def _build_portfolio_state(self, match_id: Optional[str] = None) -> PortfolioState:
+        """Portfolio state for the feature pipeline, as a per-match view.
+
+        Training resets the bankroll for every match, so the observation must not see the
+        cumulative live bankroll. Mapping (when match_id is given):
+          initial_balance / current_balance -> per-match budget (minus this match's open
+              liability for current_balance);
+          open_positions / total_bets       -> this match's open bets;
+          total_exposure                    -> this match's open liability;
+          session_pnl, daily_pnl, wins, streak -> 0 (a fresh match, as in training);
+          time_since_last_bet               -> unchanged (wall-clock based).
+        Without match_id the cumulative state is returned (legacy behaviour).
+        """
         state = self._portfolio.state
+        if match_id is None:
+            return PortfolioState(
+                initial_balance=state.initial_balance,
+                current_balance=state.current_balance,
+                open_positions=state.open_positions,
+                total_exposure=state.total_exposure,
+                session_pnl=state.session_pnl,
+                daily_pnl=state.daily_pnl,
+                total_bets=state.total_bets,
+                total_wins=state.total_wins,
+                consecutive_streak=state.consecutive_streak,
+                time_since_last_bet=state.time_since_last_bet,
+            )
+        budget = max(self._engine._match_budget(), 1.0)
+        bets = [b for b, _ in self._open_bets.get(match_id, [])]
+        liability = sum(bet_liability(b) for b in bets)
         return PortfolioState(
-            initial_balance=state.initial_balance,
-            current_balance=state.current_balance,
-            open_positions=state.open_positions,
-            total_exposure=state.total_exposure,
-            session_pnl=state.session_pnl,
-            daily_pnl=state.daily_pnl,
-            total_bets=state.total_bets,
-            total_wins=state.total_wins,
-            consecutive_streak=state.consecutive_streak,
+            initial_balance=budget,
+            current_balance=max(budget - liability, 0.0),
+            open_positions=len(bets),
+            total_exposure=liability,
+            session_pnl=0.0,
+            daily_pnl=0.0,
+            total_bets=len(bets),
+            total_wins=0,
+            consecutive_streak=0,
             time_since_last_bet=state.time_since_last_bet,
         )
 
