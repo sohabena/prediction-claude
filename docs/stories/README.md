@@ -140,6 +140,8 @@ Model tier = suggested executor. **Sonnet** implements every story (each needs d
 | [S19](S19-optional-confidence-in-engine.md) | Engine accepts "no confidence"; stop persisting 0.5 | P1 | Sonnet | S12 | `virtual_trading/engine.py`, `virtual_trading/live_trading_loop.py` (one call), `virtual_trading/bet_persister.py` |
 | [S20](S20-graduation-wiring-and-sharpe-cleanup.md) | Graduation per live model; last `sqrt(252)` | P1 | Sonnet | S15 | `rl/orchestrator.py` (nightly check), `virtual_trading/shadow_trader.py` (Sharpe) |
 | [S21](S21-graduation-streak-per-version.md) | Graduation streak tracked per model version | P1 | Sonnet | S20 | `rl/graduation.py`, `rl/lifecycle/graduation_handler.py` |
+| [S22](S22-calibrated-null-market-and-positive-control.md) | Calibrated null market, calibration audit, positive-control market | P0 | Sonnet | S13, S14, S18 | `scripts/synthetic_market.py`, `scripts/prepare_specialist_datasets.py`, `scripts/cricsheet_harmonizer.py`, new `scripts/audit_market_calibration.py` |
+| [S23](S23-s18-followups-hygiene.md) | S18 follow-ups: test_men audit, historical table, warnings, fair-value naming | P1 | Sonnet | S18, after S22 | `scripts/audit_outcome_leakage.py`, `features/pipeline.py`, `scripts/export_recorded_corpus.py`, `scripts/train_fair_value.py`, `scripts/rebuild_all.py`, `strategy/fair_value.py` |
 
 ## Parallelisation waves
 
@@ -152,6 +154,7 @@ Stories in the same wave own disjoint files and can run concurrently.
 - **Wave 5 (parallel):** S11, S12, S13, S14, S15, S16, S17. These are disjoint files. S14 edits only the policy dispatch in
   `scripts/train_format_specialists.py`, and no other wave-5 story touches that file.
 - **Wave 6:** S18 (long-running rebuild and report; needs wave 5 committed)
+- **Wave 9:** S22, then S23 (they share files, so sequential), then rerun S18. S22 is the blocker for any conclusion about edge.
 - **Wave 8:** S21 (any time before a real-money step; independent of S18).
 - **Wave 7 (done, S19 and S20):** S19, S20. Disjoint from each other and from S18. S19 changes sizing only for callers that relied on the old 0.5 default, so land it before S18's rebuild.
 
