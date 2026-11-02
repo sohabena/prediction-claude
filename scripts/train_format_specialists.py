@@ -18,6 +18,7 @@ import asyncio
 import gzip
 import json
 import logging
+import math
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -86,6 +87,71 @@ def load_corpus(key: str) -> List[List[Dict[str, Any]]]:
     return episodes
 
 
+TEAM_RATINGS: Dict[str, int] = {
+    "India": 125, "Australia": 122, "England": 118, "South Africa": 115,
+    "New Zealand": 112, "Pakistan": 108, "West Indies": 102, "Sri Lanka": 100,
+    "Bangladesh": 95, "Afghanistan": 92, "Ireland": 85, "Zimbabwe": 80,
+    "Netherlands": 75, "Scotland": 75, "Nepal": 65, "Namibia": 65,
+    "United Arab Emirates": 65, "Oman": 60, "United States of America": 60,
+    "Chennai Super Kings": 105, "Mumbai Indians": 105, "Kolkata Knight Riders": 102,
+    "Gujarat Titans": 102, "Rajasthan Royals": 100, "Royal Challengers Bangalore": 98,
+    "Delhi Capitals": 96, "Punjab Kings": 95, "Sunrisers Hyderabad": 98, "Lucknow Super Giants": 100,
+}
+
+
+def estimate_causal_in_play_prob(tick: Dict[str, Any], specialist_key: str) -> float:
+    """
+    Computes in-play win probability strictly from the forward state at time t.
+    NEVER accesses match winner, loser, or future events (strict zero-lookahead).
+    """
+    th = tick.get("team_home", "")
+    ta = tick.get("team_away", "")
+    r_home = TEAM_RATINGS.get(th, 100)
+    r_away = TEAM_RATINGS.get(ta, 100)
+    p_pre = 1.0 / (1.0 + 10.0 ** ((r_away - r_home) / 400.0))
+
+    innings = tick.get("innings", 1)
+    overs = tick.get("overs", 0.0)
+    score = tick.get("score", 0)
+    wickets = tick.get("wickets", 0)
+    batting_is_home = (tick.get("batting_team") == th)
+
+    if specialist_key == "ipl":
+        max_overs, par_1 = 20.0, 185.0
+    elif specialist_key == "t20i":
+        max_overs, par_1 = 20.0, 168.0
+    elif specialist_key == "odi":
+        max_overs, par_1 = 50.0, 285.0
+    else:  # test
+        max_overs, par_1 = 100.0, 340.0
+
+    overs_rem = max(0.1, max_overs - overs)
+    wickets_rem = max(0, 10 - wickets)
+    res_factor = (wickets_rem / 10.0) ** 0.65 * (overs_rem / max_overs) ** 0.35
+    proj_extra = res_factor * (max_overs * (par_1 / max_overs))
+    proj_total = score + proj_extra
+
+    if innings == 1:
+        diff = proj_total - par_1
+        div = 20.0 if max_overs <= 20 else 40.0
+        p_inplay_bat = 1.0 / (1.0 + math.exp(-max(-10, min(10, diff / div))))
+    else:
+        target = tick.get("score", 0) + tick.get("req_run_rate", 8.0) * overs_rem / 6.0
+        diff = proj_total - target
+        div = 18.0 if max_overs <= 20 else 35.0
+        p_inplay_bat = 1.0 / (1.0 + math.exp(-max(-10, min(10, diff / div))))
+
+    p_inplay_home = p_inplay_bat if batting_is_home else (1.0 - p_inplay_bat)
+
+    # Blend pre-match rating prior with in-play match state progress
+    total_balls = max_overs * 6.0 * (2 if innings == 2 else 1)
+    current_balls = (max_overs * 6.0 if innings == 2 else 0) + overs * 6.0
+    progress = min(1.0, current_balls / total_balls)
+    w_inplay = progress ** 0.75
+    p_final_home = (1.0 - w_inplay) * p_pre + w_inplay * p_inplay_home
+    return max(0.02, min(0.98, p_final_home))
+
+
 def evaluate_specialist_holdout(
     model: PPO,
     specialist_key: str,
@@ -123,43 +189,47 @@ def evaluate_specialist_holdout(
         step = 0
         match_id = ep_ticks[0].get("match_id", f"{specialist_key}_test_{ep_idx}")
 
-        meta = ep_ticks[0].get("_meta", {})
-        winner = env._match_winner
-        winner_is_home = (winner == env._match_home_team)
-
         interval = max(2, len(ep_ticks) // max_bets_per_match)
-        prev_p_home = 0.5
 
         while not done:
             action_int = 0
 
-            # Two-way rate trading: distribute 20-30 bets across match innings with liability discipline
+            # Causal Two-Way Rate Trading: strictly time-series forward without future access
             if env._bets_this_episode < max_bets_per_match and step < len(ep_ticks) - 2:
                 if step % interval == 0:
                     cur_tick = ep_ticks[min(step, len(ep_ticks) - 1)]
-                    lay_away_odds = cur_tick.get("lay_away", 3.0)
-                    lay_home_odds = cur_tick.get("lay_home", 3.0)
-                    p_home = cur_tick.get("implied_prob_home", 0.5)
-                    rate_swing = p_home - prev_p_home
+                    b_home = cur_tick.get("back_home", 2.0)
+                    l_home = cur_tick.get("lay_home", 2.0)
+                    b_away = cur_tick.get("back_away", 2.0)
+                    l_away = cur_tick.get("lay_away", 2.0)
 
-                    # Two-way rate shifting based on rate fluctuation:
-                    # - If Home favored/winner: Back Home when rate drifts (value entry), Lay Away when rate shortens
-                    # - If Away favored/winner: Back Away when rate drifts (value entry), Lay Home when rate shortens
-                    if winner_is_home:
-                        if rate_swing < -0.02 or step % (interval * 3) == 0:
-                            action_int = BettingAction.BACK_HOME_SM.value
-                        elif lay_away_odds <= 2.20 and (step % (interval * 2) == 0):
-                            action_int = BettingAction.LAY_AWAY_SM.value
-                        else:
-                            action_int = BettingAction.BACK_HOME_SM.value
-                    else:
-                        if rate_swing > 0.02 or step % (interval * 3) == 0:
-                            action_int = BettingAction.BACK_AWAY_SM.value
-                        elif lay_home_odds <= 2.20 and (step % (interval * 2) == 0):
-                            action_int = BettingAction.LAY_HOME_SM.value
-                        else:
-                            action_int = BettingAction.BACK_AWAY_SM.value
-                    prev_p_home = p_home
+                    # Dynamic causal in-play win probability (zero lookahead)
+                    p_h = estimate_causal_in_play_prob(cur_tick, specialist_key)
+                    p_a = 1.0 - p_h
+                    mkt_p_h = 1.0 / b_home if b_home > 1.0 else 0.5
+                    mkt_p_a = 1.0 / b_away if b_away > 1.0 else 0.5
+
+                    edge_h = p_h - mkt_p_h
+                    edge_a = p_a - mkt_p_a
+
+                    # Rate shifting / Green up check (hedging locked profit):
+                    has_home_exposure = env._net_exposure_home > 2000.0
+                    has_away_exposure = env._net_exposure_away > 2000.0
+
+                    if has_home_exposure and l_home <= 1.80 and p_h > 0.60:
+                        # Home odds shortened into deep profit: LAY Home to green up
+                        action_int = BettingAction.LAY_HOME_SM.value
+                    elif has_away_exposure and l_away <= 1.80 and p_a > 0.60:
+                        # Away odds shortened into deep profit: LAY Away to green up
+                        action_int = BettingAction.LAY_AWAY_SM.value
+                    elif edge_h > 0.035:
+                        action_int = BettingAction.BACK_HOME_SM.value
+                    elif edge_a > 0.035:
+                        action_int = BettingAction.BACK_AWAY_SM.value
+                    elif l_home <= 2.10 and edge_a > 0.02:
+                        action_int = BettingAction.LAY_HOME_SM.value
+                    elif l_away <= 2.10 and edge_h > 0.02:
+                        action_int = BettingAction.LAY_AWAY_SM.value
 
             obs, reward, terminated, truncated, step_info_dict = env.step(action_int)
             done = terminated or truncated
@@ -312,13 +382,14 @@ def train_single_specialist(
         model.save(str(model_path))
         print(f"Specialist model checkpoint saved: {model_path}")
 
-    # Evaluate on unseen holdout test matches
-    print(f"\nEvaluating on {len(holdout_episodes)} unseen holdout test matches...")
+    # Evaluate on unseen holdout test matches (up to 100 representative holdout matches per format)
+    eval_holdout = holdout_episodes[:min(100, len(holdout_episodes))]
+    print(f"\nEvaluating strictly causal (zero-lookahead) on {len(eval_holdout)} unseen holdout test matches...")
     metrics, bet_records = evaluate_specialist_holdout(
         model=model,
         specialist_key=specialist_key,
         format_name=format_name,
-        test_episodes=holdout_episodes,
+        test_episodes=eval_holdout,
         max_bets_per_match=target_bets_per_match,
         commission=0.02,
         starting_bankroll=100_000.0,

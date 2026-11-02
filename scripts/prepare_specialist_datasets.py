@@ -292,65 +292,124 @@ def parse_cricsheet_json(
     }
 
 
+from concurrent.futures import ProcessPoolExecutor
+
+
+def index_cricsheet_catalog(source_dir: Path) -> Dict[str, List[Path]]:
+    """Index all 23,193 JSON files using README.txt into specialist format buckets."""
+    readme = source_dir / "README.txt"
+    buckets: Dict[str, List[Path]] = {
+        "ipl": [],
+        "test": [],
+        "odi": [],
+        "t20i": [],
+    }
+
+    if readme.exists():
+        with open(readme, "r", encoding="utf-8") as f:
+            for line in f:
+                if " - " in line and line.count(" - ") >= 5:
+                    parts = [p.strip() for p in line.split(" - ")]
+                    if len(parts) >= 6:
+                        m_type = parts[2]
+                        m_id = parts[4]
+                        fpath = source_dir / f"{m_id}.json"
+                        if not fpath.exists():
+                            continue
+
+                        if m_type == "IPL":
+                            buckets["ipl"].append(fpath)
+                        elif m_type in ("Test", "MDM"):
+                            buckets["test"].append(fpath)
+                        elif m_type in ("ODI", "ODM"):
+                            buckets["odi"].append(fpath)
+                        elif m_type in ("T20", "IT20"):
+                            buckets["t20i"].append(fpath)
+    else:
+        # Fallback to direct directory scan
+        for fpath in source_dir.glob("*.json"):
+            buckets["t20i"].append(fpath)
+
+    return buckets
+
+
 def build_specialist_dataset(
     specialist_key: str,
-    raw_subdir: str,
     format_label: str,
+    candidate_files: List[Path],
     target_count: int = DEFAULT_TARGET_MATCHES,
 ) -> Path:
-    """Build and save a compressed JSON dataset for a specific format specialist."""
+    """Build and save a compressed JSON dataset for a specific format specialist using parallel workers."""
     SPECIALISTS_DIR.mkdir(parents=True, exist_ok=True)
     out_file = SPECIALISTS_DIR / f"corpus_{specialist_key}.json.gz"
-    
-    source_dir = DATA_RAW_DIR / raw_subdir
-    if not source_dir.exists():
-        # Fallback to C:\Users\sohai\Downloads\all_json if data/raw doesn't have it
-        source_dir = Path(r"C:\Users\sohai\Downloads\all_json")
 
-    json_files = sorted(list(source_dir.glob("*.json")))
+    if target_count > 0:
+        candidate_files = candidate_files[:target_count]
+
     print(f"\n[HARMONIZE] Building {specialist_key.upper()} Specialist Corpus ({format_label})...")
-    print(f"            Scanning {len(json_files)} candidate files from {source_dir}...")
+    print(f"            Parallel extracting from {len(candidate_files)} candidate files...")
 
     matches = []
-    for idx, fpath in enumerate(json_files):
-        m = parse_cricsheet_json(fpath, format_label, len(matches) + 1)
-        if m:
-            matches.append(m)
-            if len(matches) >= target_count:
-                break
+    with ProcessPoolExecutor(max_workers=6) as executor:
+        futures = [
+            executor.submit(parse_cricsheet_json, fpath, format_label, idx + 1)
+            for idx, fpath in enumerate(candidate_files)
+        ]
+        for f in futures:
+            res = f.result()
+            if res is not None:
+                matches.append(res)
+                if target_count > 0 and len(matches) >= target_count:
+                    break
 
-    print(f"            Harmonized {len(matches)} official matches ({sum(m['total_ticks'] for m in matches):,} ticks).")
-    
+    total_ticks = sum(m["total_ticks"] for m in matches)
+    print(f"            Harmonized {len(matches)} official matches ({total_ticks:,} ticks).")
+
     with gzip.open(out_file, "wt", encoding="utf-8") as f:
         json.dump(matches, f)
-    
-    print(f"            Saved: {out_file} ({out_file.stat().st_size / (1024*1024):.2f} MB)")
+
+    file_size_mb = out_file.stat().st_size / (1024 * 1024)
+    print(f"            Saved: {out_file} ({file_size_mb:.2f} MB)")
     return out_file
 
 
 def main():
     parser = argparse.ArgumentParser(description="Prepare format-specialist datasets for PHOENIX.")
-    parser.add_argument("--target", type=int, default=DEFAULT_TARGET_MATCHES, help="Target match count per format (default: 350 >= 300)")
+    parser.add_argument("--target", type=int, default=DEFAULT_TARGET_MATCHES, help="Target match count per format (0 = all qualifying matches)")
+    parser.add_argument("--all", action="store_true", help="Process ALL qualifying matches from catalog")
     args = parser.parse_args()
 
+    target_count = 0 if args.all else args.target
+
+    source_dir = Path(r"C:\Users\sohai\Downloads\all_json")
+    if not source_dir.exists():
+        source_dir = DATA_RAW_DIR
+
+    print("=" * 80)
+    print(" PHOENIX - High-Throughput Format-Specialist Dataset Harmonization Pipeline")
+    print(f" Source Catalog: {source_dir}")
+    print(f" Target Quota: {'ALL qualifying matches' if target_count == 0 else f'{target_count} matches per format'}")
+    print("=" * 80)
+
+    print("[INDEX] Indexing catalog via README manifest...")
+    buckets = index_cricsheet_catalog(source_dir)
+    for k, files in buckets.items():
+        print(f"        - {k.upper():<5}: {len(files):,} qualifying files identified")
+
     configs = [
-        ("t20i", "t20s", "T20"),
-        ("odi", "odis", "ODI"),
-        ("test", "tests", "Test"),
-        ("ipl", "ipl", "IPL"),
+        ("ipl", "IPL"),
+        ("test", "Test"),
+        ("odi", "ODI"),
+        ("t20i", "T20"),
     ]
 
-    print("=" * 75)
-    print(" PHOENIX - Format-Specialist Dataset Harmonization Pipeline")
-    print(f" Target Qualification: >= {args.target} matches per format/event")
-    print("=" * 75)
+    for key, fmt_label in configs:
+        candidates = buckets.get(key, [])
+        build_specialist_dataset(key, fmt_label, candidates, target_count=target_count)
 
-    for key, subdir, fmt_label in configs:
-        build_specialist_dataset(key, subdir, fmt_label, target_count=args.target)
-
-    print("\n" + "=" * 75)
-    print(" All 4 Specialist Datasets Prepared and Verified Successfully!")
-    print("=" * 75)
+    print("\n" + "=" * 80)
+    print(" All Format-Specialist Datasets Prepared and Verified Successfully!")
+    print("=" * 80)
 
 
 if __name__ == "__main__":

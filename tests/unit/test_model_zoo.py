@@ -49,3 +49,4 @@ def test_model_zoo_list_specialists():
     assert "odi" in specialists
     assert "test" in specialists
     assert "ipl" in specialists
+
