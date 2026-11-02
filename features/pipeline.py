@@ -60,11 +60,54 @@ class FeaturePipeline:
     no autocorrelation — just what matters for trading.
     """
 
-    # Maximum gap between ticks before resetting momentum accumulators
-    GAP_THRESHOLD_SECONDS = 30.0
+    # Default gap threshold (seconds) before resetting momentum accumulators.
+    # Must exceed the largest training inter-tick gap (synthetic: 45-90 s).
+    GAP_THRESHOLD_SECONDS = 600.0
 
-    def __init__(self, lookback_seconds: int = 120) -> None:
+    # Names of the 50 features, in vector order (groups documented above).
+    _FEATURE_NAMES: tuple[str, ...] = (
+        "back_home", "lay_home", "back_away", "lay_away", "overround",
+        "spread_home", "spread_away",
+        "velocity_home", "velocity_away", "volatility_home", "volatility_away",
+        "ema_crossover_home", "ema_crossover_away",
+        "spread_velocity", "market_efficiency", "relative_price_level",
+        "time_since_change_home", "time_since_change_away",
+        "is_live", "overs_normalized", "wickets_normalized", "score_normalized",
+        "run_rate_normalized", "req_run_rate_normalized", "innings",
+        "bankroll_pct", "exposure_pct", "open_positions_norm", "win_rate", "streak_norm",
+        "net_home_exposure_pct", "net_away_exposure_pct", "can_hedge_profit",
+        "hedge_profit_pct",
+        "volume_home_norm", "volume_away_norm", "volume_imbalance", "volume_velocity",
+        "overround_trend", "odds_move_symmetry", "pricing_intensity",
+        "odds_context_coupling",
+        "is_t20i", "is_odi", "is_test", "is_franchise",
+        "match_elapsed_pct", "tick_freshness",
+        "runs_momentum", "wickets_momentum",
+    )
+
+    def __init__(
+        self,
+        lookback_seconds: int = 120,
+        *,
+        gap_threshold_seconds: float = GAP_THRESHOLD_SECONDS,
+        normalize: bool = False,
+        min_history_ticks: int = 5,
+    ) -> None:
+        """
+        Args:
+            lookback_seconds: Time window for history features.
+            gap_threshold_seconds: Gap that resets history; must exceed the
+                largest training inter-tick gap.
+            normalize: Apply the inner OnlineNormalizer. Default False because
+                VecNormalize is the single source of observation scaling.
+            min_history_ticks: History features always see at least this many
+                recent events, so a 45-90 s cadence and a 3 s cadence get a
+                comparable number of history points (tick-count AND time based).
+        """
         self.lookback_seconds = lookback_seconds
+        self.gap_threshold_seconds = gap_threshold_seconds
+        self.normalize = normalize
+        self.min_history_ticks = min_history_ticks
         self.normalizer = OnlineNormalizer(OBSERVATION_SIZE)
         self.store = FeatureStore()
         self.category_classifier = MatchCategoryClassifier()
@@ -109,7 +152,7 @@ class FeaturePipeline:
             position_state: Optional dict with net exposure per team for hedging.
 
         Returns:
-            Normalized float32 array of shape (50,).
+            Raw (unless normalize=True) float32 array of shape (50,).
         """
         # Add event to history
         self.add_event(event)
@@ -127,7 +170,7 @@ class FeaturePipeline:
         gap_detected = False
         if last_tick is not None:
             gap_seconds = (event.timestamp - last_tick).total_seconds()
-            if gap_seconds > self.GAP_THRESHOLD_SECONDS:
+            if gap_seconds > self.gap_threshold_seconds:
                 gap_detected = True
                 logger.debug(
                     "tick_gap_detected",
@@ -205,8 +248,11 @@ class FeaturePipeline:
             f"Feature vector has {obs.shape[0]} features, expected {OBSERVATION_SIZE}"
         )
 
-        obs = np.nan_to_num(obs, nan=0.0, posinf=10.0, neginf=-10.0)
-        obs = self.normalizer.update_and_transform(obs)
+        obs = np.nan_to_num(obs, nan=0.0, posinf=0.0, neginf=0.0)
+        if self.normalize:
+            obs = self.normalizer.update_and_transform(obs)
+        else:
+            obs = np.clip(obs, -1e6, 1e6)
 
         is_valid, reason = validate_observation(obs)
         if not is_valid:
@@ -254,13 +300,22 @@ class FeaturePipeline:
             return []
 
         cutoff = history[-1].timestamp.timestamp() - self.lookback_seconds
-        return [e for e in history if e.timestamp.timestamp() >= cutoff]
+        in_window = [e for e in history if e.timestamp.timestamp() >= cutoff]
+        n = max(len(in_window), self.min_history_ticks)
+        return history[-n:]
+
+    @classmethod
+    def feature_names(cls) -> list[str]:
+        """Return the 50 feature names in observation-vector order."""
+        return list(cls._FEATURE_NAMES)
 
     def clear_match(self, match_id: str) -> None:
         """Clear history for a completed match."""
         self._history.pop(match_id, None)
         self._match_start_times.pop(match_id, None)
         self._last_tick_times.pop(match_id, None)
+        self._context_history.pop(match_id, None)
+        self._gap_detected.pop(match_id, None)
 
     def save_normalizer(self, path: str) -> None:
         """Save normalizer state for persistence."""
