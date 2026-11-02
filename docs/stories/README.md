@@ -276,7 +276,7 @@ Without context, only the time rule applies. Only decision ticks are fed to `Fea
 
 ## Contract: real tick (owned by S35, used by S36, S38, S39)
 
-One dict per price update: `time`, `market_id`, `match_id` (`bf_<market_id>`), `team_home`, `team_away`, `competition`, `match_format`, `family`, `in_play`, `ltp_home`, `ltp_away`, `ltp_draw`, `back_home`, `lay_home`, `back_away`, `lay_away` (None when the file tier has no ladder; never filled from ltp), `traded_volume_home/away`, `source`, `data_tier`, `market_model="real"`. Result only in `_meta` on the first tick. S36 adds state fields (`score`, `wickets`, `overs`, `innings`, `target`, `balls_remaining`, `run_rate`, `req_run_rate`) as of the conservatively released time.
+One dict per price update: `time`, `market_id`, `match_id` (`bf_<market_id with "." replaced by "_">`), `team_home`, `team_away`, `competition`, `match_format`, `family`, `in_play`, `ltp_home`, `ltp_away`, `ltp_draw`, `back_home`, `lay_home`, `back_away`, `lay_away` (None when the file tier has no ladder; never filled from ltp), `traded_volume_home/away`, `source`, `data_tier`, `market_model="real"`. Result only in `_meta` on the first tick. S36 adds state fields (`score`, `wickets`, `overs`, `innings`, `target`, `balls_remaining`, `run_rate`, `req_run_rate`) as of the conservatively released time.
 
 ## Contract: strategy interface (owned by S39, implemented by S40)
 

@@ -85,3 +85,15 @@ python -m pytest tests/unit tests/rl -q
 ## Out of scope
 
 - Strategy rules and sizing (S40). Buying lineup data feeds.
+
+## Integration notes from wave 10 (binding)
+
+- `shared/elo.py` (S24): `CricketEloTracker`, `family_for_match_type`, `margin_multiplier`; query
+  `rating(team, family, gender, as_of)` (`as_of` excludes matches on that date); `update()` must be called in date order
+  (out-of-order raises). Pass `normalize_team=` instead of importing `scripts/cricsheet_harmonizer.py` into `strategy/`
+  (it imports the DB and the synthetic market at import time). Associate teams can rate high from playing weak teams
+  (Uganda is 4th in t20|male): use the Elo difference *and* a competition-tier feature, never Elo alone.
+- `shared/venue_priors.py` (S25): `VenuePriors.build(raw_cricsheet_dicts)`, `get(venue, family, gender, as_of)`.
+  `chase_win_pct` and `toss_winner_win_pct` are **percentages (0–100)**; metrics are `None` when there is no history
+  before `as_of` (`fallback=True`, `n=0`). Handle `None` explicitly.
+- Fix `strategy/fair_value.py:family_of` so `ODM` maps to `odi` (today it falls through to `multiday`); add a test.
