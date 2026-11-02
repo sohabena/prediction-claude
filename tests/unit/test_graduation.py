@@ -8,6 +8,7 @@ from rl.graduation import GraduationEvaluator
 GOOD = dict(
     win_rate=0.60, roi=0.12, sharpe_ratio=2.0,
     max_drawdown=0.05, profitable_days=12, total_bets=150, avg_clv=0.02,
+    clv_ci_lower=0.005, n_matches=60,
 )
 
 
@@ -38,7 +39,7 @@ class TestGraduationEvaluator:
         status = self.evaluator.evaluate(
             win_rate=0.60, roi=0.12, sharpe_ratio=2.0,
             max_drawdown=0.05, profitable_days=12, total_bets=150,
-            avg_clv=0.02,
+            avg_clv=0.02, clv_ci_lower=0.005, n_matches=60,
         )
         assert status.consecutive_days == 1
         assert not status.ready  # Need 14 consecutive days
@@ -49,14 +50,14 @@ class TestGraduationEvaluator:
         self.evaluator.evaluate(
             win_rate=0.60, roi=0.12, sharpe_ratio=2.0,
             max_drawdown=0.05, profitable_days=12, total_bets=150,
-            avg_clv=0.02,
+            avg_clv=0.02, clv_ci_lower=0.005, n_matches=60,
         )
         self.clock.advance()
         # Second day: fail (low win rate)
         status = self.evaluator.evaluate(
-            win_rate=0.40, roi=0.12, sharpe_ratio=2.0,
+            win_rate=0.40, roi=-0.12, sharpe_ratio=2.0,
             max_drawdown=0.05, profitable_days=12, total_bets=150,
-            avg_clv=0.02,
+            avg_clv=0.02, clv_ci_lower=0.005, n_matches=60,
         )
         assert status.consecutive_days == 0
 
@@ -74,7 +75,7 @@ class TestGraduationEvaluator:
             win_rate=0.60, roi=0.12, sharpe_ratio=2.0,
             max_drawdown=0.25,  # Above 15% threshold
             profitable_days=12, total_bets=150,
-            avg_clv=0.02,
+            avg_clv=0.02, clv_ci_lower=0.005, n_matches=60,
         )
         assert status.consecutive_days == 0
         # Find the drawdown criterion
@@ -86,7 +87,7 @@ class TestGraduationEvaluator:
         status = self.evaluator.evaluate(
             win_rate=0.60, roi=0.12, sharpe_ratio=2.0,
             max_drawdown=0.05, profitable_days=12, total_bets=150,
-            avg_clv=-0.05,  # Negative CLV
+            avg_clv=-0.05, clv_ci_lower=-0.1, n_matches=60,  # Negative CLV
         )
         clv_criterion = next(c for c in status.criteria if c.name == "avg_clv")
         assert not clv_criterion.met
@@ -96,7 +97,7 @@ class TestGraduationEvaluator:
         status = self.evaluator.evaluate(
             win_rate=0.60, roi=0.12, sharpe_ratio=2.0,
             max_drawdown=0.05, profitable_days=12, total_bets=50,
-            avg_clv=0.02,
+            avg_clv=0.02, clv_ci_lower=0.005, n_matches=60,
         )
         vol_criterion = next(c for c in status.criteria if c.name == "bet_volume")
         assert not vol_criterion.met
@@ -129,5 +130,5 @@ class TestGraduationEvaluator:
 
     def test_failed_evaluation_same_day_resets(self) -> None:
         self.evaluator.evaluate(**GOOD)
-        bad = dict(GOOD, win_rate=0.1)
+        bad = dict(GOOD, roi=-0.1)
         assert self.evaluator.evaluate(**bad).consecutive_days == 0

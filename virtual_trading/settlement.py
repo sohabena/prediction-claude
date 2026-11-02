@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from shared.logging import setup_logging
+from shared.metrics import clv_prob
 from shared.schemas import BetOutcome, BettingAction, OddsEvent, VirtualBet
 from virtual_trading.portfolio import PortfolioManager
 
@@ -28,29 +29,20 @@ class SettlementEngine:
         self.portfolio = portfolio
 
     @staticmethod
-    def compute_clv(placement_odds: float, closing_odds: float) -> float:
+    def compute_clv(placement_odds: float, closing_odds: float, side: str = "BACK") -> float:
         """
-        Compute Closing Line Value.
+        Compute Closing Line Value in probability points (side-aware).
 
-        CLV = (closing_implied_prob / placement_implied_prob) - 1
-
-        Positive CLV means you got better odds than the closing line,
-        which is the industry gold standard for measuring betting skill.
+        BACK: 1/closing - 1/placement; LAY: 1/placement - 1/closing.
+        Positive means the bet beat the closing line. Delegates to
+        ``shared.metrics.clv_prob`` (the canonical definition).
 
         Args:
             placement_odds: Odds when the bet was placed.
             closing_odds: Last odds before the match ended.
-
-        Returns:
-            CLV as a decimal (e.g., 0.05 means 5% positive CLV).
+            side: "BACK" (default, for compatibility) or "LAY".
         """
-        if placement_odds <= 1.0 or closing_odds <= 1.0:
-            return 0.0
-
-        placement_implied = 1.0 / placement_odds
-        closing_implied = 1.0 / closing_odds
-
-        return (closing_implied / placement_implied) - 1.0
+        return clv_prob(side, placement_odds, closing_odds)
 
     def settle_on_match_result(
         self, bet: VirtualBet, winning_team: str,
@@ -102,7 +94,9 @@ class SettlementEngine:
         # Compute CLV if closing odds provided
         if closing_odds is not None and closing_odds > 1.0:
             bet.closing_odds = closing_odds
-            bet.clv = self.compute_clv(bet.odds, closing_odds)
+            bet.clv = self.compute_clv(
+                bet.odds, closing_odds, side="LAY" if is_lay else "BACK"
+            )
 
         # Close position in portfolio
         if bet.id:

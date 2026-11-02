@@ -71,25 +71,29 @@ class GraduationEvaluator:
 
     def evaluate(
         self,
-        win_rate: float,
-        roi: float,
-        sharpe_ratio: float,
-        max_drawdown: float,
-        profitable_days: int,
-        total_bets: int,
+        win_rate: Optional[float] = None,
+        roi: float = 0.0,
+        sharpe_ratio: float = 0.0,
+        max_drawdown: float = 0.0,
+        profitable_days: int = 0,
+        total_bets: int = 0,
         avg_clv: float = 0.0,
+        clv_ci_lower: Optional[float] = None,
+        n_matches: Optional[int] = None,
     ) -> GraduationStatus:
         """
-        Evaluate all graduation criteria.
+        Evaluate all graduation criteria (data-driven from ``GRADUATION_CRITERIA``).
 
         Args:
-            win_rate: Rolling win rate over last 200 bets.
-            roi: Rolling ROI over last 200 bets.
-            sharpe_ratio: Rolling Sharpe ratio over last 30 days.
-            max_drawdown: Max drawdown over last 30 days.
-            profitable_days: Number of profitable days in last 14.
-            total_bets: Total bets in last 30 days.
-            avg_clv: Average Closing Line Value over last 200 bets.
+            win_rate: Accepted for backward compatibility and ignored.
+            roi: Net P&L / turnover (stake) over the window.
+            sharpe_ratio: Non-annualised per-calendar-day Sharpe over the window.
+            max_drawdown: Max drawdown as a fraction of peak equity.
+            profitable_days: Profitable calendar days in the last 14.
+            total_bets: Settled bets in the window.
+            avg_clv: Mean CLV (probability points) of the live model's bets.
+            clv_ci_lower: Bootstrap 95% CI lower bound of CLV. None = not measured (fails).
+            n_matches: Distinct matches bet. None = not measured (fails).
 
         Returns:
             GraduationStatus with all criteria evaluations.
@@ -97,24 +101,30 @@ class GraduationEvaluator:
         results: list[GraduationCriterion] = []
         all_met = True
 
-        metric_values = {
-            "win_rate": win_rate,
+        metric_values: dict[str, Optional[float]] = {
             "roi": roi,
+            "roi_on_turnover": roi,
             "sharpe_ratio": sharpe_ratio,
             "max_drawdown": max_drawdown,
             "profitable_days": float(profitable_days),
             "bet_volume": float(total_bets),
             "avg_clv": avg_clv,
+            "clv_ci_lower": clv_ci_lower,
+            "min_matches": None if n_matches is None else float(n_matches),
         }
 
         for name, config in self.criteria.items():
             threshold = config["threshold"]
-            value = metric_values.get(name, 0.0)
+            op = config.get("op", "le" if name == "max_drawdown" else "ge")
+            raw = metric_values.get(name)
+            value = 0.0 if raw is None else float(raw)
 
-            # For max_drawdown, check if BELOW threshold
-            if name == "max_drawdown":
-                met = max_drawdown <= threshold
-                value = max_drawdown
+            if raw is None:
+                met = False  # an unmeasured metric never passes
+            elif op == "le":
+                met = value <= threshold
+            elif op == "gt":
+                met = value > threshold
             else:
                 met = value >= threshold
 

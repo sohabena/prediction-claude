@@ -54,14 +54,18 @@ LARGE_STAKE_PERCENT = 0.04     # 4% of bankroll ($4,000 on 100k budget)
 # Graduation Criteria
 # ============================================================
 
+# "op" is the comparison of metric vs threshold: ge (>=), gt (>), le (<=).
+# win_rate is deliberately absent: it is meaningless for a back/lay trading book.
+# sharpe_ratio is a NON-annualised per-calendar-day Sharpe (zero days included).
 GRADUATION_CRITERIA = {
-    "win_rate": {"threshold": 0.55, "window": 200},
-    "roi": {"threshold": 0.08, "window": 200},
-    "sharpe_ratio": {"threshold": 1.5, "window_days": 30},
-    "max_drawdown": {"threshold": 0.15, "window_days": 30},
-    "profitable_days": {"threshold": 10, "window_days": 14},
-    "bet_volume": {"threshold": 100, "window_days": 30},
-    "avg_clv": {"threshold": 0.0, "window": 200},  # Average CLV must be positive
+    "roi_on_turnover": {"threshold": 0.02, "op": "ge", "window_days": 30},
+    "sharpe_ratio": {"threshold": 0.10, "op": "ge", "window_days": 30},
+    "max_drawdown": {"threshold": 0.15, "op": "le", "window_days": 30},
+    "profitable_days": {"threshold": 10, "op": "ge", "window_days": 14},
+    "bet_volume": {"threshold": 100, "op": "ge", "window_days": 30},
+    "min_matches": {"threshold": 30, "op": "ge", "window_days": 30},
+    "avg_clv": {"threshold": 0.0, "op": "gt", "window_days": 30},  # mean CLV (prob points) > 0
+    "clv_ci_lower": {"threshold": 0.0, "op": "gt", "window_days": 30},  # bootstrap 95% CI lower bound > 0
 }
 GRADUATION_REQUIRED_DAYS = 14  # All criteria met for N consecutive days
 

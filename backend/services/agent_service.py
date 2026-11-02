@@ -128,7 +128,8 @@ class AgentService:
                     bet_on_home = (str(team).strip().lower() == str(team_home).strip().lower())
                     closing_odds = closing[0] if bet_on_home else closing[1]
                     if closing_odds and closing_odds > 1.0 and odds > 1.0:
-                        clv = (1.0 / closing_odds) / (1.0 / odds) - 1.0
+                        from shared.metrics import clv_prob
+                        clv = clv_prob("LAY" if "LAY" in action else "BACK", odds, closing_odds)
 
                 try:
                     await repo.settle_bet(

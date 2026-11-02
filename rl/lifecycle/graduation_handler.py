@@ -1,23 +1,76 @@
 """Graduation check handler — evaluates if agent meets graduation criteria.
 
 Extracted from orchestrator._run_graduation_check (RGV #3).
+
+Metrics are computed from the *current live model's* settled bets only
+(``agent_version`` filter, holdout-eval rows excluded) using the canonical
+definitions in ``shared.metrics``.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any
+from datetime import datetime, timedelta, timezone
+from typing import Any, Optional
 
-import numpy as np
-
+from backtesting.report import bootstrap_ci
 from rl.graduation import GraduationEvaluator
 from shared.config import get_settings
 from shared.constants import KEY_GRADUATION_STATUS
 from shared.db import get_session
 from shared.logging import setup_logging
+from shared.metrics import daily_series, max_drawdown, sharpe
 from shared.redis_client import get_redis
 
 logger = setup_logging("lifecycle_graduation")
+
+WINDOW_DAYS = 30
+PROFIT_DAYS_WINDOW = 14
+
+# One row per settled bet of the current model; holdout rows are never included.
+GRADUATION_BETS_SQL = """
+    SELECT placed_at, match_id, stake, profit_loss, clv
+    FROM virtual_bets
+    WHERE placed_at > :since
+      AND settled_at IS NOT NULL
+      AND agent_version = :agent_version
+      AND agent_version NOT LIKE 'holdout_eval:%'
+    ORDER BY placed_at
+"""
+
+
+def compute_graduation_metrics(
+    rows: list[Any],
+    starting_bankroll: float,
+    now: Optional[datetime] = None,
+    window_days: int = WINDOW_DAYS,
+) -> dict[str, Any]:
+    """Pure: turn bet rows ``(placed_at, match_id, stake, pnl, clv)`` into evaluator inputs."""
+    now = now or datetime.now(timezone.utc)
+    end = now.date()
+    start = end - timedelta(days=window_days - 1)
+
+    pnl_rows = [(r[0], float(r[3])) for r in rows if r[3] is not None]
+    daily = daily_series(pnl_rows, start, end)  # calendar days, zeros included
+    turnover = sum(float(r[2] or 0.0) for r in rows)
+    total_pnl = sum(p for _, p in pnl_rows)
+    clvs = [float(r[4]) for r in rows if r[4] is not None]
+
+    equity = [starting_bankroll]
+    for d in daily:
+        equity.append(equity[-1] + d)
+    _, dd_frac = max_drawdown(equity)
+
+    ci = bootstrap_ci(clvs, n_bootstrap=2000) if clvs else None
+    return {
+        "roi": total_pnl / turnover if turnover > 0 else 0.0,
+        "sharpe_ratio": sharpe(daily),
+        "max_drawdown": dd_frac,
+        "profitable_days": sum(1 for d in daily[-PROFIT_DAYS_WINDOW:] if d > 0),
+        "total_bets": len(rows),
+        "avg_clv": sum(clvs) / len(clvs) if clvs else 0.0,
+        "clv_ci_lower": ci["ci_lower"] if ci else None,
+        "n_matches": len({r[1] for r in rows if r[1] is not None}),
+    }
 
 
 class GraduationHandler:
@@ -26,90 +79,42 @@ class GraduationHandler:
     def __init__(self, evaluator: GraduationEvaluator) -> None:
         self._graduation = evaluator
 
-    async def check(self) -> bool:
-        """Run daily graduation check. Returns True if agent graduated."""
+    @staticmethod
+    def _current_version() -> str:
+        try:
+            from rl.model_zoo import get_model_zoo
+
+            return get_model_zoo().get_agent_version("default") or ""
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning("graduation_version_lookup_failed", error=str(e))
+            return ""
+
+    async def check(self, agent_version: Optional[str] = None) -> bool:
+        """Run daily graduation check for one model version. Returns True if graduated."""
         logger.info("graduation_check_starting")
         settings = get_settings()
+        version = agent_version or self._current_version()
+        if not version:
+            logger.warning("graduation_check_no_agent_version")
+            return False
 
         try:
             async with get_session() as session:
                 from sqlalchemy import text
 
+                since = datetime.now(timezone.utc) - timedelta(days=WINDOW_DAYS)
                 result = await session.execute(
-                    text("""
-                        WITH daily AS (
-                            SELECT DATE(placed_at) as day, SUM(profit_loss) as day_pnl
-                            FROM virtual_bets
-                            WHERE placed_at > NOW() - INTERVAL '30 days'
-                              AND settled_at IS NOT NULL
-                            GROUP BY DATE(placed_at)
-                        )
-                        SELECT
-                            COUNT(*) FILTER (WHERE outcome = 'win') * 1.0 /
-                                NULLIF(COUNT(*), 0) as win_rate,
-                            COALESCE(SUM(profit_loss), 0) /
-                                NULLIF(SUM(stake), 0) as roi,
-                            COUNT(*) as total_bets,
-                            (SELECT COUNT(*) FROM daily WHERE day_pnl > 0) as profitable_days,
-                            AVG(clv) FILTER (WHERE clv IS NOT NULL) as avg_clv
-                        FROM virtual_bets
-                        WHERE placed_at > NOW() - INTERVAL '30 days'
-                          AND settled_at IS NOT NULL
-                    """)
+                    text(GRADUATION_BETS_SQL),
+                    {"since": since, "agent_version": version},
                 )
-                row = result.fetchone()
-
-                if not row or row[2] is None:
+                rows = result.fetchall()
+                if not rows:
                     return False
 
-                win_rate = float(row[0] or 0)
-                roi = float(row[1] or 0)
-                total_bets = int(row[2] or 0)
-                profitable_days = int(row[3] or 0)
-                avg_clv = float(row[4] or 0)
-
-                # Compute Sharpe ratio from daily returns
-                daily_result = await session.execute(
-                    text("""
-                        SELECT DATE(placed_at) as day, SUM(profit_loss) as daily_pnl
-                        FROM virtual_bets
-                        WHERE placed_at > NOW() - INTERVAL '30 days'
-                          AND settled_at IS NOT NULL
-                        GROUP BY DATE(placed_at)
-                        ORDER BY day
-                    """)
+                metrics = compute_graduation_metrics(
+                    rows, float(settings.rl.starting_bankroll)
                 )
-                daily_rows = daily_result.fetchall()
-                initial_bankroll = float(settings.rl.starting_bankroll)
-                daily_returns = [
-                    float(r[1]) / initial_bankroll
-                    for r in daily_rows if r[1] is not None
-                ]
-
-                if len(daily_returns) >= 5:
-                    mean_ret = np.mean(daily_returns)
-                    std_ret = np.std(daily_returns)
-                    sharpe = float(
-                        mean_ret / std_ret * np.sqrt(252)
-                    ) if std_ret > 0 else 0.0
-                else:
-                    sharpe = 0.0
-
-                # Max drawdown
-                cumulative = np.cumsum(daily_returns) if daily_returns else np.array([0.0])
-                running_max = np.maximum.accumulate(cumulative)
-                drawdowns = running_max - cumulative
-                max_drawdown = float(np.max(drawdowns)) if len(drawdowns) > 0 else 0.0
-
-                status = self._graduation.evaluate(
-                    win_rate=win_rate,
-                    roi=roi,
-                    sharpe_ratio=sharpe,
-                    max_drawdown=max_drawdown,
-                    profitable_days=profitable_days,
-                    total_bets=total_bets,
-                    avg_clv=avg_clv,
-                )
+                status = self._graduation.evaluate(**metrics)
 
                 # Store graduation status in Redis
                 redis = await get_redis()
@@ -119,6 +124,7 @@ class GraduationHandler:
                     "required_days": status.required_days,
                     "progress_pct": self._graduation.get_progress_pct(),
                     "criteria": [c.model_dump() for c in status.criteria],
+                    "agent_version": version,
                     "checked_at": datetime.now(timezone.utc).isoformat(),
                 })
 
@@ -126,6 +132,7 @@ class GraduationHandler:
                     logger.info(
                         "AGENT_GRADUATED",
                         consecutive_days=status.consecutive_days,
+                        agent_version=version,
                     )
                     return True
 
