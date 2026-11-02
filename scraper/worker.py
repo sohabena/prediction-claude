@@ -415,17 +415,35 @@ class ScraperWorker:
         """
         self._running = True
         logger.info("poll_loop_started", interval=self.poll_interval)
+        poll_count = 0
+        zero_count = 0
 
         while self._running:
             try:
+                poll_count += 1
                 events = await self.scrape_once()
 
                 # Also check WebSocket buffer
                 ws_events = self.get_ws_events()
                 events.extend(ws_events)
 
-                if events and callback:
-                    await callback(events)
+                if events:
+                    zero_count = 0
+                    if callback:
+                        await callback(events)
+                else:
+                    zero_count += 1
+
+                # Periodically reload page (every ~5 min) or if DOM extraction returned 0 events repeatedly
+                if poll_count >= 100 or zero_count >= 5:
+                    logger.info("refreshing_live_page", poll_count=poll_count, zero_count=zero_count)
+                    poll_count = 0
+                    zero_count = 0
+                    try:
+                        await self.page.reload(wait_until="domcontentloaded", timeout=20000)
+                        await asyncio.sleep(2)
+                    except Exception as re:
+                        logger.warning("page_reload_failed", error=str(re))
 
             except Exception as e:
                 logger.error("poll_error", error=str(e))

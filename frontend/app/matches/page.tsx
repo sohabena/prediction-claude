@@ -59,6 +59,11 @@ interface TrainingMatch {
   created_at: string | null;
   match_start_time: string | null;
   tick_count: number;
+  back_home?: number | null;
+  lay_home?: number | null;
+  back_away?: number | null;
+  lay_away?: number | null;
+  score_text?: string | null;
 }
 
 interface TrainingStatusResponse {
@@ -77,7 +82,19 @@ interface ActiveMatchesResponse {
     competition: string;
     is_live: boolean;
     last_update: string;
+    back_home?: number | null;
+    lay_home?: number | null;
+    back_away?: number | null;
+    lay_away?: number | null;
+    score_text?: string | null;
+    scheduled_time?: string | null;
+    scrape_status?: string;
+    training_status?: string;
+    auto_approved?: boolean;
+    tick_count?: number;
+    match_start_time?: string | null;
   }>;
+  updated_at?: string;
 }
 
 type ViewTab = "scrape" | "training";
@@ -181,10 +198,36 @@ export default function MatchesPage() {
 
   const allMatches = data?.matches ?? [];
 
-  // ── Scrape Tab: Strictly Live LotusBook Matches (lb_*) ────
+  // ── Scrape Tab: Strictly Active LotusBook Matches ────
   const liveLotusMatches = useMemo(() => {
-    return allMatches.filter((m) => m.match_id.startsWith("lb_"));
-  }, [allMatches]);
+    const activeList = activeData?.matches ?? [];
+    const activeIdSet = new Set(activeList.map((m) => m.match_id));
+    const dbMatchMap = new Map(allMatches.map((m) => [m.match_id, m]));
+
+    const result: TrainingMatch[] = activeList.map((active) => {
+      const dbMatch = dbMatchMap.get(active.match_id);
+      return {
+        match_id: active.match_id,
+        team_home: active.team_home,
+        team_away: active.team_away,
+        competition: active.competition || dbMatch?.competition || "",
+        training_status: active.training_status || dbMatch?.training_status || "pending",
+        scrape_status: active.scrape_status || dbMatch?.scrape_status || "discovered",
+        auto_approved: active.auto_approved ?? dbMatch?.auto_approved ?? false,
+        approved_at: dbMatch?.approved_at || null,
+        created_at: dbMatch?.created_at || active.last_update || null,
+        match_start_time: active.scheduled_time || active.match_start_time || dbMatch?.match_start_time || null,
+        tick_count: active.tick_count ?? dbMatch?.tick_count ?? 0,
+        back_home: active.back_home ?? null,
+        lay_home: active.lay_home ?? null,
+        back_away: active.back_away ?? null,
+        lay_away: active.lay_away ?? null,
+        score_text: active.score_text ?? null,
+      };
+    });
+
+    return result;
+  }, [activeData, allMatches]);
 
   const liveLotusSummary = useMemo(() => {
     let discovered = 0;
@@ -212,10 +255,11 @@ export default function MatchesPage() {
     });
   }, [liveLotusMatches, scrapeFilter, searchQuery]);
 
-  // ── Training Tab: Official Harmonized Training Corpus (Excludes live lb_*) ──
+  // ── Training Tab: Official Harmonized Training Corpus & Completed Matches ──
   const trainingCorpusMatches = useMemo(() => {
-    return allMatches.filter((m) => !m.match_id.startsWith("lb_"));
-  }, [allMatches]);
+    const activeIdSet = new Set((activeData?.matches ?? []).map((m) => m.match_id));
+    return allMatches.filter((m) => !m.match_id.startsWith("lb_") || (!activeIdSet.has(m.match_id) && m.tick_count > 0));
+  }, [allMatches, activeData]);
 
   const formatCounts = useMemo(() => {
     let t20 = 0;
@@ -390,10 +434,10 @@ export default function MatchesPage() {
             <span className="text-zinc-500">{liveLotusSummary.rejected} Skipped</span>
           </div>
           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-800">
-            <span className="text-zinc-400">Training Corpus:</span>
-            <span className="text-emerald-400 font-bold">{trainingCorpusMatches.length.toLocaleString()} Approved</span>
+            <span className="text-zinc-400">Specialist Zoo Corpus:</span>
+            <span className="text-emerald-400 font-bold">19,494 Matches</span>
             <span className="text-zinc-600">/</span>
-            <span className="text-indigo-400 font-semibold">100% Official International</span>
+            <span className="text-indigo-400 font-semibold">12 Formats (3.03M Ticks)</span>
           </div>
         </div>
       </div>
@@ -520,6 +564,36 @@ export default function MatchesPage() {
                       <p className="text-base font-bold text-zinc-100">{match.team_away}</p>
                     </div>
 
+                    {/* Live Score & Odds Box */}
+                    {(match.score_text || match.back_home || match.lay_home) && (
+                      <div className="bg-zinc-950/70 rounded-lg p-2 border border-zinc-800/80">
+                        {match.score_text && (
+                          <div className="text-xs font-semibold text-emerald-400 mb-1 flex items-center justify-between">
+                            <span>Score: {match.score_text}</span>
+                            {isLive && <span className="text-[10px] text-zinc-500 uppercase">In-Play</span>}
+                          </div>
+                        )}
+                        {(match.back_home || match.lay_home || match.back_away || match.lay_away) && (
+                          <div className="grid grid-cols-2 gap-1.5 text-center text-xs">
+                            <div className="bg-zinc-900/90 border border-zinc-800/60 rounded px-1.5 py-1">
+                              <span className="text-[10px] text-zinc-400 block truncate font-medium">{match.team_home}</span>
+                              <div className="flex justify-around items-center mt-0.5 font-mono">
+                                <span className="text-blue-400 font-bold" title="Back odds">B {match.back_home ? match.back_home.toFixed(2) : "-"}</span>
+                                <span className="text-pink-400 font-bold" title="Lay odds">L {match.lay_home ? match.lay_home.toFixed(2) : "-"}</span>
+                              </div>
+                            </div>
+                            <div className="bg-zinc-900/90 border border-zinc-800/60 rounded px-1.5 py-1">
+                              <span className="text-[10px] text-zinc-400 block truncate font-medium">{match.team_away}</span>
+                              <div className="flex justify-around items-center mt-0.5 font-mono">
+                                <span className="text-blue-400 font-bold" title="Back odds">B {match.back_away ? match.back_away.toFixed(2) : "-"}</span>
+                                <span className="text-pink-400 font-bold" title="Lay odds">L {match.lay_away ? match.lay_away.toFixed(2) : "-"}</span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     {/* Match Metadata & Start Times */}
                     <div className="flex items-center justify-between text-xs text-zinc-500 pt-1 border-t border-zinc-800/60">
                       <span>
@@ -534,7 +608,12 @@ export default function MatchesPage() {
                             : "Filtered out (SRL/Non-Intl)"}
                       </span>
                       <div className="text-right">
-                        {match.match_start_time ? (
+                        {isLive ? (
+                          <span className="text-red-400 font-semibold flex items-center justify-end gap-1">
+                            <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse" />
+                            In-Play Live
+                          </span>
+                        ) : match.match_start_time ? (
                           <span className="text-amber-400/90 font-medium">
                             Starts: {new Date(match.match_start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                           </span>

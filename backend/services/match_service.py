@@ -14,6 +14,7 @@ from backend.models.results import MatchResultRecord
 from backend.repositories.match_repository import MatchRepository
 from features.data_quality import EpisodeQualityGate
 from shared.constants import CHANNEL_MATCH_RESULTS, KEY_ACTIVE_MATCHES
+from shared.db import get_session
 from shared.logging import setup_logging
 from shared.redis_client import get_redis
 from shared.schemas import MatchResult
@@ -31,12 +32,55 @@ class MatchService:
 
     @staticmethod
     async def get_active_matches() -> dict[str, Any]:
-        """Get currently active/live matches from Redis."""
+        """Get currently active/live matches from Redis, enriched with DB status and tick count."""
         try:
             redis = await get_redis()
             data = await redis.get_json(KEY_ACTIVE_MATCHES)
-            if data:
-                return data
+            if not data or not data.get("matches"):
+                return {"matches": []}
+
+            matches = data.get("matches", [])
+            match_ids = [m["match_id"] for m in matches if isinstance(m, dict) and "match_id" in m]
+
+            if match_ids:
+                async with get_session() as session:
+                    from sqlalchemy import text
+                    res = await session.execute(
+                        text("""
+                            SELECT mts.match_id, mts.scrape_status, mts.training_status,
+                                   mts.auto_approved, mts.match_start_time,
+                                   COALESCE(tc.tick_count, 0) as tick_count
+                            FROM match_training_status mts
+                            LEFT JOIN (
+                                SELECT match_id, COUNT(*) as tick_count
+                                FROM odds_ticks
+                                GROUP BY match_id
+                            ) tc ON tc.match_id = mts.match_id
+                            WHERE mts.match_id = ANY(:ids)
+                        """),
+                        {"ids": match_ids},
+                    )
+                    status_map = {
+                        r[0]: {
+                            "scrape_status": r[1],
+                            "training_status": r[2],
+                            "auto_approved": r[3],
+                            "match_start_time": r[4].isoformat() if r[4] else None,
+                            "tick_count": r[5],
+                        }
+                        for r in res.fetchall()
+                    }
+                    for m in matches:
+                        mid = m.get("match_id")
+                        if mid in status_map:
+                            m.update(status_map[mid])
+                        else:
+                            m.setdefault("scrape_status", "discovered")
+                            m.setdefault("training_status", "pending")
+                            m.setdefault("auto_approved", False)
+                            m.setdefault("tick_count", 0)
+
+            return {"matches": matches, "updated_at": data.get("updated_at")}
         except Exception as e:
             logger.error("active_matches_error", error=str(e))
         return {"matches": []}

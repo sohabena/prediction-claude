@@ -17,3 +17,4 @@ This script:
 You can also inspect or trigger the sync status via REST API:
 - Status: `Invoke-RestMethod http://localhost:8001/api/training/cricsheet-sync/status`
 - Trigger: `Invoke-RestMethod -Method Post http://localhost:8001/api/training/cricsheet-sync/trigger`
+

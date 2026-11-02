@@ -227,6 +227,12 @@ class ScraperManager:
                 "team_away": event.team_away,
                 "competition": event.competition,
                 "is_live": event.is_live,
+                "back_home": event.back_home,
+                "lay_home": event.lay_home,
+                "back_away": event.back_away,
+                "lay_away": event.lay_away,
+                "score_text": getattr(event, "score_text", None) or (f"{event.score}/{event.wickets} ({event.overs} ov)" if getattr(event, "overs", None) is not None else None),
+                "scheduled_time": event.scheduled_time.isoformat() if event.scheduled_time else None,
                 "last_update": now.isoformat(),
             }
 
@@ -360,17 +366,17 @@ class ScraperManager:
             logger.error("result_detection_error", error=str(e))
 
         # Mark matches NOT in current batch as not-live (they may have finished)
-        # and remove matches not seen for >2 hours (likely completed/removed)
+        # and remove matches not seen for >120 seconds (completed/removed from exchange)
         stale_ids = []
-        for mid, mdata in self._active_matches.items():
+        for mid, mdata in list(self._active_matches.items()):
             if mid not in current_batch_ids:
                 # Match was not in this scrape — mark as not live
                 if mdata.get("is_live"):
                     mdata["is_live"] = False
-                # Check if stale (not seen for >2 hours) — remove entirely
+                # Check if stale (not seen for >120 seconds) — remove entirely
                 try:
                     last = datetime.fromisoformat(mdata["last_update"])
-                    if (now - last).total_seconds() > 7200:
+                    if (now - last).total_seconds() > 120:
                         stale_ids.append(mid)
                 except (ValueError, KeyError):
                     pass
@@ -548,7 +554,14 @@ class ScraperManager:
                     # Update start time if it was missing and we now have it
                     if record.match_start_time is None and event.scheduled_time is not None:
                         record.match_start_time = event.scheduled_time
-                        
+
+                    # Auto-upgrade to scrape_approved if should_auto is True
+                    if should_auto and record.scrape_status != "scrape_approved":
+                        record.scrape_status = "scrape_approved"
+                        record.auto_approved = True
+                        if record.training_status == "pending":
+                            record.training_status = "approved"
+
                     # Already tracked — but update scrape cache if approved
                     if record.scrape_status == "scrape_approved":
                         self._scrape_approved_ids.add(event.match_id)
@@ -556,7 +569,7 @@ class ScraperManager:
                             if not hasattr(self, "_scrape_approved_times"):
                                 self._scrape_approved_times = {}
                             self._scrape_approved_times[event.match_id] = record.match_start_time
-                            
+
                     return
 
                 # Auto-approve both scraping AND training for high-tier matches.
