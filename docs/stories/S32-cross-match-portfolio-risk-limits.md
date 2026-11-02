@@ -54,3 +54,26 @@ As the portfolio risk manager, I need cross-match exposure governance and correl
 python -m pytest tests/unit/test_s32_portfolio_risk.py -v
 ```
 
+
+## Executor notes (review 2026-11-02, binding; they override the text above where they differ)
+
+- **Most of this already exists (S05).** `virtual_trading/risk_manager.py:57 RiskManager.check(proposal)` already enforces
+  per-bet, per-match, per-team and **total** liability (`MAX_TOTAL_LIABILITY_PCT`), daily and weekly loss, drawdown, the
+  circuit breaker and the hourly limit. Do **not** re-implement or duplicate those checks.
+- Real names: the class is `PortfolioManager` (`virtual_trading/portfolio.py:90`), not `VirtualPortfolio`. Useful members:
+  `match_books()` L229 (per-match (pnl_if_home, pnl_if_away) books), `worst_loss(book)` L85, `register_match(match_id,
+  team_home, team_away)` L200, `match_teams` L204, `reserve`/`release` L208-218, `daily_start_balance` L171.
+  `BetProposal` (L40) has no competition field.
+- **Build only what is new:**
+  1. A per-competition cap: extend `register_match(..., competition: str | None = None)` (keyword, default None), store
+     it, and add `competition_open_liability(competition) -> float` (the sum of worst-case losses of that competition's
+     match books). In `check`, reject a non-reducing proposal if it would push that above
+     `MAX_COMPETITION_LIABILITY_PCT` (new constant 0.30, defined at the top of `risk_manager.py`, since you do not own
+     constants.py) of the balance. Unknown competition = no competition cap.
+  2. The daily breaker counts unrealised risk: `daily_loss` uses realised P&L **plus** the sum of current worst-case open
+     losses (conservative). Liability-reducing proposals stay exempt.
+- Operator decision 2026-11-02: bets are placed by hand from signals. "Halt" means no new signals or proposals; there
+  are no exchange orders to cancel. Releasing open reservations is enough.
+- Tests: the scenarios in the story, rewritten for these two features, plus a test that existing S05 behaviour is
+  unchanged (rerun `tests/unit/test_budget_tolerance.py` and any `test_s05_*`).
+- Baseline: `python -m pytest tests/unit tests/rl -q` → 373 passed. Do not commit. Do not edit files outside Owned files.

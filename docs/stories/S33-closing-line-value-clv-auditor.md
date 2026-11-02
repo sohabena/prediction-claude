@@ -57,3 +57,20 @@ python -m pytest tests/unit/test_s33_clv_auditor.py -v
 python -m scripts.audit_clv --limit 100
 ```
 
+
+## Executor notes (review 2026-11-02, binding; they override the text above where they differ)
+
+- **Do not introduce a second CLV definition for the `clv` column.** S15 made `shared/metrics.py clv_prob(side, entry_odds,
+  closing_odds)` canonical (probability points: BACK `1/close − 1/entry`, LAY `1/entry − 1/close`), and
+  `virtual_trading/settlement.py` already uses it via `SettlementEngine.compute_clv(placement, closing, side=...)`. Keep
+  that as the stored `clv`. The odds-ratio form in this story may be reported **only** as an extra metric named
+  `clv_odds_pct` in the auditor output, never stored in `clv`.
+- New and wanted: **60-second post-placement CLV** (`clv_60s`), the price 60 s after placement vs the entry price, side-aware,
+  same `clv_prob` formula. It matches the operator's manual-betting latency (60 s, see S39/S40). Compute it in the auditor
+  from `odds_ticks` (read-only), not at settlement.
+- `shared/metrics.py`: add `portfolio_clv(bets) -> dict` (mean, median, positive rate, n, bootstrap 95% CI via
+  `backtesting/report.py bootstrap_ci`). Do not add an annualised "CLV Sharpe".
+- `scripts/audit_clv.py` is **read-only** SQL. It excludes `agent_version LIKE 'holdout_eval:%'`, simulated names
+  (`scraper/match_filter.py is_simulated_name`) and `odds_ticks.source <> 'lotusbook'/'betfair'`. It reports by
+  `agent_version` and by closing-price source (`match_results.source`). Tests use a fake session; never touch a real DB.
+- Baseline: `python -m pytest tests/unit tests/rl -q` → 373 passed. Do not commit. Do not edit files outside Owned files.
