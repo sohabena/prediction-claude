@@ -175,20 +175,20 @@ class ScraperManager:
         try:
             from shared.constants import CHANNEL_MATCH_RESULTS
             redis = await get_redis()
-            pubsub = await redis.subscribe(CHANNEL_MATCH_RESULTS)
-            async for message in pubsub.listen():
-                if message["type"] != "message":
-                    continue
+            from shared.redis_client import default_consumer_name
+
+            async for msg in redis.consume_bus(
+                "scraper", default_consumer_name("scraper-"), [CHANNEL_MATCH_RESULTS]
+            ):
                 try:
-                    import json
-                    data = json.loads(message["data"])
-                    match_id = data.get("match_id", "")
+                    match_id = msg.data.get("match_id", "")
                     if match_id:
                         self._completed_match_ids.add(match_id)
                         logger.info("match_completed_via_result",
                                     match_id=match_id)
                 except Exception as e:
                     logger.warning("result_listener_parse_error", error=str(e))
+                await redis.ack_bus(msg)
         except Exception as e:
             logger.error("result_listener_error", error=str(e))
 

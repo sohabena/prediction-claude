@@ -28,7 +28,7 @@ from shared.constants import (
 )
 from shared.db import get_session
 from shared.logging import setup_logging
-from shared.redis_client import get_redis
+from shared.redis_client import BoundedDedupe, default_consumer_name, get_redis
 from rl.environment import shift_price
 from shared.schemas import BettingAction, MatchContext, OddsEvent, PortfolioState, VirtualBet
 from virtual_trading.bet_persister import persist_bet, update_settled_bet
@@ -88,6 +88,8 @@ class LiveVirtualTradingLoop:
         self._watched_id: Optional[str] = None
         self._watched_checked_at: float = float('-inf')
         self._reload_task: Optional[asyncio.Task] = None
+        # Streams are at-least-once: dedupe redelivered ticks by (match_id, timestamp)
+        self._seen_ticks = BoundedDedupe()
 
     async def start(self) -> None:
         """Start the live trading loop (subscribe and process)."""
@@ -117,35 +119,34 @@ class LiveVirtualTradingLoop:
             logger.warning("model_zoo_preload_failed", error=str(e))
 
         redis = await get_redis()
-        self._pubsub = await redis.subscribe(CHANNEL_MATCH_EVENTS, CHANNEL_MATCH_RESULTS)
 
         try:
-            async for raw_message in self._pubsub.listen():
+            # TICK_BUS=streams: consumer group "live_trading" (ack after the handler
+            # finishes; a scheduled placement counts as finished). pubsub: legacy.
+            async for msg in redis.consume_bus(
+                "live_trading",
+                default_consumer_name("live-"),
+                [CHANNEL_MATCH_EVENTS, CHANNEL_MATCH_RESULTS],
+            ):
                 if not self._running:
                     break
-                if raw_message.get("type") != "message":
-                    continue
-
-                channel = raw_message.get("channel")
-                if isinstance(channel, bytes):
-                    channel = channel.decode("utf-8")
-                data = raw_message.get("data")
-                if not data:
-                    continue
-
-                if isinstance(data, str):
-                    try:
-                        data = json.loads(data)
-                    except json.JSONDecodeError:
-                        continue
-
+                data = msg.data
                 try:
-                    if channel == CHANNEL_MATCH_EVENTS:
+                    if msg.channel == CHANNEL_MATCH_EVENTS:
+                        key = (data.get("match_id"), data.get("timestamp"))
+                        if None not in key and key in self._seen_ticks:
+                            await redis.ack_bus(msg)
+                            continue
                         await self._handle_match_event(data)
-                    elif channel == CHANNEL_MATCH_RESULTS:
+                        if None not in key:
+                            self._seen_ticks.add(key)
+                    elif msg.channel == CHANNEL_MATCH_RESULTS:
                         await self._handle_match_result(data)
                 except Exception as e:
+                    # Leave the message pending: XAUTOCLAIM redelivers, DLQ after 5 tries
                     logger.error("live_trading_loop_error", error=str(e))
+                    continue
+                await redis.ack_bus(msg)
 
         except asyncio.CancelledError:
             pass
