@@ -21,6 +21,7 @@ import inspect
 import json
 import logging
 import subprocess
+import sys
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -30,6 +31,8 @@ import numpy as np
 import torch
 from sqlalchemy import text
 from stable_baselines3 import PPO
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # allow `python scripts/...`
 
 from backtesting.baselines import (
     HeuristicPolicy,
@@ -253,8 +256,8 @@ class SpecialistEvaluationMetrics:
     baselines: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
 
-def load_corpus(key: str) -> List[List[Dict[str, Any]]]:
-    """Load episodes for a specialist format."""
+def load_corpus(key: str) -> List[Dict[str, Any]]:
+    """Load a specialist corpus as match dicts (``match_id``, ``start_time``, ``ticks``, ...)."""
     resolved_key = KEY_ALIASES.get(key, key)
     fpath = CORPUS_DIR / f"corpus_{resolved_key}.json.gz"
     if not fpath.exists():
@@ -264,14 +267,13 @@ def load_corpus(key: str) -> List[List[Dict[str, Any]]]:
             fpath = alt
         else:
             raise FileNotFoundError(f"Corpus file not found: {fpath}. Run prepare_specialist_datasets.py first.")
-    
+
     with gzip.open(fpath, "rt", encoding="utf-8") as f:
         matches = json.load(f)
-    
-    episodes = [m["ticks"] for m in matches]
-    total_ticks = sum(len(ep) for ep in episodes)
-    print(f"Loaded {len(episodes)} matches ({total_ticks:,} ticks) from {fpath.name}")
-    return episodes
+
+    total_ticks = sum(len(m["ticks"]) for m in matches)
+    print(f"Loaded {len(matches)} matches ({total_ticks:,} ticks) from {fpath.name}")
+    return matches
 
 
 TEAM_RATINGS: Dict[str, int] = {
@@ -619,111 +621,344 @@ def evaluate_specialist_holdout(
     return metrics, raw["bet_rows"]
 
 
+# ---------------------------------------------------------------------------
+# Training regime (S09): config, chronological split, vec envs, early stopping
+# ---------------------------------------------------------------------------
+
+CONFIG_PATH = Path("configs/specialists.yaml")
+DEFAULT_MODELS_DIR = Path("models/specialists/candidates")
+TRAIN_COMMISSION = 0.02
+TRAIN_BANKROLL = 100_000.0
+SMOKE_TIMESTEPS = 2_000
+SMOKE_MATCHES = 20
+
+
+def load_training_config(key: str, path: Path = CONFIG_PATH) -> Dict[str, Any]:
+    """Merge built-in defaults < yaml ``defaults`` < yaml ``specialists[key]``."""
+    import yaml
+
+    cfg: Dict[str, Any] = {
+        "gamma": 0.99, "lr": 3e-4, "ent_coef": 0.01, "n_steps": 2048, "batch_size": 64,
+        "n_epochs": 5, "net_arch": {"pi": [256, 256, 128], "vf": [256, 256, 128]},
+        "timesteps_per_match": 300, "epochs_over_data": 3, "n_envs": 8, "patience": 5,
+    }
+    if path.exists():
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        cfg.update(raw.get("defaults") or {})
+        cfg.update((raw.get("specialists") or {}).get(key) or {})
+    return cfg
+
+
+def _match_sort_key(m: Dict[str, Any]) -> Tuple[str, str]:
+    start = m.get("start_time") or ""
+    if not start and m.get("ticks"):
+        start = _parse_tick_time(m["ticks"][0]).isoformat()
+    return (str(start), str(m.get("match_id", "")))
+
+
+def split_matches(
+    matches: List[Dict[str, Any]], key: str, corpus_dir: Optional[Path] = None
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Chronological train/val/holdout split (oldest 70% / next 15% / newest 15%).
+
+    If S07's manifest ``splits_<key>.json`` exists its ``holdout_ids`` / ``val_ids`` are used
+    (``pending_ids`` are excluded from train); everything else is train. Never shuffles.
+    """
+    ordered = sorted(matches, key=_match_sort_key)
+    manifest = (corpus_dir or CORPUS_DIR) / f"splits_{KEY_ALIASES.get(key, key)}.json"
+    if manifest.exists():
+        sp = json.loads(manifest.read_text(encoding="utf-8"))
+        hold_ids, val_ids = set(sp.get("holdout_ids", [])), set(sp.get("val_ids", []))
+        pending = set(sp.get("pending_ids", []))
+        holdout = [m for m in ordered if m.get("match_id") in hold_ids]
+        val = [m for m in ordered if m.get("match_id") in val_ids]
+        train = [m for m in ordered if m.get("match_id") not in (hold_ids | val_ids | pending)]
+        return train, val, holdout
+    n = len(ordered)
+    n_train, n_val = int(n * 0.70), int(n * 0.15)
+    return ordered[:n_train], ordered[n_train:n_train + n_val], ordered[n_train + n_val:]
+
+
+def _ids_hash(matches: List[Dict[str, Any]]) -> str:
+    return hashlib.sha1("|".join(str(m.get("match_id", "")) for m in matches).encode("utf-8")).hexdigest()[:12]
+
+
+def _make_train_env(
+    episodes: List[List[Dict[str, Any]]], max_bets: int, bankroll: float, commission: float
+) -> CricketBettingEnv:
+    """Picklable env factory target (module level so SubprocVecEnv can spawn it on Windows)."""
+    return CricketBettingEnv(
+        data=episodes,
+        initial_bankroll=bankroll,
+        settlement_mode="real",
+        max_bets_per_episode=max_bets,
+        exchange_commission=commission,
+        episode_sampling="random",
+    )
+
+
+def build_vec_env(
+    episodes: List[List[Dict[str, Any]]],
+    n_envs: int,
+    seed: int,
+    max_bets: int,
+    backend: str = "auto",
+    bankroll: float = TRAIN_BANKROLL,
+    commission: float = TRAIN_COMMISSION,
+) -> Any:
+    """VecNormalize(VecMonitor(...)) over ``n_envs`` random-sampling envs with distinct seeds."""
+    from functools import partial
+
+    from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecMonitor, VecNormalize
+
+    fns = [partial(_make_train_env, episodes, max_bets, bankroll, commission) for _ in range(n_envs)]
+    venv: Any = None
+    if backend != "dummy" and n_envs > 1:
+        try:
+            venv = SubprocVecEnv(fns, start_method="spawn")
+        except Exception as exc:  # pragma: no cover - platform dependent
+            logger.warning("subproc_vec_env_failed", error=str(exc))
+    if venv is None:
+        venv = DummyVecEnv(fns)
+    venv.seed(seed)  # SB3 seeds env i with seed + i
+    venv = VecMonitor(venv)
+    return VecNormalize(venv, norm_obs=True, norm_reward=True, clip_obs=10.0)
+
+
+class _NormPolicy:
+    """Policy view that normalises raw observations (for the S02 confidence helper)."""
+
+    def __init__(self, model: Any, norm: Callable[[np.ndarray], np.ndarray]) -> None:
+        self._model, self._norm = model, norm
+
+    def obs_to_tensor(self, obs: np.ndarray) -> Any:
+        return self._model.policy.obs_to_tensor(self._norm(obs))
+
+    def get_distribution(self, obs_t: Any) -> Any:
+        return self._model.policy.get_distribution(obs_t)
+
+
+class NormalizedModel:
+    """Adapts an SB3 PPO + VecNormalize obs stats to the raw-observation ``predict`` the evaluator uses."""
+
+    def __init__(self, model: Any, vecnorm: Any) -> None:
+        self.model, self.vecnorm = model, vecnorm
+        self.policy = _NormPolicy(model, self._norm)
+
+    def _norm(self, obs: np.ndarray) -> np.ndarray:
+        if self.vecnorm is None:
+            return obs
+        return self.vecnorm.normalize_obs(np.asarray(obs, dtype=np.float32))
+
+    def predict(self, obs: np.ndarray, deterministic: bool = True) -> Tuple[Any, Any]:
+        return self.model.predict(self._norm(obs), deterministic=deterministic)
+
+
+def make_val_early_stopping(
+    evaluate: Callable[[Any], float], eval_freq: int, patience: int, ckpt_dir: Path, vecnorm: Any
+) -> Any:
+    """SB3 callback: val-evaluate every ``eval_freq`` steps, keep best checkpoint, stop on stale patience."""
+    from stable_baselines3.common.callbacks import BaseCallback
+
+    class _CB(BaseCallback):
+        def __init__(self) -> None:
+            super().__init__()
+            self.best = -float("inf")
+            self.stale = 0
+            self.n_evals = 0
+            self.history: List[Dict[str, float]] = []
+            self._next = int(eval_freq)
+
+        def _on_step(self) -> bool:
+            if self.num_timesteps < self._next:
+                return True
+            self._next += int(eval_freq)
+            score = float(evaluate(self.model))
+            self.n_evals += 1
+            self.history.append({"timesteps": self.num_timesteps, "val_mean_match_pnl": score})
+            if score > self.best:
+                self.best, self.stale = score, 0
+                self.model.save(str(ckpt_dir / "best_model.zip"))
+                vecnorm.save(str(ckpt_dir / "best_vecnorm.pkl"))
+            else:
+                self.stale += 1
+            print(f"  [val] step={self.num_timesteps:,} mean_match_pnl={score:+.2f} "
+                  f"best={self.best:+.2f} stale={self.stale}/{patience}")
+            return self.stale < patience
+
+    return _CB()
+
+
 def train_single_specialist(
     specialist_key: str,
     format_name: str,
-    timesteps: int = 8_000,
+    timesteps: Optional[int] = None,
     target_bets_per_match: int = 25,
     eval_only: bool = False,
+    *,
+    models_dir: Optional[Path] = None,
+    smoke: bool = False,
+    max_timesteps: Optional[int] = None,
+    n_envs: Optional[int] = None,
+    seed: int = 0,
+    backend: str = "auto",
+    eval_freq: Optional[int] = None,
+    overrides: Optional[Dict[str, Any]] = None,
+    matches: Optional[List[Dict[str, Any]]] = None,
+    max_val_matches: int = 40,
 ) -> Tuple[SpecialistEvaluationMetrics, List[Dict[str, Any]]]:
-    """Train and evaluate one specialist model."""
+    """Train (with val early stopping) and evaluate one specialist; writes only to ``models_dir``.
+
+    Budget: ``timesteps_per_match * n_train * epochs_over_data`` unless ``timesteps`` is given;
+    capped by ``max_timesteps``. The holdout is evaluated exactly once, on the selected checkpoint.
+    """
+    import pickle
+    import random
+    import shutil
+    import tempfile
+
+    from stable_baselines3.common.utils import set_random_seed
+
     print("\n" + "=" * 80)
     print(f" {'EVALUATING' if eval_only else 'TRAINING'} {specialist_key.upper()} SPECIALIST ({format_name})")
     print(f" Strategy: Two-Way Rate Trading | Budget: $100k/match | Target Bets: {target_bets_per_match}/match")
     print("=" * 80)
 
-    episodes = load_corpus(specialist_key)
-    n_total = len(episodes)
-    n_train = int(n_total * 0.70)
-    n_val = int(n_total * 0.15)
+    cfg = load_training_config(specialist_key)
+    cfg.update({k: v for k, v in (overrides or {}).items() if v is not None})
+    models_dir = Path(models_dir or DEFAULT_MODELS_DIR)
+    models_dir.mkdir(parents=True, exist_ok=True)
+    model_path = models_dir / f"{specialist_key}_v1.zip"
+    vecnorm_path = models_dir / f"{specialist_key}_vecnorm.pkl"
+    manifest_path = models_dir / f"{specialist_key}_train_manifest.json"
 
-    train_episodes = episodes[:n_train]
-    val_episodes = episodes[n_train : n_train + n_val]
-    holdout_episodes = episodes[n_train + n_val :]
+    if matches is None:
+        matches = load_corpus(specialist_key)
+    train_m, val_m, hold_m = split_matches(matches, specialist_key)
+    if smoke:
+        train_m, val_m, hold_m = train_m[-SMOKE_MATCHES:], val_m[:8], hold_m[:10]
+    train_eps = [m["ticks"] for m in train_m]
+    val_eps = [m["ticks"] for m in val_m][:max_val_matches]
+    hold_eps = [m["ticks"] for m in hold_m][:75]
+    train_ticks = sum(len(e) for e in train_eps)
+    print(f"Split (chronological): {len(train_m)} Train | {len(val_m)} Val | {len(hold_m)} Holdout")
 
-    print(f"Split: {len(train_episodes)} Train | {len(val_episodes)} Val | {len(holdout_episodes)} Holdout Test")
+    n_envs = int(n_envs or (2 if smoke else cfg["n_envs"]))
+    if timesteps is not None:
+        planned = int(timesteps)
+    elif smoke:
+        planned = SMOKE_TIMESTEPS
+    else:
+        planned = int(cfg["timesteps_per_match"]) * len(train_eps) * int(cfg["epochs_over_data"])
+    if max_timesteps:
+        planned = min(planned, int(max_timesteps))
+    print(f"Budget: {len(train_eps)} matches, {train_ticks:,} ticks -> {planned:,} planned timesteps "
+          f"({n_envs} envs, seed={seed})")
 
-    SPECIALISTS_DIR.mkdir(parents=True, exist_ok=True)
-    model_path = SPECIALISTS_DIR / f"{specialist_key}_v1.zip"
+    random.seed(seed)
+    np.random.seed(seed)
+    set_random_seed(seed)
 
-    cfg = SPECIALIST_MAP.get(specialist_key, {})
-    gamma = float(cfg.get("gamma", 0.99))
-    ent_coef = float(cfg.get("ent_coef", 0.01))
-    lr = float(cfg.get("lr", 3e-4))
+    best_val: Optional[float] = None
+    steps_run = 0
+    history: List[Dict[str, float]] = []
+    vecnorm_obj: Any = None
 
     if eval_only and model_path.exists():
         print(f"Loading existing checkpoint: {model_path} for holdout evaluation...")
-        model = PPO.load(str(model_path))
+        final_model: Any = PPO.load(str(model_path))
+        if vecnorm_path.exists():
+            with open(vecnorm_path, "rb") as f:
+                vecnorm_obj = pickle.load(f)
     else:
-        # Train fresh model on format corpus
-        train_env = CricketBettingEnv(
-            data=train_episodes,
-            initial_bankroll=100_000.0,
-            settlement_mode="real",
-            max_bets_per_episode=target_bets_per_match,
-            exchange_commission=0.02,
+        venv = build_vec_env(train_eps, n_envs, seed, target_bets_per_match, backend)
+        agent = PhoenixAgent(
+            venv,
+            learning_rate=float(cfg["lr"]), n_steps=int(cfg["n_steps"]), batch_size=int(cfg["batch_size"]),
+            n_epochs=int(cfg["n_epochs"]), gamma=float(cfg["gamma"]), ent_coef=float(cfg["ent_coef"]),
+            net_arch=cfg["net_arch"], n_envs=n_envs, seed=seed,
         )
+        agent.model.verbose = 0
+        ckpt_dir = Path(tempfile.mkdtemp(prefix=f"s09_{specialist_key}_"))
 
-        model = PPO(
-            policy="MlpPolicy",
-            env=train_env,
-            policy_kwargs={
-                "net_arch": {"pi": [256, 256, 128], "vf": [256, 256, 128]},
-                "activation_fn": torch.nn.ReLU,
-            },
-            learning_rate=lr,
-            n_steps=256,
-            batch_size=64,
-            n_epochs=5,
-            gamma=gamma,
-            gae_lambda=0.95,
-            clip_range=0.2,
-            ent_coef=ent_coef,
-            vf_coef=0.5,
-            max_grad_norm=0.5,
-            verbose=0,
-        )
+        def val_score(model: Any) -> float:
+            vm, _ = evaluate_specialist_holdout(
+                model=NormalizedModel(model, venv), specialist_key=specialist_key,
+                format_name=format_name, test_episodes=val_eps,
+                max_bets_per_match=target_bets_per_match, commission=TRAIN_COMMISSION,
+                starting_bankroll=TRAIN_BANKROLL, include_baselines=False, seed=seed,
+            )
+            return vm.mean_match_pnl
 
-        print(f"Executing PPO curriculum training for {timesteps:,} timesteps...")
-        model.learn(total_timesteps=timesteps, progress_bar=False)
-        print("Training phase complete.")
-        model.save(str(model_path))
-        print(f"Specialist model checkpoint saved: {model_path}")
+        freq = int(eval_freq or max(planned // 10, 1_000))
+        cb = make_val_early_stopping(val_score, freq, int(cfg["patience"]), ckpt_dir, venv)
+        print(f"Executing PPO training for up to {planned:,} timesteps (eval every {freq:,})...")
+        try:
+            agent.model.learn(total_timesteps=planned, callback=cb, progress_bar=False)
+            steps_run = int(agent.model.num_timesteps)
+            if cb.n_evals == 0:
+                best_val = val_score(agent.model)  # ensure a selected checkpoint exists
+                agent.model.save(str(ckpt_dir / "best_model.zip"))
+                venv.save(str(ckpt_dir / "best_vecnorm.pkl"))
+            else:
+                best_val = cb.best
+            history = cb.history
+            shutil.copyfile(ckpt_dir / "best_model.zip", model_path)
+            shutil.copyfile(ckpt_dir / "best_vecnorm.pkl", vecnorm_path)
+        finally:
+            venv.close()
+            shutil.rmtree(ckpt_dir, ignore_errors=True)
+        print(f"Training phase complete ({steps_run:,} steps). Best checkpoint saved: {model_path}")
+        final_model = PPO.load(str(model_path))
+        with open(vecnorm_path, "rb") as f:
+            vecnorm_obj = pickle.load(f)
 
-    # Evaluate on unseen holdout test matches (up to 75 representative holdout matches per format)
-    eval_holdout = holdout_episodes[:min(75, len(holdout_episodes))]
-    print(f"\nEvaluating strictly causal (zero-lookahead) on {len(eval_holdout)} unseen holdout test matches...")
+    # Holdout is evaluated exactly once, on the selected checkpoint.
+    print(f"\nEvaluating strictly causal (zero-lookahead) on {len(hold_eps)} unseen holdout test matches...")
     metrics, bet_records = evaluate_specialist_holdout(
-        model=model,
+        model=NormalizedModel(final_model, vecnorm_obj),
         specialist_key=specialist_key,
         format_name=format_name,
-        test_episodes=eval_holdout,
+        test_episodes=hold_eps,
         max_bets_per_match=target_bets_per_match,
-        commission=0.02,
-        starting_bankroll=100_000.0,
+        commission=TRAIN_COMMISSION,
+        starting_bankroll=TRAIN_BANKROLL,
     )
-    metrics.matches_trained = len(train_episodes)
-    metrics.timesteps = timesteps
+    metrics.matches_trained = len(train_m)
+    metrics.timesteps = steps_run
+
+    if not eval_only:
+        manifest = {
+            "specialist_key": specialist_key,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "config": dict(cfg),
+            "seed": seed,
+            "n_envs": n_envs,
+            "data_hash": f"{_ids_hash(matches)}:{sum(len(m['ticks']) for m in matches)}",
+            "split_ids_hash": {"train": _ids_hash(train_m), "val": _ids_hash(val_m), "holdout": _ids_hash(hold_m)},
+            "split_sizes": {"train": len(train_m), "val": len(val_m), "holdout": len(hold_m)},
+            "git_sha": _code_version(),
+            "planned_timesteps": planned,
+            "timesteps_run": steps_run,
+            "best_val_mean_match_pnl": best_val,
+            "val_history": history,
+            "holdout_metrics": asdict(metrics),
+            "model_path": str(model_path),
+            "vecnorm_path": str(vecnorm_path),
+        }
+        manifest_path.write_text(json.dumps(manifest, indent=2, default=str), encoding="utf-8")
+        print(f"Train manifest written: {manifest_path}")
 
     print(f"\nResults for {specialist_key.upper()} Specialist:")
+    print(f"  - Mean match P&L: ${metrics.mean_match_pnl:+,.2f} "
+          f"(95% CI {metrics.pnl_ci95_low:+,.2f}..{metrics.pnl_ci95_high:+,.2f})")
+    print(f"  - Edge vs random: {metrics.edge_vs_random}")
     print(f"  - Win Rate:       {metrics.win_rate_pct:.1f}%")
     print(f"  - Total P&L:      ${metrics.total_pnl:+,.2f}")
-    print(f"  - Mean ROI:       {metrics.mean_roi_pct:+.2f}%")
     print(f"  - Sharpe Ratio:   {metrics.sharpe_ratio:.2f}")
     print(f"  - Bets / Match:   {metrics.avg_bets_per_match:.1f} (Total Bets: {metrics.total_bets})")
-    print(f"  - Hedge Rate:     {metrics.hedge_rate_pct:.1f}%")
-    print(f"  - Profit Factor:  {metrics.profit_factor:.2f}")
 
-    # Register in ModelZoo metadata
-    zoo = get_model_zoo()
-    zoo.register_specialist(
-        key=specialist_key,
-        model_path=model_path,
-        format_name=format_name,
-        matches_count=len(train_episodes) + len(val_episodes) + len(holdout_episodes),
-        metrics=asdict(metrics),
-    )
-
+    # Candidates are NOT registered in the model zoo: promotion to champion is S07's job.
     return metrics, bet_records
 
 
@@ -814,7 +1049,21 @@ async def main():
         default="all",
         help="Specialist to train (e.g. 'all', 'ipl', 't20i_men', 't20i_women', 'bbl_men', 'wbbl_women', 'odi_men', 'odi_women', 'test_men', etc.)",
     )
-    parser.add_argument("--timesteps", type=int, default=8_000, help="Timesteps per specialist (default: 8,000)")
+    parser.add_argument("--timesteps", type=int, default=None, help="Override planned timesteps (default: timesteps_per_match x train matches x epochs)")
+    parser.add_argument("--max-timesteps", type=int, default=None, help="Cap on planned timesteps")
+    parser.add_argument("--smoke", action="store_true", help="Tiny run: 2,000 steps, 20 train matches; skips DB/Redis")
+    parser.add_argument("--models-dir", type=Path, default=DEFAULT_MODELS_DIR, help="Output dir for candidates (never the champion path)")
+    parser.add_argument("--n-envs", type=int, default=None, help="Parallel envs (default from configs/specialists.yaml)")
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--vec-backend", choices=["auto", "subproc", "dummy"], default=None)
+    parser.add_argument("--eval-freq", type=int, default=None, help="Steps between validation evaluations")
+    parser.add_argument("--lr", type=float, default=None)
+    parser.add_argument("--gamma", type=float, default=None)
+    parser.add_argument("--ent-coef", type=float, default=None)
+    parser.add_argument("--n-steps", type=int, default=None)
+    parser.add_argument("--batch-size", type=int, default=None)
+    parser.add_argument("--n-epochs", type=int, default=None)
+    parser.add_argument("--patience", type=int, default=None)
     parser.add_argument("--target-bets", type=int, default=25, help="Target bets per match (default: 25 in 20-30 range)")
     parser.add_argument("--eval-only", action="store_true", help="Evaluate existing checkpoints on holdout without retraining")
     args = parser.parse_args()
@@ -829,7 +1078,7 @@ async def main():
     print("=" * 80)
     print(" PHOENIX - 12-SPECIALIST MODEL ZOO PIPELINE")
     print(f" Models to {'evaluate' if args.eval_only else 'train'}: {[c['key'] for c in specialists_to_run]}")
-    print(f" Timesteps per model: {args.timesteps:,} | Target bets/match: {args.target_bets}")
+    print(f" Timesteps: {args.timesteps if args.timesteps else 'config budget'} | Target bets/match: {args.target_bets} | Out: {args.models_dir}")
     print("=" * 80)
 
     all_metrics: Dict[str, SpecialistEvaluationMetrics] = {}
@@ -844,12 +1093,25 @@ async def main():
             timesteps=args.timesteps,
             target_bets_per_match=args.target_bets,
             eval_only=args.eval_only,
+            models_dir=args.models_dir,
+            smoke=args.smoke,
+            max_timesteps=args.max_timesteps,
+            n_envs=args.n_envs,
+            seed=args.seed,
+            backend=args.vec_backend or ("dummy" if args.smoke else "auto"),
+            eval_freq=args.eval_freq,
+            overrides={
+                "lr": args.lr, "gamma": args.gamma, "ent_coef": args.ent_coef,
+                "n_steps": args.n_steps, "batch_size": args.batch_size,
+                "n_epochs": args.n_epochs, "patience": args.patience,
+            },
         )
         all_metrics[key] = metrics
         all_bets.extend(bets)
 
-    await persist_virtual_bets(all_bets)
-    await update_redis_model_zoo_state(all_metrics)
+    if not args.smoke:
+        await persist_virtual_bets(all_bets)
+        await update_redis_model_zoo_state(all_metrics)
 
     print("\n" + "=" * 105)
     print(" 12-SPECIALIST MODEL ZOO - EXECUTIVE PERFORMANCE TEAR-SHEET (ZERO LOOKAHEAD)")
