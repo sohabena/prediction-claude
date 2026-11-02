@@ -1,120 +1,180 @@
 """
-Risk manager: enforces all risk limits and provides risk assessments.
+Risk manager: enforces all risk limits (in liability terms) and provides risk assessments.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from dataclasses import dataclass, field
 from typing import Any
 
 from shared.constants import (
     CIRCUIT_BREAKER_CONSECUTIVE,
+    MAX_BET_LIABILITY_PCT,
     MAX_BETS_PER_HOUR,
     MAX_BET_PERCENT,
     MAX_DAILY_LOSS_PERCENT,
     MAX_DRAWDOWN_PERCENT,
     MAX_MATCH_EXPOSURE_PERCENT,
+    MAX_MATCH_LIABILITY_PCT,
+    MAX_TEAM_LIABILITY_PCT,
     MAX_TOTAL_EXPOSURE_PERCENT,
+    MAX_TOTAL_LIABILITY_PCT,
     MAX_WEEKLY_LOSS_PERCENT,
 )
 from shared.logging import setup_logging
-from virtual_trading.portfolio import PortfolioManager
+from virtual_trading.portfolio import BetProposal, PortfolioManager, worst_loss
 
 logger = setup_logging("risk_manager")
+
+_EPS = 1e-6
+
+
+@dataclass
+class RiskDecision:
+    """Result of a risk check."""
+
+    allowed: bool
+    violations: list[str] = field(default_factory=list)
 
 
 class RiskManager:
     """
     Enforces risk limits for the virtual trading system.
 
-    Checks:
-    - Per-bet limits (max % of bankroll)
-    - Match exposure limits
-    - Total exposure limits
-    - Daily/weekly loss limits
-    - Drawdown limits
-    - Bet frequency limits
-    - Circuit breaker (consecutive losses)
+    Checks (all on worst-case liability, including in-flight reservations):
+    - Per-bet liability
+    - Per-match worst-case loss
+    - Per-team worst-case loss across all open matches
+    - Total worst-case loss
+    - Daily / weekly loss, drawdown, circuit breaker (halt new risk)
+    - Hourly bet frequency
+    Liability-reducing proposals pass the exposure caps and the halting breakers.
     """
 
     def __init__(self, portfolio: PortfolioManager) -> None:
         self.portfolio = portfolio
-        self._hourly_bet_times: list[float] = []
+
+    def check(self, proposal: BetProposal) -> RiskDecision:
+        """Check a sized proposal against every limit using its actual liability."""
+        pf = self.portfolio
+        pf.now()  # applies day / week rollover
+        state = pf.state
+        balance = max(state.current_balance, 1.0)
+        violations: list[str] = []
+        rid = proposal.reservation_id
+
+        # Per-bet liability (applies to every proposal, including hedges)
+        bet_cap = MAX_BET_LIABILITY_PCT * balance
+        if proposal.liability > bet_cap + _EPS:
+            violations.append(
+                f"Bet liability {proposal.liability:.0f} exceeds {MAX_BET_LIABILITY_PCT:.1%} of {balance:.0f}"
+            )
+
+        if not proposal.reduces_liability:
+            # Exposure caps, evaluated on the net worst-case book after this bet
+            after = pf.match_books(extra=[proposal], exclude_reservation=rid)
+            worst = {m: worst_loss(b) for m, b in after.items()}
+
+            match_loss = worst.get(proposal.match_id, 0.0)
+            if match_loss > MAX_MATCH_LIABILITY_PCT * balance + _EPS:
+                violations.append(
+                    f"Match liability {match_loss / balance:.1%} > {MAX_MATCH_LIABILITY_PCT:.0%}"
+                )
+
+            for team in set(pf.match_teams(proposal.match_id)) - {""}:
+                team_loss = sum(
+                    worst.get(m, 0.0)
+                    for m in after
+                    if team in pf.match_teams(m)
+                )
+                if team_loss > MAX_TEAM_LIABILITY_PCT * balance + _EPS:
+                    violations.append(
+                        f"Team '{team}' liability {team_loss / balance:.1%} > {MAX_TEAM_LIABILITY_PCT:.0%}"
+                    )
+
+            total_loss = sum(worst.values())
+            if total_loss > MAX_TOTAL_LIABILITY_PCT * balance + _EPS:
+                violations.append(
+                    f"Total liability {total_loss / balance:.1%} > {MAX_TOTAL_LIABILITY_PCT:.0%}"
+                )
+
+            # Halting breakers (liability-reducing bets are exempt)
+            daily_loss = -state.daily_pnl / max(pf.daily_start_balance, 1.0)
+            if daily_loss >= MAX_DAILY_LOSS_PERCENT:
+                violations.append(f"Daily loss {daily_loss:.1%} >= {MAX_DAILY_LOSS_PERCENT:.0%}")
+
+            weekly_loss = -pf.weekly_pnl / max(pf.weekly_start_balance, 1.0)
+            if weekly_loss >= MAX_WEEKLY_LOSS_PERCENT:
+                violations.append(f"Weekly loss {weekly_loss:.1%} >= {MAX_WEEKLY_LOSS_PERCENT:.0%}")
+
+            drawdown = pf.get_drawdown()
+            if drawdown >= MAX_DRAWDOWN_PERCENT:
+                violations.append(f"Drawdown {drawdown:.1%} >= {MAX_DRAWDOWN_PERCENT:.0%}")
+
+            if pf.is_circuit_breaker_active:
+                violations.append(
+                    f"Circuit breaker: {CIRCUIT_BREAKER_CONSECUTIVE} consecutive losses"
+                )
+
+            hourly = pf.bets_in_last_hour(exclude_reservation=rid)
+            if hourly >= MAX_BETS_PER_HOUR:
+                violations.append(f"Hourly limit: {hourly} >= {MAX_BETS_PER_HOUR}")
+
+        allowed = not violations
+        if not allowed:
+            logger.warning("risk_check_failed", match_id=proposal.match_id, violations=violations)
+        return RiskDecision(allowed=allowed, violations=violations)
 
     def check_all(self, proposed_stake: float, match_id: str) -> dict[str, Any]:
-        """
-        Run all risk checks for a proposed bet.
+        """Deprecated stake-based shim (kept for the live loop until S06 uses ``check``).
 
-        Returns:
-            Dict with 'allowed' bool and 'violations' list.
+        Treats the stake as the liability of a back bet; still enforces the breakers,
+        per-bet, match and total liability caps via the portfolio's current book.
         """
+        pf = self.portfolio
+        pf.now()
+        state = pf.state
+        balance = max(state.current_balance, 1.0)
         violations: list[str] = []
-        state = self.portfolio.state
-        balance = state.current_balance
 
-        # 1. Per-bet size limit
-        if proposed_stake > balance * MAX_BET_PERCENT:
-            violations.append(
-                f"Stake {proposed_stake:.0f} exceeds {MAX_BET_PERCENT:.0%} of {balance:.0f}"
-            )
+        if proposed_stake > balance * max(MAX_BET_PERCENT, MAX_BET_LIABILITY_PCT):
+            violations.append(f"Stake {proposed_stake:.0f} exceeds per-bet limit of {balance:.0f}")
 
-        # 2. Total exposure
-        new_exposure_pct = (state.total_exposure + proposed_stake) / max(balance, 1)
-        if new_exposure_pct > MAX_TOTAL_EXPOSURE_PERCENT:
-            violations.append(f"Total exposure {new_exposure_pct:.1%} > {MAX_TOTAL_EXPOSURE_PERCENT:.0%}")
+        books = pf.match_books()
+        match_loss = worst_loss(books.get(match_id, (0.0, 0.0)))
+        if (match_loss + proposed_stake) / balance > MAX_MATCH_EXPOSURE_PERCENT:
+            violations.append("Match exposure limit")
+        if (sum(worst_loss(b) for b in books.values()) + proposed_stake) / balance > MAX_TOTAL_EXPOSURE_PERCENT:
+            violations.append("Total exposure limit")
 
-        # 3. Match exposure
-        match_exposure = sum(
-            b.stake for b in self.portfolio.open_bets.values()
-            if b.match_id == match_id
-        )
-        match_exposure_pct = (match_exposure + proposed_stake) / max(balance, 1)
-        if match_exposure_pct > MAX_MATCH_EXPOSURE_PERCENT:
-            violations.append(f"Match exposure {match_exposure_pct:.1%} > {MAX_MATCH_EXPOSURE_PERCENT:.0%}")
+        if -state.daily_pnl / max(pf.daily_start_balance, 1.0) >= MAX_DAILY_LOSS_PERCENT:
+            violations.append("Daily loss limit")
+        if -pf.weekly_pnl / max(pf.weekly_start_balance, 1.0) >= MAX_WEEKLY_LOSS_PERCENT:
+            violations.append("Weekly loss limit")
+        if pf.get_drawdown() >= MAX_DRAWDOWN_PERCENT:
+            violations.append("Drawdown limit")
+        if pf.bets_in_last_hour() >= MAX_BETS_PER_HOUR:
+            violations.append("Hourly limit")
+        if pf.is_circuit_breaker_active:
+            violations.append("Circuit breaker")
 
-        # 4. Daily loss limit
-        daily_loss_pct = -state.daily_pnl / max(state.initial_balance, 1)
-        if daily_loss_pct >= MAX_DAILY_LOSS_PERCENT:
-            violations.append(f"Daily loss {daily_loss_pct:.1%} >= {MAX_DAILY_LOSS_PERCENT:.0%}")
-
-        # 5. Drawdown
-        drawdown = self.portfolio.get_drawdown()
-        if drawdown >= MAX_DRAWDOWN_PERCENT:
-            violations.append(f"Drawdown {drawdown:.1%} >= {MAX_DRAWDOWN_PERCENT:.0%}")
-
-        # 6. Hourly bet limit
-        now = datetime.now(timezone.utc).timestamp()
-        self._hourly_bet_times = [t for t in self._hourly_bet_times if now - t < 3600]
-        if len(self._hourly_bet_times) >= MAX_BETS_PER_HOUR:
-            violations.append(f"Hourly limit: {len(self._hourly_bet_times)} >= {MAX_BETS_PER_HOUR}")
-
-        # 7. Circuit breaker
-        if self.portfolio.is_circuit_breaker_active:
-            violations.append(
-                f"Circuit breaker: {CIRCUIT_BREAKER_CONSECUTIVE} consecutive losses"
-            )
-
-        allowed = len(violations) == 0
-
-        if not allowed:
-            logger.warning("risk_check_failed", violations=violations)
-
-        return {"allowed": allowed, "violations": violations}
+        return {"allowed": not violations, "violations": violations}
 
     def record_bet(self) -> None:
-        """Record that a bet was placed (for frequency tracking)."""
-        self._hourly_bet_times.append(datetime.now(timezone.utc).timestamp())
+        """Deprecated no-op: the portfolio records bet times on commit."""
 
     def get_risk_summary(self) -> dict[str, Any]:
         """Get current risk metrics."""
-        state = self.portfolio.state
+        pf = self.portfolio
+        state = pf.state
         balance = max(state.current_balance, 1)
         return {
             "exposure_pct": state.total_exposure / balance,
-            "daily_pnl_pct": state.daily_pnl / max(state.initial_balance, 1),
-            "drawdown": self.portfolio.get_drawdown(),
+            "daily_pnl_pct": state.daily_pnl / max(pf.daily_start_balance, 1),
+            "weekly_pnl_pct": pf.weekly_pnl / max(pf.weekly_start_balance, 1),
+            "drawdown": pf.get_drawdown(),
             "open_positions": state.open_positions,
-            "bets_this_hour": len(self._hourly_bet_times),
-            "circuit_breaker": self.portfolio.is_circuit_breaker_active,
+            "bets_this_hour": pf.bets_in_last_hour(),
+            "circuit_breaker": pf.is_circuit_breaker_active,
             "consecutive_streak": state.consecutive_streak,
         }

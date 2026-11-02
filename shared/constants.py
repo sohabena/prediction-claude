@@ -120,15 +120,26 @@ STAKE_NOISE_PERCENT = 0.20     # +/-20% random noise on stake (avoids robotic pa
 MAX_BETS_PER_MATCH = 25        # Base target: 20 to 25 bets per match
 BETS_TOLERANCE_PERCENT = 0.20  # +20% opportunity tolerance buffer (+5 bets)
 MAX_BETS_WITH_TOLERANCE = int(MAX_BETS_PER_MATCH * (1.0 + BETS_TOLERANCE_PERCENT))  # 30 bets ceiling
-MAX_BETS_PER_HOUR = 30
 MIN_BET_INTERVAL_SECONDS = 15  # Baseline cooldown (shortened during high-volatility events)
 STAKE_ROUND_BUCKETS = [50, 100, 200, 500, 1000, 2000, 5000]  # Human-like round amounts
 
-# Capital commitment & 20% opportunity tolerance buffer
-PER_MATCH_BUDGET = 100_000     # Default base budget per match (1,00,000)
-BUDGET_TOLERANCE_PERCENT = 0.20  # +20% opportunity tolerance buffer ($20,000)
-MAX_PER_MATCH_BUDGET = int(PER_MATCH_BUDGET * (1.0 + BUDGET_TOLERANCE_PERCENT))  # 120,000 ceiling
-TOLERANCE_MIN_CONFIDENCE = 0.75  # Minimum model confidence required to unlock tolerance buffer
+# Capital commitment & 20% opportunity tolerance buffer.
+# The per-match budget is a percentage of the CURRENT bankroll (not an absolute amount) and
+# is measured in worst-case LIABILITY. The tolerance buffer is usable only by bets that
+# reduce the match's worst-case loss (hedges / green-ups).
+PER_MATCH_BUDGET_PCT = 0.10    # Per-match budget = 10% of current bankroll
+BUDGET_TOLERANCE_PERCENT = 0.20  # +20% tolerance, liability-reducing bets only
+SMALL_STAKE_BUDGET_FRACTION = 0.15  # SM action targets 15% of match budget as liability
+LARGE_STAKE_BUDGET_FRACTION = 0.30  # LG action targets 30% of match budget as liability
+
+# Liability-based risk limits (fractions of current bankroll)
+MAX_BET_LIABILITY_PCT = 0.03    # Max liability of any single bet
+MAX_MATCH_LIABILITY_PCT = 0.10  # Max worst-case loss on one match
+MAX_TOTAL_LIABILITY_PCT = 0.30  # Max worst-case loss summed over all open matches
+MAX_TEAM_LIABILITY_PCT = 0.12   # Max summed worst-case loss over matches involving one team
+KELLY_FRACTION = 0.25           # Fractional-Kelly multiplier (used only with a calibrated p)
+CIRCUIT_BREAKER_COOLDOWN_MINUTES = 60  # Breaker clears this long after the last loss
+RESERVATION_TTL_SECONDS = 120   # Un-committed liability reservations expire after this
 PAYOUT_HEADROOM_FACTOR = 1.5   # Allow up to 150% of budget if potential payouts justify it
 
 # ============================================================

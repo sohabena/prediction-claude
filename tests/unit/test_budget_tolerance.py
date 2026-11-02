@@ -1,15 +1,19 @@
-"""Unit tests for the 20% Opportunity Tolerance Buffer in VirtualBetEngine and CricketBettingEnv."""
+"""Unit tests for the 20% opportunity tolerance buffer in VirtualBetEngine.
+
+The tolerance buffer (bet count and budget) is usable ONLY by proposals that reduce
+the match's worst-case loss; confidence no longer unlocks it. (Env-side tolerance is
+re-tested by S03.)
+"""
 
 from datetime import datetime, timezone
+
 import pytest
 
-from rl.environment import CricketBettingEnv
 from shared.constants import (
+    BUDGET_TOLERANCE_PERCENT,
     MAX_BETS_PER_MATCH,
     MAX_BETS_WITH_TOLERANCE,
-    PER_MATCH_BUDGET,
-    MAX_PER_MATCH_BUDGET,
-    TOLERANCE_MIN_CONFIDENCE,
+    PER_MATCH_BUDGET_PCT,
 )
 from shared.schemas import BettingAction, OddsEvent, VirtualBet
 from virtual_trading.engine import VirtualBetEngine
@@ -18,7 +22,6 @@ from virtual_trading.portfolio import PortfolioManager
 
 def _make_event(match_id: str = "test_match_tol") -> OddsEvent:
     return OddsEvent(
-        event_id="ev_tol_1",
         match_id=match_id,
         team_home="India",
         team_away="Australia",
@@ -32,86 +35,61 @@ def _make_event(match_id: str = "test_match_tol") -> OddsEvent:
     )
 
 
+def _setup(match_id: str):
+    """500k bankroll, 100k match budget, and an open 15k back-home bet to hedge."""
+    portfolio = PortfolioManager(initial_balance=500_000.0)
+    engine = VirtualBetEngine(portfolio=portfolio, rejection_rate=0.0, per_match_budget=100_000.0)
+    back = VirtualBet(
+        match_id=match_id, placed_at=datetime.now(timezone.utc),
+        action=BettingAction.BACK_HOME_SM, team="India", odds=2.10, stake=15_000.0,
+    )
+    assert portfolio.open_position(back)
+    return portfolio, engine
+
+
 def test_constants_tolerance_math():
     assert MAX_BETS_PER_MATCH == 25
     assert MAX_BETS_WITH_TOLERANCE == 30
-    assert PER_MATCH_BUDGET == 100_000
-    assert MAX_PER_MATCH_BUDGET == 120_000
-    assert TOLERANCE_MIN_CONFIDENCE == 0.75
+    assert PER_MATCH_BUDGET_PCT == 0.10
+    assert BUDGET_TOLERANCE_PERCENT == 0.20
 
 
 def test_virtual_engine_bet_limit_tolerance():
-    portfolio = PortfolioManager(initial_balance=500_000.0)
-    engine = VirtualBetEngine(portfolio=portfolio, rejection_rate=0.0)
     event = _make_event()
-    match_id = event.match_id
+    mid = event.match_id
+    _, engine = _setup(mid)
+    engine._match_bet_counts[mid] = 25  # base limit reached
 
-    # Simulate 25 bets already placed (base limit reached)
-    engine._match_bet_counts[match_id] = 25
-    engine._match_total_staked[match_id] = 50_000.0
+    # Non-reducing bet is rejected, even at very high confidence
+    assert engine.propose(BettingAction.BACK_HOME_SM.value, event, confidence=0.99) is None
 
-    # Low confidence bet (0.50) without hedge should be REJECTED
-    bet_low = engine.execute_action(BettingAction.BACK_HOME_SM.value, event, confidence=0.50)
-    assert bet_low is None
+    # A liability-reducing hedge may use the tolerance buffer, at any confidence
+    hedge = engine.propose(BettingAction.LAY_HOME_SM.value, event, confidence=0.30)
+    assert hedge is not None and hedge.reduces_liability
+    engine.commit(hedge)
+    assert engine._match_bet_counts[mid] == 26
 
-    # High confidence opportunity (0.80 >= 0.75) should UNLOCK tolerance buffer
-    bet_high = engine.execute_action(BettingAction.BACK_HOME_SM.value, event, confidence=0.80)
-    assert bet_high is not None
-    assert engine._match_bet_counts[match_id] == 26
-
-    # Once 30 bets (MAX_BETS_WITH_TOLERANCE) are reached, even high confidence must be REJECTED
-    engine._match_bet_counts[match_id] = 30
-    bet_exhausted = engine.execute_action(BettingAction.BACK_HOME_SM.value, event, confidence=0.95)
-    assert bet_exhausted is None
+    # At the tolerance ceiling even a hedge is rejected
+    engine._match_bet_counts[mid] = 30
+    assert engine.propose(BettingAction.LAY_HOME_SM.value, event, confidence=0.95) is None
 
 
 def test_virtual_engine_budget_tolerance():
-    portfolio = PortfolioManager(initial_balance=500_000.0)
-    engine = VirtualBetEngine(portfolio=portfolio, rejection_rate=0.0, per_match_budget=100_000.0)
     event = _make_event("test_match_budget_tol")
-    match_id = event.match_id
+    mid = event.match_id
+    _, engine = _setup(mid)
 
-    # Simulate base budget exhausted ($100,000 staked, 10 bets)
-    engine._match_bet_counts[match_id] = 10
-    engine._match_total_staked[match_id] = 100_000.0
-    engine._match_potential_payouts[match_id] = 100_000.0
+    # Base liability budget exhausted
+    engine._match_bet_counts[mid] = 10
+    engine._match_total_staked[mid] = 100_000.0
 
-    # Low confidence bet should be REJECTED
-    bet_low = engine.execute_action(BettingAction.BACK_HOME_SM.value, event, confidence=0.50)
-    assert bet_low is None
+    assert engine.propose(BettingAction.BACK_HOME_SM.value, event, confidence=0.95) is None
 
-    # High confidence opportunity (0.85) should UNLOCK 20% budget tolerance (up to $120,000)
-    bet_high = engine.execute_action(BettingAction.BACK_HOME_SM.value, event, confidence=0.85)
-    assert bet_high is not None
-    assert engine._match_total_staked[match_id] > 100_000.0
-    assert engine._match_total_staked[match_id] <= 120_000.0
+    hedge = engine.propose(BettingAction.LAY_HOME_SM.value, event, confidence=0.5)
+    assert hedge is not None and hedge.reduces_liability
+    engine.commit(hedge)
+    assert 100_000.0 < engine._match_total_staked[mid] <= 120_000.0
 
-    # Once $120,000 is staked, even high confidence must be REJECTED
-    engine._match_total_staked[match_id] = 120_000.0
-    bet_max_budget = engine.execute_action(BettingAction.BACK_HOME_SM.value, event, confidence=0.95)
-    assert bet_max_budget is None
-
-
-def test_env_bet_volume_tolerance():
-    ticks = [
-        {"timestamp": "2026-01-01T10:00:00Z", "back_home": 2.0, "lay_home": 2.05, "is_live": True, "overs": 10.0, "score": 80, "wickets": 2, "target": 180, "_meta": {"winner": "home", "team_home": "India", "team_away": "Australia"}}
-        for _ in range(50)
-    ]
-    env = CricketBettingEnv(data=[ticks], max_bets_per_episode=25)
-    env.reset()
-    assert env.max_bets_per_episode == 25
-    assert env.max_bets_with_tolerance == 30
-
-    # Simulate reaching 25 bets
-    env._bets_this_episode = 25
-    env._net_exposure_home = 4000.0  # Open Back on home
-
-    # Counter action (Lay Home SM) is a hedge candidate, so should be permitted within tolerance!
-    obs, reward, terminated, truncated, info = env.step(BettingAction.LAY_HOME_SM.value)
-    assert env._bets_this_episode == 26
-
-    # Once 30 bets reached, forced HOLD (action becomes 0)
-    env._bets_this_episode = 30
-    obs, reward, terminated, truncated, info = env.step(BettingAction.LAY_HOME_SM.value)
-    assert env._bets_this_episode == 30
-
+    # Once the 120k ceiling is reached, even hedges are rejected
+    engine._match_total_staked[mid] = 120_000.0
+    assert engine.propose(BettingAction.LAY_HOME_SM.value, event, confidence=0.95) is None
