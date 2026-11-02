@@ -32,6 +32,7 @@ from shared.redis_client import BoundedDedupe, default_consumer_name, get_redis
 from rl.environment import shift_price
 from shared.schemas import BettingAction, MatchContext, OddsEvent, PortfolioState, VirtualBet
 from virtual_trading.bet_persister import persist_bet, update_settled_bet
+from virtual_trading.decision_gate import DecisionGate
 from virtual_trading.engine import BetRejectedError, VirtualBetEngine
 from virtual_trading.portfolio import BetProposal, PortfolioManager, bet_liability
 from virtual_trading.risk_manager import RiskManager
@@ -90,6 +91,8 @@ class LiveVirtualTradingLoop:
         self._reload_task: Optional[asyncio.Task] = None
         # Streams are at-least-once: dedupe redelivered ticks by (match_id, timestamp)
         self._seen_ticks = BoundedDedupe()
+        # Only decision ticks (ball events / over boundaries) reach features + policy, as in training
+        self._decision_gate = DecisionGate()
 
     async def start(self) -> None:
         """Start the live trading loop (subscribe and process)."""
@@ -335,6 +338,9 @@ class LiveVirtualTradingLoop:
                 return
 
             context = await self._resolve_context(event, embedded_context)
+            if not self._decision_gate.is_decision_tick(event, context):
+                logger.debug("decision_tick_skipped", match_id=event.match_id)
+                return
             portfolio = self._build_portfolio_state(event.match_id)
             position_state = self._build_position_state(event)
             obs = self._feature_pipeline.compute(
@@ -389,20 +395,26 @@ class LiveVirtualTradingLoop:
                 scraped_to_received_ms=round((t_received - event.timestamp.timestamp()) * 1000, 1),
                 received_to_obs_ms=round((t_obs - t_start) * 1000, 2),
                 obs_to_action_ms=round((t_action - t_obs) * 1000, 2),
+                decision=True,
             )
 
             if action == BettingAction.HOLD:
                 return
 
-            # Get confidence
+            # Get confidence (None when the agent exposes no distribution; never fabricated)
+            confidence: Optional[float]
             try:
                 action_probs = agent.get_action_distribution(obs)
                 confidence = float(action_probs[action])
             except AttributeError:
-                confidence = 0.5  # Fallback if agent doesn't support probability distribution
+                confidence = None
 
             # Size + reserve, then risk-check the actual proposal
-            proposal = self._engine.propose(action, event, confidence=confidence)
+            if confidence is None:
+                # engine.propose requires a float (S12 gap: engine.py not owned); use its default
+                proposal = self._engine.propose(action, event)
+            else:
+                proposal = self._engine.propose(action, event, confidence=confidence)
             if proposal is None:
                 return
             decision = self._risk_manager.check(proposal)
@@ -432,6 +444,7 @@ class LiveVirtualTradingLoop:
 
         # Mark match as completed regardless of whether we have open bets
         self._completed_match_ids.add(match_id)
+        self._decision_gate.reset(match_id)
 
         if match_id not in self._open_bets:
             return
