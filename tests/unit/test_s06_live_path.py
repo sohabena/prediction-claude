@@ -125,6 +125,8 @@ async def test_match_no_longer_live_releases_reservation(monkeypatch):
 def _zoo(tmp_path, monkeypatch, load):
     monkeypatch.setattr(zoo_mod, "DEFAULT_MODEL_PATH", tmp_path / "nope.zip")
     monkeypatch.setattr(zoo_mod.PhoenixAgent, "load", staticmethod(load))
+    # These tests cover load/reload mechanics, not the S17 provenance gate
+    monkeypatch.setenv("PHOENIX_ALLOW_UNVERIFIED_MODELS", "1")
     (tmp_path / "metadata.json").write_text("{}")  # isolate from repo metadata
     return ModelZoo(models_dir=tmp_path)
 

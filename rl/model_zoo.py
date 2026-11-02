@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import re
 import threading
 import time
@@ -36,6 +37,9 @@ SPECIALISTS_DIR = Path("models/specialists")
 METADATA_FILE = SPECIALISTS_DIR / "metadata.json"
 DEFAULT_MODEL_PATH = Path("models/best_model.zip")
 LOAD_FAILURE_TTL_SECONDS = 600.0  # negative cache for failed model loads
+MIN_TRADEABLE_MATCHES = 50
+MAX_TRADEABLE_DRAWDOWN_PCT = 50.0
+ALLOW_UNVERIFIED_ENV = "PHOENIX_ALLOW_UNVERIFIED_MODELS"
 
 ALL_SPECIALIST_DEFS: List[Tuple[str, str]] = [
     ("ipl", "IPL (Indian Premier League)"),
@@ -100,6 +104,7 @@ class ModelZoo:
         self._model_info: Dict[str, Dict[str, Any]] = {}
         self._load_failures: Dict[str, float] = {}
         self._lock = threading.RLock()
+        self._untradeable_logged: set = set()
         self._metadata: Dict[str, Any] = {}
         self._classifier = MatchCategoryClassifier()
         self._load_metadata()
@@ -133,15 +138,20 @@ class ModelZoo:
         format_name: str,
         matches_count: int,
         metrics: Optional[Dict[str, Any]] = None,
+        active: bool = False,
     ) -> None:
-        """Register a newly trained specialist in metadata."""
+        """Register a newly trained specialist in metadata.
+
+        New registrations are inactive until the promotion gate activates them
+        (pass ``active=True`` explicitly after promotion).
+        """
         self._metadata[key] = {
             "key": key,
             "path": str(model_path),
             "format": format_name,
             "matches_trained_on": matches_count,
             "metrics": metrics or {},
-            "active": True,
+            "active": bool(active),
         }
         self.save_metadata()
         # Invalidate in-memory cache to force reload on next query
@@ -299,6 +309,59 @@ class ModelZoo:
 
         return "default"
 
+    # ------------------------------------------------------------ provenance gate
+    @staticmethod
+    def _unverified_allowed() -> bool:
+        return os.getenv(ALLOW_UNVERIFIED_ENV, "0").strip().lower() in ("1", "true", "yes")
+
+    def is_tradeable(self, key: str) -> Tuple[bool, str]:
+        """Whether metadata proves this specialist was honestly evaluated.
+
+        Returns (ok, reason); reason names the first failing check ('ok' if tradeable).
+        """
+        resolved = KEY_ALIASES.get(key, key)
+        meta = self._metadata.get(resolved) or self._metadata.get(key)
+        if not meta:
+            return False, "no metadata entry"
+        if not meta.get("active", False):
+            return False, "not active"
+        m = meta.get("metrics") or {}
+        if not m.get("code_version"):
+            return False, "missing code_version"
+        if m.get("edge_vs_random") is None:
+            return False, "missing edge_vs_random"
+        ci_low = m.get("pnl_ci95_low")
+        if ci_low is None:
+            return False, "missing pnl_ci95_low"
+        if not float(ci_low) > 0:
+            return False, f"pnl_ci95_low {float(ci_low):.2f} <= 0"
+        n = m.get("matches_tested")
+        if n is None or int(n) < MIN_TRADEABLE_MATCHES:
+            return False, f"matches_tested {n} < {MIN_TRADEABLE_MATCHES}"
+        dd = m.get("max_drawdown_pct")
+        if dd is None:
+            return False, "missing max_drawdown_pct"
+        if float(dd) > MAX_TRADEABLE_DRAWDOWN_PCT:
+            return False, f"max_drawdown_pct {float(dd):.1f} > {MAX_TRADEABLE_DRAWDOWN_PCT:.0f}"
+        mm = m.get("market_model") or meta.get("market_model")
+        if mm and str(mm).split(":")[0] == "ou":
+            return False, f"market_model {mm} not allowed"
+        return True, "ok"
+
+    def _gate(self, key: str) -> bool:
+        """True if the key may be loaded/served. Logs once per key when refused."""
+        if self._unverified_allowed():
+            logger.warning("unverified_model_allowed", key=key, env=ALLOW_UNVERIFIED_ENV)
+            return True
+        ok, reason = self.is_tradeable(key)
+        if not ok and key not in self._untradeable_logged:
+            self._untradeable_logged.add(key)
+            logger.warning("specialist_not_tradeable", key=key, reason=reason)
+        return ok
+
+    def _has_weights(self, key: str) -> bool:
+        return any(p.exists() for p in self._candidate_paths(key))
+
     # ------------------------------------------------------------ loading
     def _candidate_paths(self, key: str) -> List[Path]:
         """Ordered candidate weight files for a specialist key."""
@@ -370,34 +433,41 @@ class ModelZoo:
         they only serve already-loaded models (loading belongs in preload/reload).
         """
         resolved_key = KEY_ALIASES.get(key, key)
-        if resolved_key in self._models:
-            return self._models[resolved_key]
-        if key in self._models:
-            return self._models[key]
-
-        if allow_load:
-            for path in self._candidate_paths(key):
-                if not path.exists():
-                    continue
-                loaded = self._try_load(resolved_key, path)
-                if loaded is None:
-                    continue
-                agent, info = loaded
-                with self._lock:
-                    self._models[resolved_key] = agent
-                    self._model_info[resolved_key] = info
-                    if key != resolved_key:
-                        self._models[key] = agent
-                logger.info("loaded_specialist_agent", key=resolved_key, path=str(path))
-                return agent
-
-            if self._default_agent is None and DEFAULT_MODEL_PATH.exists():
-                loaded = self._try_load("default", DEFAULT_MODEL_PATH)
-                if loaded is not None:
+        if key != "default" and self._has_weights(key):
+            # A specialist exists on disk: it is served only if it passed the gate.
+            if not self._gate(resolved_key):
+                return None
+            if resolved_key in self._models:
+                return self._models[resolved_key]
+            if key in self._models:
+                return self._models[key]
+            if allow_load:
+                for path in self._candidate_paths(key):
+                    if not path.exists():
+                        continue
+                    loaded = self._try_load(resolved_key, path)
+                    if loaded is None:
+                        continue
+                    agent, info = loaded
                     with self._lock:
-                        self._default_agent, self._model_info["default"] = loaded
-                    logger.info("loaded_default_agent", path=str(DEFAULT_MODEL_PATH))
+                        self._models[resolved_key] = agent
+                        self._model_info[resolved_key] = info
+                        if key != resolved_key:
+                            self._models[key] = agent
+                    logger.info("loaded_specialist_agent", key=resolved_key, path=str(path))
+                    return agent
+            # fall through to default only if loading failed outright
+            return None
 
+        # No specialist weights: fall back to the default champion, through the same gate.
+        if not self._gate("default"):
+            return None
+        if self._default_agent is None and allow_load and DEFAULT_MODEL_PATH.exists():
+            loaded = self._try_load("default", DEFAULT_MODEL_PATH)
+            if loaded is not None:
+                with self._lock:
+                    self._default_agent, self._model_info["default"] = loaded
+                logger.info("loaded_default_agent", path=str(DEFAULT_MODEL_PATH))
         return self._default_agent
 
     def preload(self, keys: Optional[Iterable[str]] = None) -> Dict[str, str]:
@@ -473,6 +543,8 @@ class ModelZoo:
             team_away=team_away,
         )
         agent = self.get_agent(key, allow_load=allow_load)
+        if agent is None:
+            return None, key
         if key in self._models:
             return self._models[key], key
         resolved = KEY_ALIASES.get(key, key)
@@ -548,7 +620,10 @@ class ModelZoo:
                             break
 
             meta = self._metadata.get(key, {})
+            tradeable, reason = self.is_tradeable(key)
             result[key] = {
+                "tradeable": tradeable,
+                "reason": reason,
                 "key": key,
                 "format": meta.get("format", default_name),
                 "available": model_path.exists(),
