@@ -54,11 +54,13 @@ class RiskManager:
     - Daily loss (realised P&L plus open worst-case losses, S32), weekly loss, drawdown,
       circuit breaker (halt new risk)
     - Hourly bet frequency
+    - S42 kill switch: while the global scope is suspended, new risk is blocked first
     Liability-reducing proposals pass the exposure caps and the halting breakers.
     """
 
-    def __init__(self, portfolio: PortfolioManager) -> None:
+    def __init__(self, portfolio: PortfolioManager, kill_switch: Any = None) -> None:
         self.portfolio = portfolio
+        self.kill_switch = kill_switch  # virtual_trading.kill_switch.KillSwitch (duck-typed; optional)
 
     def check(self, proposal: BetProposal) -> RiskDecision:
         """Check a sized proposal against every limit using its actual liability."""
@@ -68,6 +70,12 @@ class RiskManager:
         balance = max(state.current_balance, 1.0)
         violations: list[str] = []
         rid = proposal.reservation_id
+
+        # S42 kill switch first: a suspended feed or strategy opens no new risk. Exits still pass.
+        if self.kill_switch is not None and not proposal.reduces_liability:
+            suspended = self.kill_switch.blocked()
+            if suspended is not None:
+                violations.append(f"Signals suspended by kill switch: {suspended}")
 
         # Per-bet liability (applies to every proposal, including hedges)
         bet_cap = MAX_BET_LIABILITY_PCT * balance

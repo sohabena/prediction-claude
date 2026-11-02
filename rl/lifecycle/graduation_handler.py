@@ -9,6 +9,7 @@ definitions in ``shared.metrics``.
 
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -25,6 +26,28 @@ logger = setup_logging("lifecycle_graduation")
 
 WINDOW_DAYS = 30
 PROFIT_DAYS_WINDOW = 14
+
+# S42: signal bets of one strategy version. The version tag is "signal:<strategy>:<version>" (S40 runner).
+# Settlement is ``settled_at``, not ``profit_loss`` (which defaults to 0.0 on unsettled rows).
+SIGNAL_BETS_SQL = """
+    SELECT CAST(vb.bet_id AS TEXT) AS bet_id, vb.match_id, vb.placed_at, vb.settled_at,
+           vb.action, vb.odds, vb.stake, vb.profit_loss, vb.clv,
+           mr.team_home, mr.team_away
+    FROM virtual_bets vb
+    LEFT JOIN match_results mr ON mr.match_id = vb.match_id
+    WHERE vb.agent_version = :agent_version
+    ORDER BY vb.placed_at
+"""
+
+# S42: Betfair prices only (odds_ticks.source = 'betfair', written by S41). LotusBook ticks are never CLV evidence here.
+SIGNAL_TICKS_SQL = """
+    SELECT match_id, time, competition, team_home, team_away, is_live,
+           back_home, lay_home, back_away, lay_away
+    FROM odds_ticks
+    WHERE match_id = ANY(:match_ids)
+      AND source = 'betfair'
+    ORDER BY match_id, time
+"""
 
 # One row per settled bet of the current model; holdout rows are never included.
 GRADUATION_BETS_SQL = """
@@ -140,3 +163,56 @@ class GraduationHandler:
             logger.error("graduation_check_failed", error=str(e))
 
         return False
+
+
+# ---------------------------------------------------------------- S42 signal trust
+async def load_signal_evidence(session: Any, strategy_version: str) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
+    """Signal bets of one strategy version and the Betfair ticks of their matches.
+
+    Returns ``(bets, ticks_by_match)`` shaped for ``strategy.trust.annotate_betfair``. ``profit_loss`` is
+    None for unsettled bets. Read-only: the caller owns the session.
+    """
+    from sqlalchemy import text
+
+    result = await session.execute(text(SIGNAL_BETS_SQL), {"agent_version": f"signal:{strategy_version}"})
+    bets: list[dict[str, Any]] = []
+    for row in result.mappings().all():
+        bet = dict(row)
+        if bet.get("settled_at") is None:
+            bet["profit_loss"] = None
+        bets.append(bet)
+
+    ticks_by_match: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    match_ids = sorted({str(b["match_id"]) for b in bets})
+    if match_ids:
+        tick_result = await session.execute(text(SIGNAL_TICKS_SQL), {"match_ids": match_ids})
+        for tick in tick_result.mappings().all():
+            ticks_by_match[str(tick["match_id"])].append(dict(tick))
+    return bets, dict(ticks_by_match)
+
+
+async def check_signal_version(
+    strategy_version: str,
+    *,
+    registry: Any,
+    allocated_bankroll: float,
+    kill_switch: Any = None,
+    missed_count: Optional[int] = None,
+) -> Optional[dict[str, Any]]:
+    """Re-evaluate one strategy version's trust (and kill conditions). Returns the trust entry, or None on failure."""
+    try:
+        async with get_session() as session:
+            bets, ticks_by_match = await load_signal_evidence(session, strategy_version)
+    except Exception as e:
+        logger.error("signal_evidence_load_failed", strategy_version=strategy_version, error=str(e))
+        return None
+
+    entry = await registry.refresh(
+        strategy_version, bets, ticks_by_match,
+        allocated_bankroll=allocated_bankroll, missed_count=missed_count,
+    )
+    if kill_switch is not None:
+        await kill_switch.evaluate_version(
+            strategy_version, bets, ticks_by_match, allocated_bankroll=allocated_bankroll,
+        )
+    return entry

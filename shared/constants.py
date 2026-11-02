@@ -70,6 +70,19 @@ GRADUATION_CRITERIA = {
 }
 GRADUATION_REQUIRED_DAYS = 14  # All criteria met for N consecutive days
 
+# S42 trust gate (rung R3) for manual-bet signals, per strategy version. Measured on paper bets from
+# signals that have a Betfair price; LotusBook-only CLV is reported separately and never counts toward
+# trust. GRADUATION_CRITERIA above stays for the legacy PPO path (its tests pin those thresholds).
+# No Sharpe criterion. Sample-size thresholds are the profit-architecture R3 rung.
+TRUST_CRITERIA = {
+    "bet_volume": {"threshold": 300, "op": "ge"},                # settled paper bets from signals
+    "min_matches": {"threshold": 30, "op": "ge"},                # distinct real matches
+    "clv_ci_lower": {"threshold": 0.0, "op": "gt"},              # Betfair CLV, bootstrap 95% CI lower bound
+    "pnl_per_match_ci_upper": {"threshold": 0.0, "op": "ge"},    # P&L/match CI not entirely below 0
+    "max_drawdown": {"threshold": 0.15, "op": "le"},             # fraction of the allocated bankroll
+    "missed_rate": {"threshold": 0.40, "op": "le"},              # missed / (missed + placed) signals
+}
+
 # ============================================================
 # Orchestrator States
 # ============================================================
@@ -270,3 +283,16 @@ SIGNAL_MIN_STAKE = 10.0                  # suggested stakes below this are not s
 SIGNAL_CHANNEL = "signals"               # Redis channel for the UI
 SIGNAL_WEBHOOK_ENV = "SIGNAL_WEBHOOK_URL"    # optional; never hard-coded
 SIGNAL_LOG_PATH = "logs/signals.jsonl"
+
+# ---------------------------------------------------------------------------
+# S42 trust gate and signal kill switch. Trust labels only mark signals for manual betting;
+# the kill switch suspends signal emission. Nothing here places a bet.
+# ---------------------------------------------------------------------------
+TRUST_STATE_PATH = "models/trust_state.json"   # per-version streaks; written at runtime only
+KEY_TRUST_PREFIX = "trust:"                    # trust:<strategy>:<version> status (JSON)
+KEY_KILL_PREFIX = "kill:"                      # kill:<strategy>:<version>; kill:__all__ is global
+KILL_ALL_SCOPE = "__all__"
+CLV_HORIZON_SECONDS = 600.0                    # in-play CLV horizon (same as scripts/audit_clv.HORIZON_SECONDS)
+KILL_DAILY_LOSS = 0.05                         # realised paper loss today, fraction of allocated bankroll (placeholder)
+KILL_CLV_WINDOW_BETS = 100                     # rolling window of paper bets that have a Betfair price
+KILL_STALE_SECONDS = 300.0                     # no Betfair tick this long on a match with open paper positions
