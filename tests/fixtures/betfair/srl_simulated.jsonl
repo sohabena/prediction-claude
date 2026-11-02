@@ -1,0 +1,3 @@
+{"op": "mcm", "pt": 1700000000000, "mc": [{"id": "1.300004", "marketDefinition": {"eventName": "SRL T20 Match 7", "competitionName": "SRL Cricket", "marketType": "MATCH_ODDS", "status": "OPEN", "inPlay": false, "runners": [{"id": 401, "name": "Team Alpha", "status": "ACTIVE"}, {"id": 402, "name": "Team Beta", "status": "ACTIVE"}]}, "rc": [{"id": 401, "ltp": 1.9}, {"id": 402, "ltp": 2.0}]}]}
+{"op": "mcm", "pt": 1700000004000, "mc": [{"id": "1.300004", "marketDefinition": {"inPlay": true}, "rc": [{"id": 401, "ltp": 1.95}, {"id": 402, "ltp": 1.95}]}]}
+{"op": "mcm", "pt": 1700000008000, "mc": [{"id": "1.300004", "marketDefinition": {"status": "CLOSED", "runners": [{"id": 401, "name": "Team Alpha", "status": "WINNER"}, {"id": 402, "name": "Team Beta", "status": "LOSER"}]}}]}

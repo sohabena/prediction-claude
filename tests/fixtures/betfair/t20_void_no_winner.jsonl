@@ -1,0 +1,4 @@
+{"op": "mcm", "pt": 1700000000000, "mc": [{"id": "1.300003", "marketDefinition": {"eventName": "Essex v Surrey", "competitionName": "T20 Blast", "marketType": "MATCH_ODDS", "status": "OPEN", "inPlay": false, "runners": [{"id": 301, "name": "Essex", "status": "ACTIVE"}, {"id": 302, "name": "Surrey", "status": "ACTIVE"}]}, "rc": [{"id": 301, "ltp": 2.0}, {"id": 302, "ltp": 1.9}]}]}
+{"op": "mcm", "pt": 1700000004000, "mc": [{"id": "1.300003", "marketDefinition": {"inPlay": true}, "rc": [{"id": 301, "ltp": 2.1}, {"id": 302, "ltp": 1.8}]}]}
+{"op": "mcm", "pt": 1700000008000, "mc": [{"id": "1.300003", "rc": [{"id": 301, "ltp": 2.2}, {"id": 302, "ltp": 1.7}]}]}
+{"op": "mcm", "pt": 1700000012000, "mc": [{"id": "1.300003", "marketDefinition": {"status": "CLOSED", "runners": [{"id": 301, "name": "Essex", "status": "REMOVED"}, {"id": 302, "name": "Surrey", "status": "REMOVED"}]}}]}
