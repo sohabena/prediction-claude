@@ -1,182 +1,78 @@
 """
-Multi-component reward function for the cricket betting RL agent.
+Reward function for the cricket betting RL agent.
 
-Trading strategy philosophy (capital-safety-first):
-  1. PRIMARY GOAL: Keep capital safe by hedging both sides when opportunity
-     appears. Lock in guaranteed profit from odds movement.
-  2. SECONDARY: When confidence is high, lean directional for bigger payoff.
-  3. CONTINUOUS feedback via mark-to-market unrealized P&L.
-  4. FINAL confirmation via realized settlement P&L.
-  5. PENALTIES for naked directional risk, overtrading, drawdown.
+The reward is the (scaled) change in equity per step, expressed as a fraction of
+the initial bankroll, so the undiscounted episode return equals net P&L / bankroll
+(equity already includes realised P&L, commission and the back/lay spread).
 
-NO domain-specific shaping (no 'death over penalty', no 'phase-based' adjustments).
+    r_t = reward_scale * (
+            equity_delta_t / B
+            - lambda_dd   * (dd_pot_t - dd_pot_{t-1})      # drawdown potential difference
+            - lambda_tail * max(0, -worst_case_pnl_t / B - tail_thr)
+            + lambda_clv  * clv_delta_t )
+
+There are no hedge, patience, per-bet-cost, Sharpe or overtrading terms: none of
+them correspond to money, and each could be farmed by PPO.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-import numpy as np
+from shared.logging import setup_logging
 
-from shared.schemas import BettingAction
+logger = setup_logging("reward")
 
 
 class RewardFunction:
-    """
-    Reward function aligned with a sports-trading mindset:
-
-    Core idea: bet both sides to lock in profit from odds movement.
-    Only go directional when highly confident.
-
-    Components:
-      1. Hedge Bonus — BIG reward when a hedge locks in guaranteed profit
-      2. Transaction Cost — per-bet penalty (bookmaker spread is a real cost)
-      3. Mark-to-Market — continuous unrealized P&L as odds move
-      4. Settlement P&L — realized outcome (dominant signal)
-      5. Capital Safety — penalize large naked exposure, reward balanced books
-      6. Patience — meaningful reward for disciplined HOLD
-      7. Risk Penalties — overtrading, drawdown
-      8. Episodic — Sharpe + CLV bonuses
-    """
+    """Equity-based reward with incremental drawdown and tail-liability penalties."""
 
     def __init__(
         self,
-        pnl_scale: float = 10.0,
-        hedge_bonus_scale: float = 15.0,
-        bet_cost: float = 0.02,
-        unrealized_scale: float = 1.0,
-        patience_reward: float = 0.01,
-        naked_exposure_penalty: float = 0.01,
-        overtrading_threshold: int = 30,
-        overtrading_penalty: float = 0.05,
-        exposure_threshold: float = 0.5,
-        exposure_penalty: float = 0.1,
-        drawdown_threshold: float = 0.10,
-        drawdown_penalty_scale: float = 50.0,
-        sharpe_bonus_scale: float = 0.5,
-        clv_bonus_scale: float = 2.0,
+        initial_bankroll: float = 100_000.0,
+        reward_scale: float = 100.0,
+        lambda_dd: float = 2.0,
+        dd_threshold: float = 0.05,
+        lambda_tail: float = 0.05,
+        tail_threshold: float = 0.10,
+        lambda_clv: float = 0.0,
     ) -> None:
-        self.pnl_scale = pnl_scale
-        self.hedge_bonus_scale = hedge_bonus_scale
-        self.bet_cost = bet_cost
-        self.unrealized_scale = unrealized_scale
-        self.patience_reward = patience_reward
-        self.naked_exposure_penalty = naked_exposure_penalty
-        self.overtrading_threshold = overtrading_threshold
-        self.overtrading_penalty = overtrading_penalty
-        self.exposure_threshold = exposure_threshold
-        self.exposure_penalty = exposure_penalty
-        self.drawdown_threshold = drawdown_threshold
-        self.drawdown_penalty_scale = drawdown_penalty_scale
-        self.sharpe_bonus_scale = sharpe_bonus_scale
-        self.clv_bonus_scale = clv_bonus_scale
+        self.initial_bankroll = max(float(initial_bankroll), 1e-9)
+        self.reward_scale = reward_scale
+        self.lambda_dd = lambda_dd
+        self.dd_threshold = dd_threshold
+        self.lambda_tail = lambda_tail
+        self.tail_threshold = tail_threshold
+        self.lambda_clv = lambda_clv
+        self._prev_dd_term = 0.0
+
+    def reset(self) -> None:
+        """Reset per-episode state (drawdown potential)."""
+        self._prev_dd_term = 0.0
+
+    def _dd_potential(self, drawdown: float) -> float:
+        return self.lambda_dd * max(0.0, drawdown - self.dd_threshold) ** 2
+
+    def components(self, step_info: dict[str, Any]) -> dict[str, float]:
+        """Return each (scaled) reward term; their sum equals ``compute``.
+
+        Pure with respect to state: does not advance the drawdown potential.
+        """
+        b = self.initial_bankroll
+        s = self.reward_scale
+        equity = s * float(step_info.get("equity_delta", 0.0)) / b
+        dd_now = self._dd_potential(float(step_info.get("current_drawdown", 0.0)))
+        drawdown = -s * (dd_now - self._prev_dd_term)
+        worst = float(step_info.get("worst_case_pnl", 0.0))
+        tail = -s * self.lambda_tail * max(0.0, -worst / b - self.tail_threshold)
+        clv = s * self.lambda_clv * float(step_info.get("clv_delta", 0.0))
+        return {"equity": equity, "drawdown": drawdown, "tail": tail, "clv": clv}
 
     def compute(self, action: int, step_info: dict[str, Any]) -> float:
-        """
-        Compute the total reward for a single step.
-
-        Args:
-            action: Integer action taken.
-            step_info: Dict with step context including bankroll, P&L,
-                hedge info, position info, and risk metrics.
-        """
-        reward = 0.0
-        bankroll = max(step_info.get("bankroll", 1.0), 1.0)
-
-        # ============================================================
-        # 1. HEDGE BONUS — biggest reward for locking in guaranteed profit
-        # ============================================================
-        # When the agent places a bet that reduces exposure and locks in
-        # profit regardless of match outcome, this is the ideal action.
-        if step_info.get("is_hedge"):
-            locked_pnl = step_info.get("hedge_locked_pnl", 0.0)
-            if locked_pnl > 0:
-                # Locked profit — this is the #1 thing we want to teach
-                reward += (locked_pnl / bankroll) * self.hedge_bonus_scale
-            else:
-                # Hedge that didn't lock profit (closing at a loss) — small penalty
-                # but still less bad than not hedging at all when losing
-                reward += (locked_pnl / bankroll) * self.pnl_scale * 0.5
-
-        # ============================================================
-        # 2. TRANSACTION COST — flat per-bet penalty
-        # ============================================================
-        # Every bet costs money (bookmaker spread). The agent must overcome
-        # this cost via good entries. Combined with the environment's hard
-        # bet budget, this teaches selectivity.
-        if step_info.get("bet_placed"):
-            reward -= self.bet_cost
-
-        # ============================================================
-        # 3. MARK-TO-MARKET — continuous unrealized P&L feedback
-        # ============================================================
-        unrealized_delta = step_info.get("unrealized_pnl_delta", 0.0)
-        if unrealized_delta != 0.0:
-            reward += (unrealized_delta / bankroll) * self.unrealized_scale
-
-        # ============================================================
-        # 4. SETTLEMENT — realized P&L (dominant signal)
-        # ============================================================
-        if step_info.get("bet_settled"):
-            pnl = step_info.get("profit_loss", 0.0)
-            reward += (pnl / bankroll) * self.pnl_scale
-
-        # ============================================================
-        # 5. CAPITAL SAFETY — penalize large naked directional exposure
-        # ============================================================
-        # If the agent has big one-sided exposure without hedging,
-        # apply a small continuous penalty to encourage hedging.
-        net_home = abs(step_info.get("net_exposure_home", 0.0))
-        net_away = abs(step_info.get("net_exposure_away", 0.0))
-        # Naked exposure = max one-sided exposure as fraction of bankroll
-        max_naked = max(net_home, net_away) / bankroll
-        
-        # INCREASED THRESHOLD: Allow the agent to hold up to 15% bankroll risk 
-        # without penalty so it can ride profitable directional trends
-        if max_naked > 0.15:  
-            # REDUCED PENALTY SCALE: Don't panic, just gently discourage extreme risk
-            reward -= (max_naked - 0.15) * (self.naked_exposure_penalty * 0.5)
-
-        # ============================================================
-        # 6. PATIENCE — small reward for disciplined HOLD
-        # ============================================================
-        if action == BettingAction.HOLD:
-            odds_change = abs(step_info.get("odds_change", 0.0))
-            clv_potential = abs(step_info.get("clv_improvement", 0.0))
-            if odds_change < 0.01 and clv_potential < 0.02:
-                reward += self.patience_reward
-
-        # ============================================================
-        # 7. RISK PENALTIES — overtrading, exposure cap, drawdown
-        # ============================================================
-
-        # Overtrading
-        bets_last_hour = step_info.get("bets_last_hour", 0)
-        if bets_last_hour > self.overtrading_threshold:
-            reward -= self.overtrading_penalty * (bets_last_hour - self.overtrading_threshold)
-
-        # Total exposure cap
-        exposure_pct = step_info.get("exposure_pct", 0.0)
-        if exposure_pct > self.exposure_threshold:
-            reward -= self.exposure_penalty * (exposure_pct - self.exposure_threshold)
-
-        # Drawdown (quadratic)
-        drawdown = step_info.get("current_drawdown", 0.0)
-        if drawdown > self.drawdown_threshold:
-            reward -= (drawdown - self.drawdown_threshold) ** 2 * self.drawdown_penalty_scale
-
-        # ============================================================
-        # 8. EPISODIC — Sharpe bonus + CLV at end of match
-        # ============================================================
-        if step_info.get("episode_done"):
-            returns = step_info.get("episode_returns", [])
-            if len(returns) >= 5:
-                returns_arr = np.array(returns)
-                sharpe = float(np.mean(returns_arr) / (np.std(returns_arr) + 1e-8))
-                reward += max(0.0, sharpe) * self.sharpe_bonus_scale
-
-        clv = step_info.get("clv_improvement", 0.0)
-        if clv > 0:
-            reward += clv * self.clv_bonus_scale
-
-        return reward
+        """Compute the reward for a single step (advances drawdown potential)."""
+        total = float(sum(self.components(step_info).values()))
+        if step_info.get("episode_done", False):
+            self._prev_dd_term = 0.0
+        else:
+            self._prev_dd_term = self._dd_potential(float(step_info.get("current_drawdown", 0.0)))
+        return total

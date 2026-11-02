@@ -184,7 +184,7 @@ class CricketBettingEnv(gym.Env):
         self.feature_pipeline = FeaturePipeline()
 
         # Reward function
-        self.reward_fn = RewardFunction()
+        self.reward_fn = RewardFunction(initial_bankroll=self.initial_bankroll)
 
         # State
         self._portfolio: Optional[PortfolioState] = None
@@ -235,6 +235,7 @@ class CricketBettingEnv(gym.Env):
             initial_balance=self.initial_bankroll,
             current_balance=self.initial_bankroll,
         )
+        self.reward_fn.reset()
         self._open_bets = []
         self._pending = []
         self._episode_returns = []
@@ -378,14 +379,10 @@ class CricketBettingEnv(gym.Env):
             "episode_returns": self._episode_returns,
             "odds_change": self._get_odds_change(),
             "exposure_pct": self._portfolio.exposure_pct,
-            # TODO(S04): remove legacy keys
+            # Legacy keys still read by scripts/benchmark_offline_improvements.py and iterative_tuning (is_hedge)
             "is_hedge": is_hedge,
-            "hedge_locked_pnl": max(0.0, worst) if is_hedge else 0.0,
             "net_exposure_home": self._pnl_home,
             "net_exposure_away": self._pnl_away,
-            "unrealized_pnl_delta": equity_delta,
-            "clv_improvement": clv_delta,
-            "bets_last_hour": self._bets_this_episode,
         }
 
         reward = self.reward_fn.compute(action, step_info)
