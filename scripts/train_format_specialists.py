@@ -53,6 +53,7 @@ from shared.constants import (
 )
 from shared.db import get_session
 from shared.logging import setup_logging
+from shared.metrics import clv_prob
 from shared.redis_client import get_redis
 from shared.schemas import BettingAction
 
@@ -450,7 +451,7 @@ def _run_policy(
             closing = float(closing) if closing and closing > 1.0 else None
             clv = None
             if closing is not None and bet.odds > 1.0:
-                clv = (1.0 / bet.odds - 1.0 / closing) if back else (1.0 / closing - 1.0 / bet.odds)
+                clv = clv_prob("BACK" if back else "LAY", bet.odds, closing)
             hedged += 1 if p["hedge"] else 0
             outcome = bet.outcome.value if hasattr(bet.outcome, "value") else str(bet.outcome)
             if outcome.lower() in ("win", "loss"):
@@ -563,7 +564,7 @@ def evaluate_specialist_holdout(
     commission: float = 0.02,
     starting_bankroll: float = 100_000.0,
     *,
-    policy: Literal["model", "heuristic", "random", "hold"] = "model",
+    policy: Literal["model", "heuristic", "random", "hold", "value"] = "model",
     include_baselines: bool = True,
     seed: int = 0,
     version: str = "v1",
@@ -594,6 +595,17 @@ def evaluate_specialist_holdout(
             pobj: Any = HeuristicPolicy(cfg, TEAM_RATINGS, n_ticks=n_ticks, max_bets=max_bets_per_match)
         elif pol == "random":
             pobj = RandomPolicy(seed=seed, n_actions=ACTION_SPACE_SIZE)
+        elif pol == "value":
+            from strategy.fair_value import FairValueModel, family_of
+            from strategy.value_policy import ValuePolicy
+
+            fam = family_of(test_episodes[0][0].get("match_format") if test_episodes else None)
+            fv_path = Path("models/fair_value") / f"{fam}.joblib"
+            if not fv_path.exists():
+                raise FileNotFoundError(
+                    f"No fair-value model at {fv_path}; run scripts/train_fair_value.py --key {specialist_key}"
+                )
+            pobj = ValuePolicy(FairValueModel.load(fv_path), commission=commission, max_bets=max_bets_per_match)
         else:
             pobj = HoldPolicy()
         return _run_policy(

@@ -102,7 +102,8 @@ class TestModelDriven:
             assert b["confidence"] is None  # mock model cannot report a distribution
             assert b["agent_version"].startswith("holdout_eval:ipl:")
             assert b["closing_odds"] == 2.00  # same-side price on the last tick
-            assert abs(b["clv"] - (1 / b["odds"] - 1 / 2.00)) < 1e-9
+            # BACK CLV is positive when the price shortened (1/close > 1/entry)
+            assert abs(b["clv"] - (1 / 2.00 - 1 / b["odds"])) < 1e-9
         assert len({b["placed_at"] for b in bets}) == len(bets)  # unique placed_at
 
     def test_baselines_bootstrap_and_metadata(self) -> None:
