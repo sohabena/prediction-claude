@@ -81,3 +81,4 @@ async def reset_virtual_trading() -> None:
 
 if __name__ == "__main__":
     asyncio.run(reset_virtual_trading())
+

@@ -192,6 +192,47 @@ function getFormatLabel(matchId: string, competition?: string): { label: string;
   return { label: "Official Match", badgeClass: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" };
 }
 
+function formatMatchStartTime(dtStr: string | null | undefined): string {
+  if (!dtStr) return "";
+  try {
+    const d = new Date(dtStr);
+    if (isNaN(d.getTime())) return "";
+
+    const now = new Date();
+
+    const isToday =
+      d.getDate() === now.getDate() &&
+      d.getMonth() === now.getMonth() &&
+      d.getFullYear() === now.getFullYear();
+
+    const tomorrow = new Date(now);
+    tomorrow.setDate(now.getDate() + 1);
+    const isTomorrow =
+      d.getDate() === tomorrow.getDate() &&
+      d.getMonth() === tomorrow.getMonth() &&
+      d.getFullYear() === tomorrow.getFullYear();
+
+    const timeStr = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+    if (isToday) {
+      return `Today, ${timeStr}`;
+    }
+    if (isTomorrow) {
+      return `Tomorrow, ${timeStr}`;
+    }
+
+    const isCurrentYear = d.getFullYear() === now.getFullYear();
+    const dateOptions: Intl.DateTimeFormatOptions = isCurrentYear
+      ? { day: "2-digit", month: "short" }
+      : { day: "2-digit", month: "short", year: "numeric" };
+
+    const dateStr = d.toLocaleDateString([], dateOptions);
+    return `${dateStr}, ${timeStr}`;
+  } catch {
+    return "";
+  }
+}
+
 function matchMatchesFormat(m: TrainingMatch, filter: FormatFilter): boolean {
   if (filter === "all") return true;
   const mid = m.match_id.toLowerCase();
@@ -807,7 +848,7 @@ export default function MatchesPage() {
                           </span>
                         ) : match.match_start_time ? (
                           <span className="text-amber-400/90 font-medium">
-                            Starts: {new Date(match.match_start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            Starts: {formatMatchStartTime(match.match_start_time)}
                           </span>
                         ) : (
                           <span>{match.match_id}</span>
@@ -1025,8 +1066,8 @@ export default function MatchesPage() {
                       <span className="font-medium text-zinc-400">
                         {match.tick_count.toLocaleString()} ticks
                       </span>
-                      <span className="text-zinc-500 font-mono text-[11px]">
-                        {match.match_id}
+                      <span className="text-zinc-400 text-[11px] font-medium">
+                        {match.match_start_time ? new Date(match.match_start_time).toLocaleDateString([], { day: "2-digit", month: "short", year: "numeric" }) : match.match_id}
                       </span>
                     </div>
 
