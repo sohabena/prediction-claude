@@ -1,6 +1,7 @@
 # PHOENIX Remediation Stories
 
-Source: forensic audit of `betfair-historical-importer` @ `59d77f4` (2026-11-02).
+Source: forensic audit of `betfair-historical-importer` @ `59d77f4` (2026-11-02), S01–S10.
+Second pass (strategy and data-flow review) @ `443c42e` (2026-11-02), S11–S18: see [strategy-review.md](strategy-review.md).
 Each story is self-contained so that one sub-agent can execute it with no other context.
 
 ## How to run a story with a sub-agent
@@ -50,7 +51,7 @@ Give the agent this prompt (replace `NN`):
 Installed: stable-baselines3, gymnasium, torch, numpy, scikit-learn, redis (asyncio),
 SQLAlchemy async + asyncpg, alembic, pytest + pytest-asyncio (`asyncio_mode = "auto"`).
 **Not installed:** `sb3_contrib` (no MaskablePPO). Baseline: `python -m pytest tests/unit tests/rl -q`
-→ **101 passed in ~26 s** at commit `59d77f4`. Redis/Postgres may not be running.
+→ **101 passed in ~26 s** at commit `59d77f4`; **214 passed in ~20 s** at `443c42e` (baseline for S11+). Redis/Postgres may not be running.
 
 **Conventions.** `from __future__ import annotations`; type hints everywhere; module logger via
 `from shared.logging import setup_logging; logger = setup_logging("<name>")` and structured
@@ -128,6 +129,16 @@ Model tier = suggested executor. **Sonnet** implements every story (each needs d
 | [S08](S08-timescaledb-hardening.md) | TimescaleDB retention, chunks, keys, pools | P0 (retention) / P1 | Sonnet | — | `backend/db_init.py`, `alembic/versions/002_*.py`, `backend/models/{odds,bets}.py`, `shared/db.py`, `shared/config.py` |
 | [S09](S09-training-regime.md) | Training regime: scale, sampling, normalisation | P1 | Sonnet | S02, S03, S04 | `scripts/train_format_specialists.py` (training functions only), `rl/agent.py` |
 | [S10](S10-redis-streams-migration.md) | Durable tick bus: Redis Streams | P2 | Sonnet | S06 | `shared/redis_client.py`, `features/feature_cache_consumer.py` + consumer wiring |
+| [S11](S11-feature-train-serve-parity.md) | Feature pipeline train/serve parity | P0 | Sonnet | — | `features/pipeline.py`, `features/normalizer.py` |
+| [S12](S12-live-decision-cadence.md) | Live decision cadence matches training | P0 | Sonnet | — (S11 first is nicer) | `virtual_trading/live_trading_loop.py` (handler), new `virtual_trading/decision_gate.py` |
+| [S13](S13-synthetic-market-null-test.md) | Synthetic market without free edge + null test | P0 | Sonnet | — | `scripts/prepare_specialist_datasets.py`, `scripts/cricsheet_harmonizer.py`, new `scripts/synthetic_market.py`, `scripts/audit_synthetic_edge.py` |
+| [S14](S14-fair-value-model-and-value-policy.md) | Calibrated fair-value model + value policy | P1 | Sonnet | (S13 format) | new `strategy/*`, `scripts/train_fair_value.py`, evaluator dispatch in `scripts/train_format_specialists.py` |
+| [S15](S15-metrics-and-graduation-correctness.md) | One CLV/Sharpe/drawdown; honest graduation | P0 | Sonnet | — | new `shared/metrics.py`, `virtual_trading/settlement.py`, `rl/graduation.py`, `rl/lifecycle/graduation_handler.py`, `backtesting/{backtester,report}.py`, `shared/constants.py` (GRADUATION_CRITERIA), `backend/services/agent_service.py` (CLV) |
+| [S16](S16-recorded-real-odds-corpus.md) | Recorded real-odds corpus export + replay | P0 | Sonnet | — | new `scripts/export_recorded_corpus.py`, `data/recorded/README.md` |
+| [S17](S17-model-provenance-gate.md) | Model zoo provenance gate | P0 | Sonnet | — | `rl/model_zoo.py` |
+| [S18](S18-rebuild-and-honest-report.md) | Rebuild everything + honest strategy report | P0 (ops) | Sonnet | S11, S13–S17 | new `scripts/rebuild_all.py`, `docs/reports/`, new model/data dirs |
+| [S19](S19-optional-confidence-in-engine.md) | Engine accepts "no confidence"; stop persisting 0.5 | P1 | Sonnet | S12 | `virtual_trading/engine.py`, `virtual_trading/live_trading_loop.py` (one call), `virtual_trading/bet_persister.py` |
+| [S20](S20-graduation-wiring-and-sharpe-cleanup.md) | Graduation per live model; last `sqrt(252)` | P1 | Sonnet | S15 | `rl/orchestrator.py` (nightly check), `virtual_trading/shadow_trader.py` (Sharpe) |
 
 ## Parallelisation waves
 
@@ -137,6 +148,10 @@ Stories in the same wave own disjoint files and can run concurrently.
 - **Wave 2 (parallel):** S04 (needs S03 merged), S06 (needs S05 merged), S07 (needs S01+S02)
 - **Wave 3:** S09 (needs S02, S03, S04) — S02 and S09 share a file, never run them together
 - **Wave 4:** S10
+- **Wave 5 (parallel):** S11, S12, S13, S14, S15, S16, S17. These are disjoint files. S14 edits only the policy dispatch in
+  `scripts/train_format_specialists.py`, and no other wave-5 story touches that file.
+- **Wave 6:** S18 (long-running rebuild and report; needs wave 5 committed)
+- **Wave 7 (parallel with or before S18):** S19, S20. Disjoint from each other and from S18. S19 changes sizing only for callers that relied on the old 0.5 default, so land it before S18's rebuild.
 
 After each wave: run the full unit suite, review diffs, commit one commit per story.
 
@@ -184,7 +199,26 @@ Notes from S03 (committed `0b7e921`):
 - `exchange_commission` defaults to 0.0; realistic training must pass 0.02.
 - Default `episode_sampling` is `"random"`; deterministic evaluation passes `"sequential"`.
 
+## Contract: decision tick (owned by S12, used by S11/S16)
+
+A live tick is a *decision tick* when any of these hold:
+- it is the first tick of the match;
+- `innings` changed;
+- `wickets` increased;
+- `floor(overs)` changed;
+- `score` rose by ≥ 4 since the last decision tick;
+- there has been no decision tick for 180 s.
+
+Without context, only the time rule applies. Only decision ticks are fed to `FeaturePipeline.compute` and to the policy. Every tick still updates `_latest_events` for fills.
+
 ## Out of scope (research backlog, no story yet)
+
+- Feed S14 `win_prob` into live `engine.propose` for Kelly sizing (after S18 shows the fair model beats market-implied on recorded odds).
+- Fair-value edge as an observation feature (changes `OBSERVATION_SIZE`).
+- Collapse 15 specialists into 3 format families if S18 confirms they generalise better.
+- Weekly `export_recorded_corpus.py` in the S07 sync job; keep recorded ticks beyond the 90-day `odds_ticks` retention.
+- Sharpe graduation threshold (0.10/day) is a placeholder; calibrate from the S18 report.
+- `BettingAction` docstrings say 1%/3% but `SMALL/LARGE_STAKE_PERCENT` are 2%/4% (`shared/schemas.py:26-33`).
 
 - Real Betfair historical odds ingestion replacing synthetic prices (this branch's importer).
 - Order-book depth / adverse-selection simulator.
