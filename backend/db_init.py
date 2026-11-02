@@ -29,6 +29,7 @@ from backend.models import (  # noqa: F401 - ensure all models are registered
     MatchResultRecord,
     MatchTrainingStatus,
 )
+from backend.models.odds import OddsTickHistorical  # noqa: F401
 from shared.config import get_settings
 from shared.logging import setup_logging
 
@@ -36,11 +37,20 @@ logger = setup_logging("db_init")
 
 
 HYPERTABLE_STATEMENTS = [
-    "SELECT create_hypertable('odds_ticks', 'time', if_not_exists => TRUE, chunk_time_interval => INTERVAL '1 hour')",
-    "SELECT create_hypertable('match_context', 'time', if_not_exists => TRUE, chunk_time_interval => INTERVAL '1 hour')",
+    "SELECT create_hypertable('odds_ticks', 'time', if_not_exists => TRUE, chunk_time_interval => INTERVAL '1 day')",
+    "SELECT create_hypertable('odds_ticks_historical', 'time', if_not_exists => TRUE, chunk_time_interval => INTERVAL '30 days')",
+    "SELECT create_hypertable('match_context', 'time', if_not_exists => TRUE, chunk_time_interval => INTERVAL '1 day')",
     "SELECT create_hypertable('virtual_bets', 'placed_at', if_not_exists => TRUE)",
     "SELECT create_hypertable('training_metrics', 'time', if_not_exists => TRUE)",
     "SELECT create_hypertable('graduation_snapshots', 'time', if_not_exists => TRUE)",
+]
+
+# create_hypertable(if_not_exists) never changes an existing table's interval;
+# these affect newly created chunks only.
+CHUNK_INTERVAL_STATEMENTS = [
+    "SELECT set_chunk_time_interval('odds_ticks', INTERVAL '1 day')",
+    "SELECT set_chunk_time_interval('odds_ticks_historical', INTERVAL '30 days')",
+    "SELECT set_chunk_time_interval('match_context', INTERVAL '1 day')",
 ]
 
 # Add id column to virtual_bets if missing (for API compatibility)
@@ -110,17 +120,48 @@ MIGRATION_STATEMENTS = [
 
 INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_odds_match_time ON odds_ticks (match_id, time DESC)",
-    "CREATE INDEX IF NOT EXISTS idx_odds_live ON odds_ticks (is_live, time DESC)",
+    "DROP INDEX IF EXISTS idx_odds_live",
+    "CREATE INDEX IF NOT EXISTS idx_odds_live_partial ON odds_ticks (time DESC) WHERE is_live",
+    "CREATE INDEX IF NOT EXISTS idx_odds_hist_match_time ON odds_ticks_historical (match_id, time)",
     "CREATE INDEX IF NOT EXISTS idx_context_match_time ON match_context (match_id, time DESC)",
     "CREATE INDEX IF NOT EXISTS idx_bets_match ON virtual_bets (match_id, placed_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_results_match ON match_results (match_id)",
     "CREATE INDEX IF NOT EXISTS idx_training_status ON match_training_status (training_status)",
 ]
 
+# Rows that belong in odds_ticks_historical (kept in sync with migration 002).
+HISTORICAL_PREDICATE = (
+    "(source IN ('cricsheet_official','synthetic_cricsheet',"
+    "'synthetic_archetype','betfair_historical') OR match_id LIKE 'cric\\_%')"
+)
+
+# Immediate safety: drop the live retention job until the historical copy is verified.
+SAFETY_STATEMENTS = [
+    "SELECT remove_retention_policy('odds_ticks', if_exists => TRUE)",
+]
+
+# Retention applies ONLY to the live table. Never add it to odds_ticks_historical.
 RETENTION_STATEMENTS = [
     "SELECT add_retention_policy('odds_ticks', INTERVAL '90 days', if_not_exists => TRUE)",
-    "SELECT add_compression_policy('odds_ticks', INTERVAL '7 days', if_not_exists => TRUE)",
 ]
+
+COMPRESSION_STATEMENTS = [
+    "ALTER TABLE odds_ticks SET (timescaledb.compress, timescaledb.compress_segmentby = 'match_id', timescaledb.compress_orderby = 'time DESC')",
+    "SELECT add_compression_policy('odds_ticks', INTERVAL '7 days', if_not_exists => TRUE)",
+    "ALTER TABLE odds_ticks_historical SET (timescaledb.compress, timescaledb.compress_segmentby = 'match_id', timescaledb.compress_orderby = 'time DESC')",
+    "SELECT add_compression_policy('odds_ticks_historical', INTERVAL '30 days', if_not_exists => TRUE)",
+]
+
+
+async def _historical_copy_complete(engine) -> bool:
+    """True when every historical-looking row in odds_ticks exists in odds_ticks_historical."""
+    async with engine.begin() as conn:
+        legacy = (await conn.execute(text(
+            f"SELECT count(*) FROM odds_ticks WHERE {HISTORICAL_PREDICATE}"))).scalar() or 0
+        copied = (await conn.execute(text(
+            "SELECT count(*) FROM odds_ticks_historical"))).scalar() or 0
+    logger.info("historical_copy_check", legacy_rows=legacy, copied_rows=copied)
+    return copied >= legacy
 
 
 async def init_database() -> None:
@@ -139,7 +180,8 @@ async def init_database() -> None:
         + [(ADD_VIRTUAL_BETS_ID, "virtual_bets_id")]
         + [(s, "migration") for s in MIGRATION_STATEMENTS]
         + [(s, "index") for s in INDEX_STATEMENTS]
-        + [(s, "retention") for s in RETENTION_STATEMENTS]
+        + [(s, "chunk_interval") for s in CHUNK_INTERVAL_STATEMENTS]
+        + [(s, "compression") for s in COMPRESSION_STATEMENTS]
     )
     for stmt, kind in all_statements:
         try:
@@ -148,6 +190,22 @@ async def init_database() -> None:
                 logger.info(f"{kind}_created", statement=stmt[:60])
         except Exception as e:
             logger.warning(f"{kind}_skip", statement=stmt[:60], error=str(e))
+
+    # Retention safety: only (re)apply the live 90-day policy once the historical copy is complete.
+    try:
+        if await _historical_copy_complete(engine):
+            for stmt in RETENTION_STATEMENTS:
+                async with engine.begin() as conn:
+                    await conn.execute(text(stmt))
+            print("db_init: historical copy complete -> live retention policy (90 days) applied to odds_ticks")
+        else:
+            for stmt in SAFETY_STATEMENTS:
+                async with engine.begin() as conn:
+                    await conn.execute(text(stmt))
+            print("db_init: historical copy INCOMPLETE -> removed retention policy on odds_ticks; not re-added")
+    except Exception as e:
+        logger.warning("retention_step_failed", error=str(e))
+        print(f"db_init: retention step failed ({e}); no retention policy was added")
 
     await engine.dispose()
     logger.info("database_initialized")

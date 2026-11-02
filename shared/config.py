@@ -11,7 +11,7 @@ Usage:
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
 
 # Load .env from project root so RL_MIN_MATCHES_TO_TRAIN etc. are applied.
@@ -30,6 +30,9 @@ class DatabaseConfig(BaseSettings):
     db: str = "phoenix_betting"
     user: str = "phoenix"
     password: str = ""
+    pool_size: int = Field(default=5, validation_alias=AliasChoices("DB_POOL_SIZE", "POSTGRES_POOL_SIZE"))
+    max_overflow: int = Field(default=5, validation_alias=AliasChoices("DB_MAX_OVERFLOW", "POSTGRES_MAX_OVERFLOW"))
+    pool_timeout: int = Field(default=10, validation_alias=AliasChoices("DB_POOL_TIMEOUT", "POSTGRES_POOL_TIMEOUT"))
 
     @property
     def url(self) -> str:
