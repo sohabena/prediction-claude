@@ -122,6 +122,7 @@ class PortfolioManager:
         self._reservations: dict[str, BetProposal] = {}
         self._reservation_times: dict[str, datetime] = {}
         self._match_teams: dict[str, tuple[str, str]] = {}
+        self._match_competitions: dict[str, str] = {}
         now = self._clock()
         self._day_key = now.date()
         self._week_key = now.isocalendar()[:2]
@@ -197,13 +198,32 @@ class PortfolioManager:
         return self._reservations
 
     # ---------------------------------------------------------- reservations
-    def register_match(self, match_id: str, team_home: str, team_away: str) -> None:
-        """Remember which teams play in a match (for per-team exposure)."""
+    def register_match(
+        self,
+        match_id: str,
+        team_home: str,
+        team_away: str,
+        *,
+        competition: str | None = None,
+    ) -> None:
+        """Remember which teams play in a match (for per-team exposure) and, when
+        given, its competition (for the per-competition cap).
+
+        A call without ``competition`` keeps any competition registered earlier, so
+        callers that re-register on every proposal do not erase it.
+        """
         self._match_teams[match_id] = (team_home, team_away)
+        comp = (competition or "").strip()
+        if comp:
+            self._match_competitions[match_id] = comp
 
     def match_teams(self, match_id: str) -> tuple[str, str]:
         """Return (home, away) names registered for a match, or ('', '')."""
         return self._match_teams.get(match_id, ("", ""))
+
+    def match_competition(self, match_id: str) -> Optional[str]:
+        """Competition registered for a match, or None when unknown."""
+        return self._match_competitions.get(match_id)
 
     def reserve(self, proposal: BetProposal) -> None:
         """Reserve a proposal's liability so later checks count it."""
@@ -250,6 +270,40 @@ class PortfolioManager:
             add(p.match_id, p.action, p.odds, p.stake)
         return {m: (v[0], v[1]) for m, v in books.items()}
 
+    def competition_open_liability(
+        self,
+        competition: str,
+        extra: Iterable[BetProposal] = (),
+        exclude_reservation: Optional[str] = None,
+    ) -> float:
+        """Sum of worst-case losses over the match books of one competition.
+
+        Matches with no registered competition are never counted. ``extra`` and
+        ``exclude_reservation`` are passed to :meth:`match_books`.
+        """
+        books = self.match_books(extra=extra, exclude_reservation=exclude_reservation)
+        return sum(
+            worst_loss(b) for m, b in books.items()
+            if self.match_competition(m) == competition
+        )
+
+    def open_unrealised_loss(self, exclude_reservation: Optional[str] = None) -> float:
+        """Sum of current worst-case losses over all open books (bets and reservations)."""
+        return sum(
+            worst_loss(b)
+            for b in self.match_books(exclude_reservation=exclude_reservation).values()
+        )
+
+    def daily_loss_fraction(self, exclude_reservation: Optional[str] = None) -> float:
+        """Realised daily loss, -(daily P&L), as a fraction of the balance at the start of the
+        UTC day. Negative when the day is in profit. Used by the daily circuit breaker.
+
+        Open worst-case liability is not a loss and is already bounded by the liability caps;
+        counting it here would halt a flat day at 10% open risk, below the 30% total cap.
+        ``exclude_reservation`` is accepted for call-site symmetry and unused."""
+        self._maybe_roll_periods(self._clock())
+        return -self._state.daily_pnl / max(self._daily_start_balance, 1.0)
+
     def bets_in_last_hour(self, exclude_reservation: Optional[str] = None) -> int:
         """Committed bets in the last hour plus in-flight reservations."""
         now = self._clock()
@@ -275,8 +329,8 @@ class PortfolioManager:
         if self.is_circuit_breaker_active:
             return False, "Circuit breaker active"
 
-        # Check daily loss limit
-        daily_loss = (self._daily_start_balance - self._state.current_balance) / max(self._daily_start_balance, 1.0)
+        # Check daily loss limit (realised + open worst-case risk)
+        daily_loss = self.daily_loss_fraction()
         if daily_loss >= MAX_DAILY_LOSS_PERCENT:
             return False, f"Daily loss limit reached: {daily_loss:.1%}"
 

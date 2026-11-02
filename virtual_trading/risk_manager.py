@@ -28,6 +28,10 @@ logger = setup_logging("risk_manager")
 
 _EPS = 1e-6
 
+# S32: max worst-case loss summed over the open matches of one competition, as a
+# fraction of the balance. Defined here because shared/constants.py is not owned by S32.
+MAX_COMPETITION_LIABILITY_PCT = 0.15  # half the total cap, so it binds first on a busy competition day
+
 
 @dataclass
 class RiskDecision:
@@ -46,7 +50,9 @@ class RiskManager:
     - Per-match worst-case loss
     - Per-team worst-case loss across all open matches
     - Total worst-case loss
-    - Daily / weekly loss, drawdown, circuit breaker (halt new risk)
+    - Per-competition worst-case loss (S32; only for matches registered with a competition)
+    - Daily loss (realised P&L plus open worst-case losses, S32), weekly loss, drawdown,
+      circuit breaker (halt new risk)
     - Hourly bet frequency
     Liability-reducing proposals pass the exposure caps and the halting breakers.
     """
@@ -98,8 +104,20 @@ class RiskManager:
                     f"Total liability {total_loss / balance:.1%} > {MAX_TOTAL_LIABILITY_PCT:.0%}"
                 )
 
-            # Halting breakers (liability-reducing bets are exempt)
-            daily_loss = -state.daily_pnl / max(pf.daily_start_balance, 1.0)
+            competition = pf.match_competition(proposal.match_id)
+            if competition is not None:  # unknown competition = no competition cap
+                comp_loss = pf.competition_open_liability(
+                    competition, extra=[proposal], exclude_reservation=rid
+                )
+                if comp_loss > MAX_COMPETITION_LIABILITY_PCT * balance + _EPS:
+                    violations.append(
+                        f"Competition '{competition}' liability {comp_loss / balance:.1%} "
+                        f"> {MAX_COMPETITION_LIABILITY_PCT:.0%}"
+                    )
+
+            # Halting breakers (liability-reducing bets are exempt). The daily loss counts
+            # realised P&L plus current open worst-case losses (excluding this proposal).
+            daily_loss = pf.daily_loss_fraction(exclude_reservation=rid)
             if daily_loss >= MAX_DAILY_LOSS_PERCENT:
                 violations.append(f"Daily loss {daily_loss:.1%} >= {MAX_DAILY_LOSS_PERCENT:.0%}")
 
@@ -147,7 +165,7 @@ class RiskManager:
         if (sum(worst_loss(b) for b in books.values()) + proposed_stake) / balance > MAX_TOTAL_EXPOSURE_PERCENT:
             violations.append("Total exposure limit")
 
-        if -state.daily_pnl / max(pf.daily_start_balance, 1.0) >= MAX_DAILY_LOSS_PERCENT:
+        if pf.daily_loss_fraction() >= MAX_DAILY_LOSS_PERCENT:
             violations.append("Daily loss limit")
         if -pf.weekly_pnl / max(pf.weekly_start_balance, 1.0) >= MAX_WEEKLY_LOSS_PERCENT:
             violations.append("Weekly loss limit")
