@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 from collections import defaultdict
 from datetime import date, datetime, timedelta
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable, Mapping, Optional
 
 import numpy as np
 
@@ -18,6 +18,16 @@ def side_of(action: Any) -> str:
     """Return ``"BACK"`` or ``"LAY"`` for an action name / enum / side string."""
     name = getattr(action, "name", None) or str(action)
     return "LAY" if "LAY" in name.upper() else "BACK"
+
+
+def selection_of(action: Any) -> str:
+    """Return ``"HOME"`` or ``"AWAY"`` for an action name / enum; ``""`` when neither."""
+    name = (getattr(action, "name", None) or str(action)).upper()
+    if "HOME" in name:
+        return "HOME"
+    if "AWAY" in name:
+        return "AWAY"
+    return ""
 
 
 def clv_prob(side: Any, entry_odds: float, closing_odds: float) -> float:
@@ -123,3 +133,73 @@ def per_match_pnl(bets: Iterable[dict[str, Any]]) -> dict[str, float]:
             continue
         out[str(mid)] += float(b.get("pnl", b.get("profit_loss", 0.0)) or 0.0)
     return dict(out)
+
+
+def _field(obj: Any, name: str) -> Any:
+    if isinstance(obj, Mapping):
+        return obj.get(name)
+    return getattr(obj, name, None)
+
+
+def bet_clv(bet: Any, field: str = "clv") -> Optional[float]:
+    """Per-bet CLV for ``field`` (a VirtualBet, a mapping, or a row).
+
+    ``field="clv"`` returns the stored value. When it is missing but
+    ``closing_odds`` is present, it is recomputed with :func:`clv_prob`
+    (the same definition, never a second one). Any other field is read as-is.
+    Returns ``None`` when no valid value exists.
+    """
+    value = _field(bet, field)
+    if value is not None:
+        return float(value)
+    if field != "clv":
+        return None
+    closing = _field(bet, "closing_odds")
+    entry = _field(bet, "odds")
+    action = _field(bet, "action")
+    if closing is None or entry is None or action is None:
+        return None
+    if float(closing) <= 1.0 or float(entry) <= 1.0:
+        return None
+    return clv_prob(side_of(action), float(entry), float(closing))
+
+
+def portfolio_clv(
+    bets: Iterable[Any], field: str = "clv", n_bootstrap: int = 10_000
+) -> dict[str, Any]:
+    """Summary of CLV across bets: mean, median, positive rate, n and a bootstrap 95% CI.
+
+    ``positive_clv_rate`` is the share of bets with CLV strictly above zero.
+    The CI is the percentile bootstrap of the mean from
+    ``backtesting.report.bootstrap_ci``. Empty input, or fewer than 5 bets
+    (where that helper cannot estimate an interval), gives NaN for the
+    statistics rather than a fabricated 0.0. ``clv_sharpe`` is deliberately absent.
+    """
+    values = [v for v in (bet_clv(b, field) for b in bets) if v is not None and math.isfinite(v)]
+    n = len(values)
+    nan = math.nan
+    if n == 0:
+        return {
+            "n": 0, "mean_clv": nan, "median_clv": nan, "positive_clv_rate": nan,
+            "ci95_lower": nan, "ci95_upper": nan, "ci95_excludes_zero": False,
+        }
+    arr = np.asarray(values, dtype=float)
+    out: dict[str, Any] = {
+        "n": n,
+        "mean_clv": float(np.mean(arr)),
+        "median_clv": float(np.median(arr)),
+        "positive_clv_rate": float(np.mean(arr > 0.0)),
+    }
+    if n < 5:
+        out.update({"ci95_lower": nan, "ci95_upper": nan, "ci95_excludes_zero": False})
+        return out
+    # Lazy import: backtesting.report imports this module.
+    from backtesting.report import bootstrap_ci
+
+    ci = bootstrap_ci(values, n_bootstrap=n_bootstrap, ci=0.95, statistic="mean")
+    out.update({
+        "ci95_lower": ci["ci_lower"],
+        "ci95_upper": ci["ci_upper"],
+        "ci95_excludes_zero": bool(ci["significant"]),
+    })
+    return out
