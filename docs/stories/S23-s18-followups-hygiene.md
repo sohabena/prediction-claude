@@ -1,5 +1,7 @@
 # S23 — S18 follow-ups: Test-corpus leakage audit, missing historical table, warning spam, fair-value file naming
 
+> **Status (2026-11-02, v2 plan): split.** Item 2 (missing `odds_ticks_historical`, export fallback) moved to **S37**. Item 4 (fair-value file naming) moved to **S38**. Items 1 (test_men synthetic leakage) and 3 (warning spam) stay here at P2; do not edit `scripts/export_recorded_corpus.py` or `strategy/fair_value.py` from this story.
+
 **Priority:** P1 · **Tier:** sonnet · **Depends on:** S18 committed, S22 committed · **Wave:** 9
 **Conflicts with:** S22 (shares market-builder files): run S23 after S22.
 

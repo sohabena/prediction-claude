@@ -1,5 +1,7 @@
 # S22 — Calibrated null market, calibration audit and a positive-control market
 
+> **Status (2026-11-02, v2 plan): downgraded to P2.** The synthetic market is now used only for mechanics tests and RL research ([profit-architecture.md](../architecture/profit-architecture.md)). The backtester sanity null (R0) runs on real prices in S39. Run S22 only if PPO is trained on synthetic data again.
+
 **Priority:** P0 · **Tier:** sonnet · **Depends on:** S13, S14, S18 committed · **Wave:** 9
 **Conflicts with:** S23 (shares `scripts/prepare_specialist_datasets.py`, `scripts/cricsheet_harmonizer.py`, `scripts/synthetic_market.py`): run S22 first.
 

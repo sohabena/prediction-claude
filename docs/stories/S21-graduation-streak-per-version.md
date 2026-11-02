@@ -1,5 +1,7 @@
 # S21 — Graduation streak is tracked per model version
 
+> **Status (2026-11-02, v2 plan): SUPERSEDED by S42**, which rebuilds the go-live gate around CLV vs the Betfair closing price and includes the per-version streak. Do not run S21.
+
 **Priority:** P1 (before any real-money step) · **Tier:** sonnet · **Depends on:** S20 committed · **Wave:** 8
 **Conflicts with:** none
 

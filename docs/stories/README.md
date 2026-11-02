@@ -2,6 +2,7 @@
 
 Source: forensic audit of `betfair-historical-importer` @ `59d77f4` (2026-11-02), S01–S10.
 Second pass (strategy and data-flow review) @ `443c42e` (2026-11-02), S11–S18: see [strategy-review.md](strategy-review.md).
+**Third pass, v2 architecture for real-money profit** @ `a902981` (2026-11-02), S35–S42: see [../architecture/profit-architecture.md](../architecture/profit-architecture.md). PPO on synthetic markets is shelved; S21 is superseded by S42; S22 and part of S23 are P2.
 Each story is self-contained so that one sub-agent can execute it with no other context.
 
 ## How to run a story with a sub-agent
@@ -142,6 +143,26 @@ Model tier = suggested executor. **Sonnet** implements every story (each needs d
 | [S21](S21-graduation-streak-per-version.md) | Graduation streak tracked per model version | P1 | Sonnet | S20 | `rl/graduation.py`, `rl/lifecycle/graduation_handler.py` |
 | [S22](S22-calibrated-null-market-and-positive-control.md) | Calibrated null market, calibration audit, positive-control market | P0 | Sonnet | S13, S14, S18 | `scripts/synthetic_market.py`, `scripts/prepare_specialist_datasets.py`, `scripts/cricsheet_harmonizer.py`, new `scripts/audit_market_calibration.py` |
 | [S23](S23-s18-followups-hygiene.md) | S18 follow-ups: test_men audit, historical table, warnings, fair-value naming | P1 | Sonnet | S18, after S22 | `scripts/audit_outcome_leakage.py`, `features/pipeline.py`, `scripts/export_recorded_corpus.py`, `scripts/train_fair_value.py`, `scripts/rebuild_all.py`, `strategy/fair_value.py` |
+| [S35](S35-real-price-corpus-from-betfair-files.md) | Real-price corpus from Betfair historical files | P0 | Sonnet | — (operator downloads files to run) | `scraper/parsers/betfair_historical.py`, `scripts/import_betfair_data.py`, new `scripts/build_real_price_corpus.py` |
+| [S36](S36-conservative-ball-time-alignment.md) | Conservative Cricsheet ↔ price alignment | P0 | Sonnet | S35 | new `scripts/align_ball_by_ball.py` |
+| [S37](S37-recording-reliability.md) | Record every real match; exclude SRL/synthetic; coverage report | P0 | Sonnet | — | `scraper/manager.py` (recording gate), `scraper/match_filter.py`, `scripts/export_recorded_corpus.py`, new `scripts/recording_health.py`, `docs/runbooks/recording.md` |
+| [S38](S38-fair-value-v2-ratings.md) | Fair value v2: ratings, context, walk-forward, vs market | P0 | Sonnet | — (S35/S36 for the market comparison) | `strategy/fair_value.py`, new `strategy/ratings.py`, `scripts/train_fair_value.py`, new `scripts/eval_fair_value_vs_market.py` |
+| [S39](S39-real-price-backtester.md) | Real-price event-driven backtester, conservative execution | P0 | Sonnet | S35 | new `backtesting/real_backtester.py`, `backtesting/execution.py`, `strategy/base.py`, `scripts/run_real_backtest.py` |
+| [S40](S40-strategy-engine-v2-live.md) | Signal engine: manual-bet signals from the backtested strategy (PPO shadow) | P1 | Sonnet | S39, S38 | `strategy/value_policy.py`, new `strategy/runner.py`, `virtual_trading/live_trading_loop.py` (decision), `shared/constants.py` (STRATEGY/EXECUTION) |
+| [S41](S41-betfair-exchange-adapter.md) | Betfair market-data adapter (read-only), closing price | P1 | Sonnet | S40 | `scraper/parsers/betfair_parser.py`, new `scraper/betfair_stream.py`, `scraper/betfair_store.py`, `scraper/match_mapper.py` |
+| [S42](S42-go-live-gate-and-kill-switch.md) | Signal trust gate (CLV vs Betfair close) + signal kill switch | P1 | Sonnet | S40 (S41) | `rl/graduation.py`, `rl/lifecycle/graduation_handler.py`, `shared/constants.py` (GRADUATION/KILL), new `virtual_trading/kill_switch.py`, `virtual_trading/risk_manager.py` |
+| [S24](S24-in-house-cricsheet-elo-engine.md) | In-house chronological Cricket Elo engine from Cricsheet | P1 | Sonnet | — | scripts/compute_cricsheet_elo.py, shared/elo.py, 	ests/unit/test_s24_cricsheet_elo.py |
+| [S25](S25-venue-and-toss-priors-engine.md) | In-house venue par and toss prior engine from Cricsheet | P1 | Sonnet | — | scripts/compute_venue_priors.py, shared/venue_priors.py, 	ests/unit/test_s25_venue_priors.py |
+| [S26](S26-observation-vector-expansion.md) | Observation vector expansion: incorporate Elo, venue, and toss priors | P1 | Sonnet | S24, S25 | shared/constants.py, eatures/pipeline.py, eatures/extractors/prior_features.py, 	ests/unit/test_s11_feature_parity.py, 	ests/unit/test_features.py |
+| [S27](S27-fair-value-ev-gating-in-live-engine.md) | Fair-value probability integration and EV value gating in live trading loop | P0 | Sonnet | S14, S26 | irtual_trading/live_trading_loop.py, irtual_trading/engine.py, shared/constants.py, 	ests/unit/test_s27_ev_gating.py |
+| [S28](S28-sanctioned-betfair-historical-importer.md) | Sanctioned Betfair historic data pipeline and TimescaleDB ingestion | P2 | Sonnet | — | scripts/import_betfair_data.py, 	ests/unit/test_s28_betfair_importer.py |
+| [S29](S29-player-at-crease-resource-tracking.md) | Player-at-crease impact and top-order resource tracking from Cricsheet | P1 | Sonnet | S24 | scripts/compute_player_roles.py, shared/player_registry.py, eatures/extractors/match_stats_features.py, 	ests/unit/test_s29_player_resources.py |
+| [S30](S30-specialist-zoo-retraining-and-benchmark.md) | Specialist Zoo retraining and comparative holdout evaluation on expanded features | P1 | Sonnet | S26, S29 | scripts/train_format_specialists.py, scripts/benchmark_offline_improvements.py, 	ests/unit/test_s30_retraining_pipeline.py |
+| [S31](S31-adverse-selection-and-placement-delay.md) | Real-world bet placement delay and adverse selection simulator | P0 | Sonnet | — | irtual_trading/live_trading_loop.py, irtual_trading/engine.py, 
+l/environment.py, 	ests/unit/test_s31_adverse_selection.py |
+| [S32](S32-cross-match-portfolio-risk-limits.md) | Cross-match portfolio exposure limits and concurrent event circuit breakers | P0 | Sonnet | — | irtual_trading/risk_manager.py, irtual_trading/portfolio.py, 	ests/unit/test_s32_portfolio_risk.py |
+| [S33](S33-closing-line-value-clv-auditor.md) | Closing Line Value (CLV) and price efficiency auditor | P1 | Sonnet | — | irtual_trading/settlement.py, shared/metrics.py, scripts/audit_clv.py, 	ests/unit/test_s33_clv_auditor.py |
+| [S34](S34-frontend-ui-ratings-and-ev-transparency.md) | Frontend UI transparency: Display Team Elo, Venue Priors, and Real-Time EV Breakdown | P2 | Sonnet | S26, S27 | ackend/routers/match_router.py, ackend/routers/trading_router.py, rontend/app/matches/page.tsx, rontend/app/trading/page.tsx, 	ests/unit/test_s34_ui_endpoints.py |
 
 ## Parallelisation waves
 
@@ -154,9 +175,46 @@ Stories in the same wave own disjoint files and can run concurrently.
 - **Wave 5 (parallel):** S11, S12, S13, S14, S15, S16, S17. These are disjoint files. S14 edits only the policy dispatch in
   `scripts/train_format_specialists.py`, and no other wave-5 story touches that file.
 - **Wave 6:** S18 (long-running rebuild and report; needs wave 5 committed)
-- **Wave 9:** S22, then S23 (they share files, so sequential), then rerun S18. S22 is the blocker for any conclusion about edge.
+- **v2 waves (real-money architecture):**
+  - **Wave 10 (parallel):** S35, S37, S38
+  - **Wave 11 (parallel):** S36 (needs S35), S39 (needs S35)
+  - **Wave 12 (parallel):** S40 (needs S38, S39), S41 (needs S40's runner only at integration; can start with S40)
+  - **Wave 13:** S42 (shares `shared/constants.py` with S40)
+  - Operator steps between waves: download Betfair historical files before running S35/S36/S39 for real; keep the recorder running after S37; provide a Betfair app key before S41 live paper trading.
+- **Operator decisions 2026-11-02:** no automated betting (the app emits signals; bets are placed by hand, so backtests use 60 s manual latency); scraping is automated (S37 watchdog + scheduled task); the operator downloads Betfair historical files. **Executor tier for the merged plan: Haiku** (operator request).
+- **Merged plan (v2 stories S35–S42 + the other set's S24–S34), recommended order. This supersedes the v2 waves above and the other set's Waves 10–11:**
+  - **Wave 10 (parallel):** S35 real corpus, S37 recording, S24 Elo, S25 venue/toss priors
+  - **Wave 11 (parallel):** S36 alignment, S38 fair value v2 (needs S24, S25), S39 real backtester, S32 portfolio risk, S33 CLV auditor
+  - **Wave 12 (parallel):** S40 strategy engine, S41 Betfair adapter, S29 player resources (as S38 v3 features)
+  - **Wave 13:** S42 go-live gate + kill switch (after S32)
+  - **Later / P2:** S34 UI, S28 (Betfair → DB ingestion, after S35), S22, S23
+  - **Shelved:** S26 (observation expansion), S30 (zoo retraining). Both feed PPO trained on the synthetic market, which pays a no-skill policy (S18 report, S22 evidence).
+  - **Superseded:** S27 by S40 (same goal; S40 runs the backtested strategy object). S31 by S39's execution model plus S40's latency-matched placement. Both also own `live_trading_loop.py` and `engine.py`, which S40 owns.
+
+| Other-set story | Verdict | Reason |
+|---|---|---|
+| S24 Elo engine | Keep, P0, wave 10 | Strength ratings are thesis 1; S38 consumes them |
+| S25 venue/toss priors | Keep, P0, wave 10 | Same; S38 consumes them |
+| S26 observation 50→54 | Shelve | Only feeds PPO observations; the synthetic training market is not a null market |
+| S27 EV gating in live loop | Superseded by S40 | Same intent; S40 shares the backtested strategy interface and owns the same files |
+| S28 Betfair → TimescaleDB | P2, after S35 | S35 builds the file corpus the backtests need; DB ingestion is optional. Owns `scripts/import_betfair_data.py` (S35 no longer edits it) |
+| S29 player-at-crease | Keep, P1, wave 12 | Useful fair-value features (S38 v3), not PPO features |
+| S30 zoo retraining | Shelve | Synthetic-market RL; results cannot show skill |
+| S31 adverse selection / delay | Fold into S39 + S40 | S39 models latency, bet delay and adverse fills; S40 matches live placement delay to it |
+| S32 cross-match portfolio risk | Keep, P1, wave 11 | Needed before any real money; run before S42 |
+| S33 CLV auditor | Keep, P1, wave 11 | Must use `shared.metrics.clv_prob` and prefer the Betfair close (S41) |
+| S34 UI transparency | Keep, P2 | After S38/S40 so it shows the real strategy's numbers |
+- **Wave 9 (P2 after v2 plan):** S22, then S23 (they share files, so sequential), then rerun S18. S22 is the blocker for any conclusion about edge.
 - **Wave 8:** S21 (any time before a real-money step; independent of S18).
 - **Wave 7 (done, S19 and S20):** S19, S20. Disjoint from each other and from S18. S19 changes sizing only for callers that relied on the old 0.5 default, so land it before S18's rebuild.
+- **Wave 10 (Authentic Open-Source Intelligence & Value Gating):**
+  - **Phase 10A (parallel):** S24 (Elo Engine), S25 (Venue/Toss Priors), S28 (Sanctioned Betfair Importer) own disjoint files and execute simultaneously.
+  - **Phase 10B:** S26 (Observation Expansion 50→54) follows S24 + S25.
+  - **Phase 10C:** S27 (Fair-Value EV Gating & Kelly Sizing) integrates the calibrated probability model and expanded observations into the live trading loop.
+- **Wave 11 (Execution Realism, Player Intelligence, Risk & UI Transparency):**
+  - **Phase 11A (parallel):** S29 (Player Resource Tracking), S31 (Adverse Selection Simulator), S32 (Cross-Match Portfolio Risk), S33 (CLV Auditor) own disjoint files and can execute concurrently.
+  - **Phase 11B:** S30 (Specialist Zoo Retraining & Benchmark Report) runs across the model zoo using candidate staging directories.
+  - **Phase 11C:** S34 (Frontend UI Transparency) surfaces Elo badges, venue par run-rates, and EV edge breakdown in the Next.js UI.
 
 After each wave: run the full unit suite, review diffs, commit one commit per story.
 
@@ -216,6 +274,14 @@ A live tick is a *decision tick* when any of these hold:
 
 Without context, only the time rule applies. Only decision ticks are fed to `FeaturePipeline.compute` and to the policy. Every tick still updates `_latest_events` for fills.
 
+## Contract: real tick (owned by S35, used by S36, S38, S39)
+
+One dict per price update: `time`, `market_id`, `match_id` (`bf_<market_id>`), `team_home`, `team_away`, `competition`, `match_format`, `family`, `in_play`, `ltp_home`, `ltp_away`, `ltp_draw`, `back_home`, `lay_home`, `back_away`, `lay_away` (None when the file tier has no ladder; never filled from ltp), `traded_volume_home/away`, `source`, `data_tier`, `market_model="real"`. Result only in `_meta` on the first tick. S36 adds state fields (`score`, `wickets`, `overs`, `innings`, `target`, `balls_remaining`, `run_rate`, `req_run_rate`) as of the conservatively released time.
+
+## Contract: strategy interface (owned by S39, implemented by S40)
+
+`strategy/base.py`: `Strategy.on_tick(tick, position) -> list[OrderIntent]`, `Strategy.reset(meta_without_result)`; `OrderIntent(side, selection, price_limit, stake, reason)`. The backtester and the live runner call strategies only through this interface.
+
 ## Out of scope (research backlog, no story yet)
 
 - Feed S14 `win_prob` into live `engine.propose` for Kelly sizing (after S18 shows the fair model beats market-implied on recorded odds).
@@ -223,6 +289,9 @@ Without context, only the time rule applies. Only decision ticks are fed to `Fea
 - Collapse 15 specialists into 3 format families if S18 confirms they generalise better.
 - Weekly `export_recorded_corpus.py` in the S07 sync job; keep recorded ticks beyond the 90-day `odds_ticks` retention.
 - Sharpe graduation threshold (0.10/day) is a placeholder; calibrate from the S18 report.
+- Soft-book vs sharp-line value (needs a genuinely independent bookmaker price; LotusBook match odds mirror the exchange).
+- Session/"fancy" runs markets (would need a new scraper target and a runs model).
+- Timestamped ball-by-ball feed (would replace S25 estimation).
 - `BettingAction` docstrings say 1%/3% but `SMALL/LARGE_STAKE_PERCENT` are 2%/4% (`shared/schemas.py:26-33`).
 
 - Real Betfair historical odds ingestion replacing synthetic prices (this branch's importer).
