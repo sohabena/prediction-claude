@@ -1,0 +1,325 @@
+{
+  "key": "t20i_men",
+  "started_at": "2026-11-02T10:59:40.492232+00:00",
+  "steps": {
+    "backup": {
+      "backed_up": true,
+      "path": "C:\\Users\\sohai\\Downloads\\prediction-claude\\data\\specialists\\_pre_s13\\corpus_t20i_men.json.gz"
+    },
+    "corpus": {
+      "matches": 343,
+      "noise_mode": "martingale",
+      "path": "data\\specialists\\corpus_t20i_men.json.gz"
+    },
+    "audits": {
+      "enforced": true,
+      "leakage": {
+        "passed": true,
+        "max_delta": 0.009613579398053407,
+        "buckets": [
+          {
+            "bucket_lo": 0.0,
+            "bucket_hi": 0.25,
+            "n": 2590,
+            "auc_state": 0.7381152227553787,
+            "auc_state_odds": 0.7477288021534321,
+            "delta": 0.009613579398053407
+          },
+          {
+            "bucket_lo": 0.25,
+            "bucket_hi": 0.5,
+            "n": 2642,
+            "auc_state": 0.8065961779888886,
+            "auc_state_odds": 0.8130691559627871,
+            "delta": 0.006472977973898453
+          },
+          {
+            "bucket_lo": 0.5,
+            "bucket_hi": 0.75,
+            "n": 2616,
+            "auc_state": 0.9011442297063542,
+            "auc_state_odds": 0.9012921131801519,
+            "delta": 0.00014788347379768307
+          },
+          {
+            "bucket_lo": 0.75,
+            "bucket_hi": 1.0,
+            "n": 2672,
+            "auc_state": 0.9440749393064908,
+            "auc_state_odds": 0.9438255805963996,
+            "delta": -0.00024935871009112986
+          }
+        ]
+      },
+      "edge": {
+        "passed": true,
+        "n_matches": 343,
+        "n_test_ticks": 10418,
+        "raw": {
+          "r2": 0.032673292014293254,
+          "hit_rate": 0.5469086434943095
+        },
+        "excess": {
+          "r2": 0.004851113330450518,
+          "hit_rate": 0.508542906507967
+        },
+        "reversion": {
+          "slope": -0.021400050655602732,
+          "t_stat": -5.855943967372258
+        },
+        "r2": 0.004851113330450518,
+        "hit_rate": 0.508542906507967
+      },
+      "log_lines": [
+        "audit_outcome_leakage t20i_men: PASS max_auc_delta=+0.0096",
+        "audit_synthetic_edge t20i_men: PASS excess_r2=+0.0049 hit_rate=0.509"
+      ],
+      "passed": true
+    },
+    "fair": {
+      "n_ticks": 1627,
+      "fair": {
+        "brier": 0.1964578838804755,
+        "log_loss": 0.6933595492347588,
+        "ece": 0.12272032289441691
+      },
+      "market_implied": {
+        "brier": 0.2174261608022988,
+        "log_loss": 0.6498671115113375,
+        "ece": 0.1348362416361237
+      },
+      "key": "t20i_men",
+      "family": "t20",
+      "code_version": "160d9cf",
+      "train_split_hash": "8c063da154a6",
+      "holdout_split_hash": "bee370ecbe4a",
+      "n_train_matches": 240,
+      "n_holdout_matches": 52,
+      "caveat": "synthetic corpus: market price is a hand model; validate on recorded odds (S16)"
+    },
+    "ppo": {
+      "matches_trained": 240,
+      "timesteps_run": 194400,
+      "manifest": "C:\\Users\\sohai\\Downloads\\prediction-claude\\models\\specialists_v2\\t20i_men_train_manifest.json",
+      "planned_timesteps": 216000,
+      "split_sizes": {
+        "train": 240,
+        "val": 51,
+        "holdout": 52
+      }
+    },
+    "eval": {
+      "n_holdout_matches": 52,
+      "policies": {
+        "model": {
+          "key": "t20i_men",
+          "format_name": "Men's T20 International",
+          "matches_trained": 0,
+          "matches_tested": 52,
+          "timesteps": 0,
+          "total_bets": 1448,
+          "avg_bets_per_match": 27.85,
+          "hedged_bets": 600,
+          "hedge_rate_pct": 41.44,
+          "win_rate_pct": 38.46,
+          "total_pnl": 2614846.68,
+          "mean_roi_pct": 50.2855,
+          "sharpe_ratio": 0.3046,
+          "max_drawdown_dollars": 115758.34,
+          "max_drawdown_pct": 2.2261,
+          "profit_factor": 7.73,
+          "policy": "model",
+          "evaluated_at": "2026-11-02T11:04:59.707100+00:00",
+          "holdout_match_ids_hash": "bee370ecbe4a",
+          "code_version": "160d9cf",
+          "n_matches": 52,
+          "bet_win_rate_pct": 56.63,
+          "total_stake": 5219078.29,
+          "roi_on_turnover_pct": 50.1017,
+          "mean_match_pnl": 50285.51,
+          "pnl_ci95_low": 11202.51,
+          "pnl_ci95_high": 99246.74,
+          "commission_paid": 61293.16,
+          "edge_vs_random": null,
+          "clv_n": 1448,
+          "clv_mean": -0.001183375426581498,
+          "clv_ci95_low": -0.02075743665159136,
+          "clv_ci95_high": 0.02159504471107577,
+          "commission_per_match": 1178.7146153846154,
+          "status": "ok"
+        },
+        "value": {
+          "key": "t20i_men",
+          "format_name": "Men's T20 International",
+          "matches_trained": 0,
+          "matches_tested": 52,
+          "timesteps": 0,
+          "total_bets": 322,
+          "avg_bets_per_match": 6.19,
+          "hedged_bets": 145,
+          "hedge_rate_pct": 45.03,
+          "win_rate_pct": 42.31,
+          "total_pnl": 99185.37,
+          "mean_roi_pct": 1.9074,
+          "sharpe_ratio": 0.2455,
+          "max_drawdown_dollars": 23253.66,
+          "max_drawdown_pct": 0.4472,
+          "profit_factor": 2.17,
+          "policy": "value",
+          "evaluated_at": "2026-11-02T11:05:02.070071+00:00",
+          "holdout_match_ids_hash": "bee370ecbe4a",
+          "code_version": "160d9cf",
+          "n_matches": 52,
+          "bet_win_rate_pct": 48.14,
+          "total_stake": 501218.51,
+          "roi_on_turnover_pct": 19.7888,
+          "mean_match_pnl": 1907.41,
+          "pnl_ci95_low": 41.49,
+          "pnl_ci95_high": 4137.09,
+          "commission_paid": 3754.24,
+          "edge_vs_random": null,
+          "clv_n": 322,
+          "clv_mean": 0.010479501040320593,
+          "clv_ci95_low": -0.032624190161694294,
+          "clv_ci95_high": 0.05644054632174649,
+          "commission_per_match": 72.19692307692307,
+          "status": "ok"
+        },
+        "heuristic": {
+          "key": "t20i_men",
+          "format_name": "Men's T20 International",
+          "matches_trained": 0,
+          "matches_tested": 52,
+          "timesteps": 0,
+          "total_bets": 1147,
+          "avg_bets_per_match": 22.06,
+          "hedged_bets": 221,
+          "hedge_rate_pct": 19.27,
+          "win_rate_pct": 40.38,
+          "total_pnl": 1541445.5,
+          "mean_roi_pct": 29.6432,
+          "sharpe_ratio": 0.3158,
+          "max_drawdown_dollars": 105104.46,
+          "max_drawdown_pct": 2.0212,
+          "profit_factor": 4.386,
+          "policy": "heuristic",
+          "evaluated_at": "2026-11-02T11:05:03.964392+00:00",
+          "holdout_match_ids_hash": "bee370ecbe4a",
+          "code_version": "160d9cf",
+          "n_matches": 52,
+          "bet_win_rate_pct": 40.89,
+          "total_stake": 1559594.72,
+          "roi_on_turnover_pct": 98.8363,
+          "mean_match_pnl": 29643.18,
+          "pnl_ci95_low": 6440.22,
+          "pnl_ci95_high": 56926.12,
+          "commission_paid": 40748.55,
+          "edge_vs_random": null,
+          "clv_n": 1147,
+          "clv_mean": 0.1411356158632281,
+          "clv_ci95_low": 0.1169117647821002,
+          "clv_ci95_high": 0.1659501610962901,
+          "commission_per_match": 783.6259615384616,
+          "status": "ok"
+        },
+        "random": {
+          "key": "t20i_men",
+          "format_name": "Men's T20 International",
+          "matches_trained": 0,
+          "matches_tested": 52,
+          "timesteps": 0,
+          "total_bets": 1499,
+          "avg_bets_per_match": 28.83,
+          "hedged_bets": 821,
+          "hedge_rate_pct": 54.77,
+          "win_rate_pct": 36.54,
+          "total_pnl": 719058.54,
+          "mean_roi_pct": 13.828,
+          "sharpe_ratio": 0.1907,
+          "max_drawdown_dollars": 141744.9,
+          "max_drawdown_pct": 2.7259,
+          "profit_factor": 2.496,
+          "policy": "random",
+          "evaluated_at": "2026-11-02T11:05:06.281771+00:00",
+          "holdout_match_ids_hash": "bee370ecbe4a",
+          "code_version": "160d9cf",
+          "n_matches": 52,
+          "bet_win_rate_pct": 54.5,
+          "total_stake": 8054986.59,
+          "roi_on_turnover_pct": 8.9269,
+          "mean_match_pnl": 13828.05,
+          "pnl_ci95_low": -3326.76,
+          "pnl_ci95_high": 35419.79,
+          "commission_paid": 24486.46,
+          "edge_vs_random": null,
+          "clv_n": 1499,
+          "clv_mean": -0.03648092210377578,
+          "clv_ci95_low": -0.05696398542468007,
+          "clv_ci95_high": -0.015991222590455118,
+          "commission_per_match": 470.8934615384615,
+          "status": "ok"
+        },
+        "hold": {
+          "key": "t20i_men",
+          "format_name": "Men's T20 International",
+          "matches_trained": 0,
+          "matches_tested": 52,
+          "timesteps": 0,
+          "total_bets": 0,
+          "avg_bets_per_match": 0.0,
+          "hedged_bets": 0,
+          "hedge_rate_pct": 0.0,
+          "win_rate_pct": 0.0,
+          "total_pnl": 0.0,
+          "mean_roi_pct": 0.0,
+          "sharpe_ratio": 0.0,
+          "max_drawdown_dollars": 0.0,
+          "max_drawdown_pct": 0.0,
+          "profit_factor": 0.0,
+          "policy": "hold",
+          "evaluated_at": "2026-11-02T11:05:08.156399+00:00",
+          "holdout_match_ids_hash": "bee370ecbe4a",
+          "code_version": "160d9cf",
+          "n_matches": 52,
+          "bet_win_rate_pct": 0.0,
+          "total_stake": 0.0,
+          "roi_on_turnover_pct": 0.0,
+          "mean_match_pnl": 0.0,
+          "pnl_ci95_low": 0.0,
+          "pnl_ci95_high": 0.0,
+          "commission_paid": 0.0,
+          "edge_vs_random": null,
+          "clv_n": 0,
+          "clv_mean": null,
+          "clv_ci95_low": null,
+          "clv_ci95_high": null,
+          "commission_per_match": 0.0,
+          "status": "ok"
+        }
+      }
+    },
+    "metadata": {
+      "registered": true,
+      "active_saved": false,
+      "tradeable_if_activated": true,
+      "reason": "ok",
+      "as_registered": {
+        "tradeable": false,
+        "reason": "not active"
+      }
+    },
+    "tradeable": {
+      "tradeable_if_activated": true,
+      "reason": "ok"
+    }
+  },
+  "timings_s": {
+    "backup": 0.01,
+    "corpus": 5.74,
+    "audits": 4.29,
+    "fair": 2.99,
+    "ppo": 296.47,
+    "eval": 18.18,
+    "metadata": 0.0
+  }
+}
