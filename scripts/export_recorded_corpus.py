@@ -9,6 +9,8 @@ Usage::
 
     python scripts/export_recorded_corpus.py [--force] [--cadence decision|raw]
                                              [--min-ticks 50] [--min-coverage 0.6]
+    python scripts/export_recorded_corpus.py --format real [--cadence raw|decision]
+        # S46: writes data/recorded_real/<family>/<match_id>.json.gz + manifest.json (real-tick contract)
 """
 
 from __future__ import annotations
@@ -30,10 +32,19 @@ if str(ROOT) not in sys.path:
 
 from scraper.match_filter import is_simulated_name  # noqa: E402
 from shared.logging import setup_logging  # noqa: E402
+from strategy.fair_value import family_of  # noqa: E402
 
 logger = setup_logging("export_recorded_corpus")
 
 RECORDED_DIR = ROOT / "data" / "recorded"
+RECORDED_REAL_DIR = ROOT / "data" / "recorded_real"  # S46: real-tick contract, read by run_real_backtest
+REAL_MANIFEST_NAME = "manifest.json"
+REAL_DATA_TIER = "ladder_top"  # LotusBook shows best back and lay only
+# Match-state fields copied from the as-of joined tick (never from a later context row).
+REAL_STATE_KEYS = (
+    "score", "wickets", "overs", "innings", "target", "balls_remaining",
+    "run_rate", "req_run_rate", "batting_team", "bowling_team", "status",
+)
 RECORDED_SOURCE = "recorded_lotusbook"  # tag written on exported ticks
 RECORDED_ODDS_SOURCE = "lotusbook"  # ``source`` value of real scraped ticks in odds_ticks
 PRICE_KEYS = ("back_home", "lay_home", "back_away", "lay_away")
@@ -308,6 +319,185 @@ def counts_per_key(manifest: dict[str, Any]) -> dict[str, int]:
     return counts
 
 
+# --------------------------------------------------------------------------- S46: real-tick format
+def to_real_episode(episode_ticks: list[dict[str, Any]], meta: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    """Convert an exported recorded episode into the README ``real tick`` contract (S46).
+
+    ``episode_ticks`` is the output of ``build_episode_checked``. ``meta`` is the settlement result; when
+    omitted it is read from ``episode_ticks[0]["_meta"]``. The result is written only into ``_meta`` on the
+    first tick. State fields are copied as they were already as-of joined, so no later context row is used.
+    """
+    if not episode_ticks:
+        raise ValueError("episode has no ticks")
+    result = dict(meta) if meta is not None else dict(episode_ticks[0].get("_meta") or {})
+    if not result or not result.get("winner"):
+        raise ValueError("episode has no settled result")
+
+    first = episode_ticks[0]
+    match_id = str(first.get("match_id") or "")
+    team_home = first.get("team_home") or result.get("team_home") or ""
+    team_away = first.get("team_away") or result.get("team_away") or ""
+    competition = first.get("competition") or ""
+    match_format = next((t.get("match_format") for t in episode_ticks if t.get("match_format")), "") or ""
+    family = family_of(match_format)
+
+    ticks: list[dict[str, Any]] = []
+    for i, t in enumerate(episode_ticks):
+        tick: dict[str, Any] = {
+            "time": str(t["time"]),
+            "market_id": match_id,
+            "match_id": match_id,
+            "team_home": team_home,
+            "team_away": team_away,
+            "competition": t.get("competition") or competition,
+            "match_format": match_format,
+            "family": family,
+            "in_play": bool(t.get("is_live", False)),
+            "ltp_home": None,
+            "ltp_away": None,
+            "ltp_draw": None,
+            "back_home": t.get("back_home"),
+            "lay_home": t.get("lay_home"),
+            "back_away": t.get("back_away"),
+            "lay_away": t.get("lay_away"),
+            # Traded volume is not recorded; the ladder volume shown is not the same quantity, so it is not used.
+            "traded_volume_home": None,
+            "traded_volume_away": None,
+            "source": RECORDED_SOURCE,
+            "data_tier": REAL_DATA_TIER,
+            "market_model": "real",
+        }
+        for k in REAL_STATE_KEYS:
+            if t.get(k) is not None:
+                tick[k] = t[k]
+        if i == 0:
+            tick["_meta"] = {
+                "winner": result.get("winner"),
+                "loser": result.get("loser"),
+                "winner_is_home": result.get("winner_is_home", result.get("winner") == team_home),
+                "team_home": team_home,
+                "team_away": team_away,
+                "result_type": result.get("result_type") or "win",
+            }
+        ticks.append(tick)
+
+    return {
+        "match_id": match_id,
+        "market_id": match_id,
+        "family": family,
+        "match_format": match_format,
+        "competition": competition,
+        "team_home": team_home,
+        "team_away": team_away,
+        "data_tier": REAL_DATA_TIER,
+        "start": ticks[0]["time"],
+        "ticks": ticks,
+    }
+
+
+def export_real_matches(
+    matches: Iterable[dict[str, Any]],
+    *,
+    out_dir: Path,
+    cadence: str = "raw",
+    min_ticks: int = 50,
+    min_coverage: float = 0.6,
+) -> dict[str, Any]:
+    """Write ``<out_dir>/<family>/<match_id>.json.gz`` plus ``manifest.json`` in the S35 corpus shape.
+
+    The manifest is rebuilt from ``matches`` on every run. Its ``accepted`` entries are what
+    ``load_recorded_real`` and ``scripts/run_real_backtest.py`` read. The gzip payload sha1 is stored per file.
+    """
+    out_dir = Path(out_dir)
+    accepted: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    for m in matches:
+        mid = str(m["match_id"])
+        episode_raw, reason = build_episode_checked(
+            m.get("odds", []), m.get("context", []), m.get("result"), cadence=cadence,
+            min_ticks=min_ticks, min_coverage=min_coverage,
+        )
+        if episode_raw is None:
+            rejected.append({"match_id": mid, "reason": reason})
+            continue
+        episode = to_real_episode(episode_raw)
+        rel = f"{episode['family']}/{mid}.json.gz"
+        payload = gzip.compress(json.dumps(episode["ticks"], default=str).encode("utf-8"), compresslevel=9, mtime=0)
+        path = out_dir / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(payload)
+        accepted.append({
+            "match_id": mid,
+            "market_id": episode["market_id"],
+            "family": episode["family"],
+            "match_format": episode["match_format"],
+            "competition": episode["competition"],
+            "team_home": episode["team_home"],
+            "team_away": episode["team_away"],
+            "data_tier": episode["data_tier"],
+            "start": episode["start"],
+            "n_ticks": len(episode["ticks"]),
+            "last_time": episode["ticks"][-1]["time"],
+            "file": rel,
+            "sha1": hashlib.sha1(payload).hexdigest(),
+        })
+    accepted.sort(key=lambda e: (e["family"], e["match_id"]))
+    rejected.sort(key=lambda e: e["match_id"])
+    counts: dict[str, int] = {}
+    for e in accepted:
+        counts[e["family"]] = counts.get(e["family"], 0) + 1
+    manifest = {
+        "schema_version": 1,
+        "source": RECORDED_SOURCE,
+        "market_model": "real",
+        "data_tier": REAL_DATA_TIER,
+        "cadence": cadence,
+        "min_ticks": min_ticks,
+        "min_coverage": min_coverage,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "counts": {"accepted": len(accepted), "accepted_by_family": dict(sorted(counts.items())),
+                   "rejected": len(rejected)},
+        "accepted": accepted,
+        "rejected": rejected,
+    }
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / REAL_MANIFEST_NAME).write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return manifest
+
+
+def load_recorded_real(family: Optional[str] = None, base_dir: Path = RECORDED_REAL_DIR) -> list[dict[str, Any]]:
+    """Load recorded real-tick episodes (S46), optionally for one family. Same shape as ``load_real_corpus``.
+
+    Raises ``FileNotFoundError`` when no manifest exists, and ``ValueError`` on a sha1 mismatch.
+    """
+    root = Path(base_dir)
+    manifest_path = root / REAL_MANIFEST_NAME
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"no recorded real-tick corpus at {manifest_path}; run export_recorded_corpus.py --format real")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    episodes: list[dict[str, Any]] = []
+    for entry in manifest["accepted"]:
+        if family is not None and entry["family"] != family:
+            continue
+        payload = (root / entry["file"]).read_bytes()
+        if hashlib.sha1(payload).hexdigest() != entry["sha1"]:
+            raise ValueError(f"sha1 mismatch for {entry['file']}; re-export the recorded corpus")
+        ticks = json.loads(gzip.decompress(payload).decode("utf-8"))
+        episodes.append({
+            "match_id": entry["match_id"],
+            "market_id": entry["market_id"],
+            "family": entry["family"],
+            "match_format": entry["match_format"],
+            "competition": entry["competition"],
+            "team_home": entry["team_home"],
+            "team_away": entry["team_away"],
+            "data_tier": entry["data_tier"],
+            "start": entry["start"],
+            "ticks": ticks,
+        })
+    return episodes
+
+
 # --------------------------------------------------------------------------- DB layer
 def select_real_rows(rows: Iterable[Any]) -> tuple[list[dict[str, Any]], int]:
     """Keep only real LotusBook ticks from simulated-free matches; return ``(kept, dropped)``.
@@ -416,8 +606,11 @@ async def main_async(args: argparse.Namespace) -> int:
             "synthetic (cricsheet_official) rows. Nothing supports any real-edge claim yet."
         )
         return 0
+    if args.format == "real":
+        return _export_real(matches, args)
     manifest = export_matches(
-        matches, out_dir=Path(args.out_dir), key_resolver=_resolver(), cadence=args.cadence,
+        matches, out_dir=Path(args.out_dir or RECORDED_DIR), key_resolver=_resolver(),
+        cadence=args.cadence or "decision",
         min_ticks=args.min_ticks, min_coverage=args.min_coverage, force=args.force,
     )
     counts = counts_per_key(manifest)
@@ -430,13 +623,35 @@ async def main_async(args: argparse.Namespace) -> int:
     return 0
 
 
+def _export_real(matches: list[dict[str, Any]], args: argparse.Namespace) -> int:
+    """S46: write the real-tick corpus for run_real_backtest. Raw cadence unless --cadence is given,
+    because the backtester must see every price to fill orders."""
+    out_dir = Path(args.out_dir or RECORDED_REAL_DIR)
+    manifest = export_real_matches(
+        matches, out_dir=out_dir, cadence=args.cadence or "raw",
+        min_ticks=args.min_ticks, min_coverage=args.min_coverage,
+    )
+    counts = manifest["counts"]["accepted_by_family"]
+    print(f"Recorded real-tick matches exported: {manifest['counts']['accepted']}  "
+          f"rejected: {manifest['counts']['rejected']}  -> {out_dir}")
+    for family, n in sorted(counts.items()):
+        print(f"  {family}: {n}")
+    if not counts:
+        print("No recorded matches passed the quality thresholds; nothing supports any real-edge claim yet.")
+    return 0
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--out-dir", default=str(RECORDED_DIR))
-    p.add_argument("--cadence", choices=("decision", "raw"), default="decision")
+    p.add_argument("--format", choices=("legacy", "real"), default="legacy",
+                   help="legacy: per-specialist episodes (S16); real: real-tick contract for the backtester (S46)")
+    p.add_argument("--out-dir", default=None,
+                   help=f"default {RECORDED_DIR} (legacy) or {RECORDED_REAL_DIR} (real)")
+    p.add_argument("--cadence", choices=("decision", "raw"), default=None,
+                   help="default decision (legacy) or raw (real)")
     p.add_argument("--min-ticks", type=int, default=50)
     p.add_argument("--min-coverage", type=float, default=0.6)
-    p.add_argument("--force", action="store_true")
+    p.add_argument("--force", action="store_true", help="legacy format only")
     return asyncio.run(main_async(p.parse_args()))
 
 
