@@ -266,6 +266,17 @@ class Orchestrator:
         await self._training_handler.run_evaluation(self._trainer, self._stats)
         logger.info("nightly_schedule_completed", date=today)
 
+        # Weekly Cricsheet Sync & Retraining (Every Monday at or after 03:00 UTC)
+        if now.weekday() == 0 and now.hour >= 3 and getattr(self, "_last_weekly_cricsheet_sync", None) != today:
+            self._last_weekly_cricsheet_sync = today
+            logger.info("weekly_cricsheet_sync_starting", date=today)
+            try:
+                from scripts.weekly_cricsheet_sync_and_retrain import run_weekly_sync_and_retrain
+                sync_res = await run_weekly_sync_and_retrain(timesteps=4000)
+                logger.info("weekly_cricsheet_sync_completed", date=today, new_matches=sync_res.get("new_matches_found", 0))
+            except Exception as e:
+                logger.error("weekly_cricsheet_sync_failed", error=str(e))
+
     # ================================================================
     # External State Change Detection
     # ================================================================

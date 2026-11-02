@@ -54,3 +54,47 @@ async def get_data_quality(
             "total_episodes": 0, "passed": 0, "failed": 0,
             "avg_quality_score": 0.0, "reports": [], "error": str(e),
         }
+
+
+@router.get("/cricsheet-sync/status")
+async def get_cricsheet_sync_status() -> dict[str, Any]:
+    """Get the status of the weekly Cricsheet sync & retraining pipeline."""
+    import json
+    from pathlib import Path
+    status_file = Path("models/specialists/weekly_sync_status.json")
+    if status_file.exists():
+        try:
+            with open(status_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error("error_reading_sync_status", error=str(e))
+    return {
+        "success": True,
+        "new_matches_found": 0,
+        "updated_specialists": [],
+        "timestamp": None,
+        "message": "Weekly sync has not run yet or status file is absent.",
+    }
+
+
+@router.post("/cricsheet-sync")
+async def trigger_cricsheet_sync() -> dict[str, Any]:
+    """
+    Trigger on-demand Cricsheet synchronization and specialist model fine-tuning.
+    Runs asynchronously in the background.
+    """
+    import asyncio
+    from scripts.weekly_cricsheet_sync_and_retrain import run_weekly_sync_and_retrain
+
+    async def _run():
+        try:
+            await run_weekly_sync_and_retrain(timesteps=4000)
+        except Exception as e:
+            logger.error("manual_cricsheet_sync_error", error=str(e))
+
+    asyncio.create_task(_run())
+    return {
+        "status": "initiated",
+        "message": "Weekly Cricsheet sync & retraining task initiated in background.",
+    }
+
