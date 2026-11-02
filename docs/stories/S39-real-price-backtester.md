@@ -89,3 +89,7 @@ python -m pytest tests/unit tests/rl -q
 ## Out of scope
 
 - Live execution (S41). Changing `CricketBettingEnv`.
+
+## Integration note (2026-11-02)
+
+**CLV definition (binding, 2026-11-02):** always `shared.metrics.clv_prob` (probability points, side-aware). The reference price depends on when the bet was placed. **Pre-match bets** use the last price before the off. **In-play bets** use the same-side price **10 minutes after placement** (`scripts/audit_clv.py HORIZON_SECONDS`), because the price near match end restates the result. `clv_60s` is reported as an execution check for manual latency.

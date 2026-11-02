@@ -90,3 +90,14 @@ python -m pytest tests/unit tests/rl -q
 
 - Automated order placement (operator decision: not wanted).
 - UI layout for signals (other set's S34, P2, adapted to show signals).
+
+## Integration notes from wave 11 (binding)
+
+- S32's per-competition liability cap (`virtual_trading/risk_manager.py MAX_COMPETITION_LIABILITY_PCT = 0.15`) only works if
+  matches are registered with their competition. `virtual_trading/engine.py:212` calls
+  `pf.register_match(match_id, home, away)` without it. In S40's runner path, pass `competition=event.competition`. You
+  may edit **that one call** in `engine.py`.
+- CLV is defined in `docs/architecture/profit-architecture.md` ("CLV definition (binding)"): pre-match bets use the
+  off price, in-play bets the price 10 minutes after placement. Paper bets need no extra columns: `scripts/audit_clv.py`
+  computes `clv_10m` from `odds_ticks`.
+- S32 changed the daily breaker to realised loss only (open worst-case liability is bounded by the liability caps).

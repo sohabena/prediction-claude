@@ -45,8 +45,9 @@ against the strategy. Then I only risk money on signals with a real track record
 1. Trust criteria (rung R3), per strategy version:
    - ≥ 300 settled paper bets from signals over ≥ 30 distinct real matches (simulated or synthetic excluded by source and
      name);
-   - mean `clv_prob` against the **Betfair** close, with a bootstrap CI lower bound > 0. Bets closed against a LotusBook
-     close are reported separately and do not count toward trust;
+   - mean CLV per the binding definition: pre-match bets against the **Betfair** off price, in-play bets against the
+     same-side Betfair price 10 minutes after placement (`clv_10m` from `scripts/audit_clv.py`, S33), with a bootstrap
+     CI lower bound > 0. CLV measured on LotusBook prices is reported separately and does not count toward trust;
    - realised P&L/match CI not entirely below 0;
    - max drawdown ≤ 15% of the allocated bankroll;
    - a missed-signal rate ≤ 40% (otherwise signals are not actionable by hand).
@@ -55,7 +56,7 @@ against the strategy. Then I only risk money on signals with a real track record
    nightly), attached to every published signal through a wrapper around `SignalBus`.
 3. `KillSwitch`. It suspends signals for a version, or globally, when any of these hold:
    - the daily paper loss limit is hit (`KILL_DAILY_LOSS`);
-   - rolling CLV over the last 100 paper bets is < 0 with its CI upper bound < 0;
+   - rolling CLV (same definition) over the last 100 paper bets is < 0 with its CI upper bound < 0;
    - the data is stale (no tick for `KILL_STALE_SECONDS` on a match with open paper positions).
    The state persists in Redis (`kill:<version>`) and needs a manual reset (CLI function), never an automatic one.
 4. `RiskManager.check` consults the kill switch first.
