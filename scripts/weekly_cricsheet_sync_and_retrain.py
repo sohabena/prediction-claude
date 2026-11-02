@@ -22,6 +22,7 @@ import json
 import logging
 import math
 import os
+import pickle
 import random
 import shutil
 import sys
@@ -41,7 +42,9 @@ import torch
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.utils import get_schedule_fn
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
+from rl.agent import PhoenixAgent
 from rl.environment import CricketBettingEnv
 from rl.model_zoo import ModelZoo, get_model_zoo
 from scripts.prepare_specialist_datasets import (
@@ -51,6 +54,7 @@ from scripts.train_format_specialists import (
     ALL_SPECIALISTS_CONFIG,
     SPECIALIST_MAP,
     TEAM_RATINGS,
+    NormalizedModel,
     evaluate_specialist_holdout,
     persist_virtual_bets,
     update_redis_model_zoo_state,
@@ -558,6 +562,20 @@ def champion_path_for(key: str, models_dir: Path, metadata: Optional[Dict[str, A
     return p if p.exists() else None
 
 
+def vecnorm_path_for(model_path: Path) -> Path:
+    """Per-model VecNormalize sidecar; it travels with the model through promotion and rollback."""
+    return PhoenixAgent.default_normalize_path(model_path)
+
+
+def load_vecnorm(model_path: Path) -> Any:
+    """The model's VecNormalize stats, or None for a model trained on raw observations."""
+    p = vecnorm_path_for(model_path)
+    if not p.exists():
+        return None
+    with open(p, "rb") as f:
+        return pickle.load(f)
+
+
 def decide_promotion(
     candidate: Any, champion: Any, max_drawdown_frac: float = MAX_DRAWDOWN_PERCENT
 ) -> Tuple[bool, List[str]]:
@@ -597,6 +615,9 @@ def promote_candidate(
         new_version += 1
         dest = models_dir / f"{key}_v{new_version}.zip"
     shutil.copyfile(candidate_path, dest)
+    cand_vecnorm = vecnorm_path_for(candidate_path)
+    if cand_vecnorm.exists():
+        shutil.copyfile(cand_vecnorm, vecnorm_path_for(dest))
 
     history = list(entry.get("history", []))
     if prev_path is not None:
@@ -656,14 +677,25 @@ def train_candidate(
     )
     base_lr = float(cfg.get("lr", 3e-4))
     guard = UpdateHealthCallback()
+    # The candidate must see observations normalised exactly as its weights expect: continue the
+    # champion's VecNormalize stats, keep raw obs for a legacy (un-normalised) champion, and
+    # normalise from scratch for a fresh model (as S09 training does).
+    venv: Optional[VecNormalize] = None
     if champion_path is not None and Path(champion_path).exists():
-        model = PPO.load(str(champion_path), env=env)
+        champ_vecnorm = vecnorm_path_for(Path(champion_path))
+        if champ_vecnorm.exists():
+            venv = VecNormalize.load(str(champ_vecnorm), DummyVecEnv([lambda: env]))
+            venv.training = True
+            model = PPO.load(str(champion_path), env=venv)
+        else:
+            model = PPO.load(str(champion_path), env=env)
         lr = base_lr * 0.3  # lower LR for fine-tunes
         model.learning_rate = lr
         model.lr_schedule = get_schedule_fn(lr)
     else:
+        venv = VecNormalize(DummyVecEnv([lambda: env]), norm_obs=True, norm_reward=True, clip_obs=10.0)
         model = PPO(
-            policy="MlpPolicy", env=env, learning_rate=base_lr,
+            policy="MlpPolicy", env=venv, learning_rate=base_lr,
             gamma=float(cfg.get("gamma", 0.99)), ent_coef=float(cfg.get("ent_coef", 0.01)),
             n_steps=256, batch_size=64, n_epochs=4, verbose=0,
         )
@@ -673,6 +705,8 @@ def train_candidate(
         return None, health
     candidate_path.parent.mkdir(parents=True, exist_ok=True)
     model.save(str(candidate_path))
+    if venv is not None:
+        venv.save(str(vecnorm_path_for(candidate_path)))
     return candidate_path, health
 
 
@@ -683,7 +717,7 @@ def evaluate_model_path(
     holdout_episodes: List[List[Dict[str, Any]]],
     target_bets_per_match: int = 25,
 ) -> Tuple[Any, List[Dict[str, Any]]]:
-    model = PPO.load(str(model_path))
+    model = NormalizedModel(PPO.load(str(model_path)), load_vecnorm(model_path))
     return evaluate_specialist_holdout(
         model=model,
         specialist_key=specialist_key,

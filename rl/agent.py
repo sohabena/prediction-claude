@@ -6,7 +6,6 @@ Wraps Stable-Baselines3 PPO with PHOENIX-specific configuration.
 from __future__ import annotations
 
 import pickle
-import re
 from pathlib import Path
 from typing import Any, Optional
 
@@ -125,10 +124,13 @@ class PhoenixAgent:
 
     @staticmethod
     def default_normalize_path(path: str | Path) -> Path:
-        """``<key>_vecnorm.pkl`` next to a model named ``<key>[_vN|_candidate].zip``."""
+        """``<model_stem>_vecnorm.pkl`` next to the model: each model file carries its own stats.
+
+        Per-file (not per-key) so promotion, rollback and fine-tunes never pair a model with
+        another version's normalisation.
+        """
         p = Path(path)
-        stem = re.sub(r"_(v\d+|candidate)$", "", p.stem)
-        return p.with_name(f"{stem}_vecnorm.pkl")
+        return p.with_name(f"{p.stem}_vecnorm.pkl")
 
     @classmethod
     def load(

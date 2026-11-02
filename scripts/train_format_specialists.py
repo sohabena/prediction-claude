@@ -829,7 +829,7 @@ def train_single_specialist(
     models_dir = Path(models_dir or DEFAULT_MODELS_DIR)
     models_dir.mkdir(parents=True, exist_ok=True)
     model_path = models_dir / f"{specialist_key}_v1.zip"
-    vecnorm_path = models_dir / f"{specialist_key}_vecnorm.pkl"
+    vecnorm_path = PhoenixAgent.default_normalize_path(model_path)
     manifest_path = models_dir / f"{specialist_key}_train_manifest.json"
 
     if matches is None:

@@ -103,7 +103,7 @@ class TestAgentVecnorm:
         agent.model.learn(total_timesteps=256)
         model_path = tmp_path / "x_v1.zip"
         agent.save(model_path)
-        venv.save(str(tmp_path / "x_vecnorm.pkl"))
+        venv.save(str(tmp_path / "x_v1_vecnorm.pkl"))
         venv.training = False  # reset() must not mutate the saved statistics
         raw = np.asarray(venv.reset(), dtype=np.float32)[0]  # normalised obs from wrapper
         raw_obs = venv.unnormalize_obs(venv.reset())[0]
@@ -151,7 +151,7 @@ class TestTrainPipeline:
         )
         assert len(calls) == 1
         out = tmp_path / "out"
-        assert (out / "t20i_men_v1.zip").exists() and (out / "t20i_men_vecnorm.pkl").exists()
+        assert (out / "t20i_men_v1.zip").exists() and (out / "t20i_men_v1_vecnorm.pkl").exists()
         man = json.loads((out / "t20i_men_train_manifest.json").read_text())
         for k in ("config", "seed", "data_hash", "split_ids_hash", "git_sha", "timesteps_run",
                   "best_val_mean_match_pnl", "holdout_metrics"):
