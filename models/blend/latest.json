@@ -1,11 +1,11 @@
 {
   "version": "1.0.0",
-  "generated_at": "2026-11-03T05:35:44.148483+00:00",
-  "dataset": "C:\\Users\\sohai\\Downloads\\prediction-claude\\data\\training\\20261103-0522",
+  "generated_at": "2026-11-03T08:02:50.669066+00:00",
+  "dataset": "data\\training\\20261103-0801",
   "snapshot": "T-10m",
   "include_simulated": false,
   "devig": "power",
-  "segments_version": "2026.11.03-1",
+  "segments_version": "2026.11.03-2",
   "segments": [
     "family_t20",
     "family_odi",
@@ -30,12 +30,12 @@
   },
   "usable_rows": 0,
   "rows_with_model": 0,
-  "matches_rated": 1,
+  "matches_rated": 7,
   "excluded": {
-    "not_settled": 15,
+    "not_settled": 17,
     "no_start_date": 2,
-    "no_prices": 2,
-    "simulated": 3
+    "no_prices": 3,
+    "simulated": 6
   },
   "outcomes": {},
   "fitted": false,

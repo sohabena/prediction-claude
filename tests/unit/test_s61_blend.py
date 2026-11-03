@@ -240,8 +240,8 @@ class _StubModel:
 
 
 def test_prematch_probability_needs_both_teams_and_a_rated_family():
-    # Women's sides carry a " W" suffix in the registry, which the ratings' gender rule reads.
-    ratings = _StubRatings({"Sydney Sixers W", "Perth Scorchers W"})
+    # Women's sides carry a " W" suffix in the registry (it sets the gender); the ratings know them without it.
+    ratings = _StubRatings({"Sydney Sixers", "Perth Scorchers"})
     model = _StubModel()
     rest = bl.RestIndex(ratings)
     kwargs = dict(away="Perth Scorchers W", competition="WBBL", as_of="2026-11-01", ratings=ratings,
@@ -278,3 +278,19 @@ def test_segment_names_are_pre_registered():
 
     for name in BLEND_SEGMENTS:
         seg.get_segment(name)
+
+
+def test_womens_suffix_is_stripped_for_the_rating_lookup():
+    from training import blend as bl
+
+    seen = []
+
+    class _Ratings:
+        def _team_known(self, team, family, gender):
+            seen.append((team, gender))
+            return False
+
+    assert bl.prematch_probability(home="Melbourne Stars W", away="Perth Scorchers W", family="t20",
+                                   competition="WBBL", as_of="2026-11-02", ratings=_Ratings(), model=object(),
+                                   rest=None) is None
+    assert seen[0] == ("Melbourne Stars", "female")

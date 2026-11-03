@@ -1,0 +1,118 @@
+{
+  "version": "1.0.0",
+  "generated_at": "2026-11-03T07:55:43.005310+00:00",
+  "dataset": "C:\\Users\\sohai\\Downloads\\prediction-claude\\data\\retrain\\20261103T075207Z\\dataset",
+  "snapshot": "T-10m",
+  "include_simulated": false,
+  "devig": "power",
+  "segments_version": "2026.11.03-2",
+  "segments": [
+    "family_t20",
+    "family_odi",
+    "family_test",
+    "gender_women",
+    "tier_2",
+    "market_favourite",
+    "market_longshot",
+    "simulated"
+  ],
+  "prior_sd": {
+    "a": 0.1,
+    "b": 0.1,
+    "c": 0.3,
+    "d": 0.1
+  },
+  "prior_mean": {
+    "a": 0.0,
+    "b": 1.0,
+    "c": 0.0,
+    "d": 0.0
+  },
+  "usable_rows": 0,
+  "rows_with_model": 0,
+  "matches_rated": 5,
+  "excluded": {
+    "not_settled": 17,
+    "no_start_date": 2,
+    "no_prices": 3,
+    "simulated": 6
+  },
+  "outcomes": {},
+  "fitted": false,
+  "posterior": {
+    "a": {
+      "mean": 0.0,
+      "sd": 0.1,
+      "lo95": -0.1959963984540054,
+      "hi95": 0.1959963984540054
+    },
+    "b": {
+      "mean": 1.0,
+      "sd": 0.1,
+      "lo95": 0.8040036015459946,
+      "hi95": 1.1959963984540054
+    },
+    "c": {
+      "mean": 0.0,
+      "sd": 0.3,
+      "lo95": -0.5879891953620162,
+      "hi95": 0.5879891953620162
+    },
+    "segments": {
+      "family_t20": {
+        "mean": 0.0,
+        "sd": 0.1,
+        "lo95": -0.1959963984540054,
+        "hi95": 0.1959963984540054
+      },
+      "family_odi": {
+        "mean": 0.0,
+        "sd": 0.1,
+        "lo95": -0.1959963984540054,
+        "hi95": 0.1959963984540054
+      },
+      "family_test": {
+        "mean": 0.0,
+        "sd": 0.1,
+        "lo95": -0.1959963984540054,
+        "hi95": 0.1959963984540054
+      },
+      "gender_women": {
+        "mean": 0.0,
+        "sd": 0.1,
+        "lo95": -0.1959963984540054,
+        "hi95": 0.1959963984540054
+      },
+      "tier_2": {
+        "mean": 0.0,
+        "sd": 0.1,
+        "lo95": -0.1959963984540054,
+        "hi95": 0.1959963984540054
+      },
+      "market_favourite": {
+        "mean": 0.0,
+        "sd": 0.1,
+        "lo95": -0.1959963984540054,
+        "hi95": 0.1959963984540054
+      },
+      "market_longshot": {
+        "mean": 0.0,
+        "sd": 0.1,
+        "lo95": -0.1959963984540054,
+        "hi95": 0.1959963984540054
+      },
+      "simulated": {
+        "mean": 0.0,
+        "sd": 0.1,
+        "lo95": -0.1959963984540054,
+        "hi95": 0.1959963984540054
+      }
+    }
+  },
+  "walk_forward_predictions": 0,
+  "predictions_file": "C:\\Users\\sohai\\Downloads\\prediction-claude\\data\\retrain\\20261103T075207Z\\blend\\predictions.jsonl",
+  "prematch_models": {
+    "t20": "C:\\Users\\sohai\\Downloads\\prediction-claude\\data\\retrain\\20261103T075207Z\\prematch\\t20_v3.joblib",
+    "odi": "C:\\Users\\sohai\\Downloads\\prediction-claude\\data\\retrain\\20261103T075207Z\\prematch\\odi_v3.joblib"
+  }
+}

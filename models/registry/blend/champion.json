@@ -21,6 +21,16 @@
         "empty_window"
       ],
       "champion": null
+    },
+    {
+      "at": "2026-11-03T07:55:44.143475+00:00",
+      "version": "v0003",
+      "decision": "rejected",
+      "reasons": [
+        "r1_insufficient",
+        "empty_window"
+      ],
+      "champion": null
     }
   ]
 }

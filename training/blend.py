@@ -34,6 +34,7 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Seque
 import numpy as np
 
 from strategy.live_context import gender_of as ratings_gender_of
+from strategy.live_context import ratings_team_name
 from strategy.prematch_model import rest_feature
 from training import segments as seg
 from training.evaluate import flat_book
@@ -340,6 +341,8 @@ def prematch_probability(
     if family not in RATED_FAMILIES or model is None:
         return None
     gender = ratings_gender_of(home, away, competition or "")
+    # Women's sides are recorded as "Sydney Thunder W"; the ratings know them as "Sydney Thunder" (gender female)
+    home, away = ratings_team_name(home, gender), ratings_team_name(away, gender)
     canon_home = (normalize_team(home) if normalize_team else None) or str(home).strip()
     canon_away = (normalize_team(away) if normalize_team else None) or str(away).strip()
     if not (ratings._team_known(canon_home, family, gender) and ratings._team_known(canon_away, family, gender)):
