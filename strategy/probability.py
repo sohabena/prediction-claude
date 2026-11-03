@@ -39,7 +39,7 @@ from strategy.fair_value import family_of, prematch_features, state_features
 from strategy.live_context import gender_of, prematch_fields, ratings_team_name
 from training.blend import RestIndex, prematch_probability
 from training.evaluate import flat_book
-from training.market import DEFAULT_DEVIG, market_prob_home
+from training.market import TRADING_DEVIG, market_prob_home
 
 logger = setup_logging("probability")
 
@@ -131,7 +131,7 @@ def _market(book: Any) -> Optional[float]:
         return None
     try:
         flat = flat_book(book) if isinstance(book.get("home"), Mapping) else dict(book)
-        p = market_prob_home(flat, DEFAULT_DEVIG)
+        p = market_prob_home(flat, TRADING_DEVIG)  # band: never outside the book (trading)
     except (AttributeError, KeyError, TypeError, ValueError):
         return None
     return None if p is None or not math.isfinite(p) else float(p)

@@ -407,7 +407,9 @@ async def run_cycle(
             }
             for intent in intents:
                 p_sel = p_blend if intent.selection == "home" else 1.0 - p_blend
-                edge = staking.edge(intent.side, p_sel, intent.price_limit)
+                # Edge at the decision price (the limit is set where only half the minimum edge remains)
+                decision_price = book.get(f"{'back' if intent.side == 'BACK' else 'lay'}_{intent.selection}")
+                edge = staking.edge(intent.side, p_sel, decision_price or intent.price_limit)
                 await ledger.record_intents(
                     session,
                     variant.name,

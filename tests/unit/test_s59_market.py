@@ -278,3 +278,22 @@ def test_fit_rejects_bad_inputs():
         mk.fit_fav_longshot([0.5, 0.6], [1, 2])
     with pytest.raises(ValueError):
         mk.fit_fav_longshot([0.5, 0.6, 0.7], [1, 1, 1])
+
+
+def test_band_stays_inside_the_book_where_power_does_not():
+    # Live book 2026-11-03 09:42 (Biratnagar v Janakpur): wide spreads, per-runner mids sum below 1
+    book = {"back_home": 1.31, "lay_home": 1.42, "back_away": 4.1, "lay_away": 4.33}
+    p_power = mk.market_prob_home(book, "power")
+    p_band = mk.market_prob_home(book, "band")
+    low, high = max(1 / 1.42, 1 - 1 / 4.1), min(1 / 1.31, 1 - 1 / 4.33)
+    assert not (low <= p_power <= high)
+    assert low <= p_band <= high
+    assert (1 - p_band) * 4.1 - 1 < 0  # backing the away side at its own back price shows no edge
+
+
+def test_band_is_none_for_a_self_contradicting_book_and_handles_partial_books():
+    assert mk.market_prob_home({"back_home": 1.5, "lay_home": 1.52, "back_away": 4.0, "lay_away": 4.1}, "band") is None
+    # one runner quoted on both sides: the band is that runner's own spread
+    assert mk.market_prob_home({"back_home": 1.31, "lay_home": 1.42}, "band") == pytest.approx((1 / 1.42 + 1 / 1.31) / 2)
+    # only one bound available: no band, falls back to power (which needs both runners here)
+    assert mk.market_prob_home({"back_home": 1.31}, "band") is None

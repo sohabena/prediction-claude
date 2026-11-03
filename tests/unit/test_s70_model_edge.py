@@ -330,3 +330,9 @@ def test_limit_keeps_half_the_minimum_edge():
     prices = {"back_home": 1.9, "lay_home": 2.0, "back_away": 2.2, "lay_away": 2.3}
     (i,) = decide(v, 0.6, 0.5, prices, Book(), now=NOW, last_trade_at=None)
     assert i.side == BACK and i.price_limit == pytest.approx(1.02 / 0.6)  # p·o − 1 = 0.02 at the limit
+
+
+def test_trades_below_the_minimum_trade_stake_are_dropped():
+    v = Variant(name="min", w=1.0, min_edge=0.03, bankroll=10_000.0, max_trade_risk=1e12)  # tiny Kelly stakes
+    prices = {"back_home": 1.9, "lay_home": 2.0, "back_away": 2.2, "lay_away": 2.3}
+    assert decide(v, 0.6, 0.5, prices, Book(), now=NOW, last_trade_at=None) == []

@@ -20,8 +20,15 @@ from scipy.optimize import brentq
 
 from shared.metrics import side_of
 
-DEVIG_METHODS = ("multiplicative", "power", "shin")
+DEVIG_METHODS = ("band", "multiplicative", "power", "shin")
+# Research and evaluation baseline (dataset, blend, referee): power de-vig of each runner's mid.
 DEFAULT_DEVIG = "power"
+# Trading: "band" = midpoint of the probability range that BOTH runners' back and lay prices allow (a two-runner
+# exchange book links them: backing away at o is laying home at o/(o-1)). It cannot sit outside the book, so a bet at
+# a price the book itself offers never shows an edge from the book alone. With wide spreads the per-runner mids can sum
+# below 1 and power de-vig then lands outside the book (seen live 2026-11-03: it priced Janakpur at 25.5% when the book
+# allowed 23.1-24.4%, and the market-only control traded on it). Falls back to "power" when a price is missing.
+TRADING_DEVIG = "band"
 
 _WILSON_Z = 1.959963984540054  # two-sided 95%
 _LOGIT_EPS = 1e-6
@@ -157,6 +164,38 @@ _DEVIG = {
 }
 
 
+def _band_bounds(book: Mapping[str, Any]) -> Optional[tuple[float, float]]:
+    """(low, high) of P(home) allowed by the book, or None when a bound is missing on either side.
+
+    Lower bounds: 1/lay_home (laying home is offered at that price) and 1 - 1/back_away (backing away = laying home).
+    Upper bounds: 1/back_home and 1 - 1/lay_away.
+    """
+    bh, lh = _valid_price(book.get("back_home")), _valid_price(book.get("lay_home"))
+    ba, la = _valid_price(book.get("back_away")), _valid_price(book.get("lay_away"))
+    lows = [x for x in ((1.0 / lh) if lh else None, (1.0 - 1.0 / ba) if ba else None) if x is not None]
+    highs = [x for x in ((1.0 / bh) if bh else None, (1.0 - 1.0 / la) if la else None) if x is not None]
+    if not lows or not highs:
+        return None
+    return max(lows), min(highs)
+
+
+def _band_crossed(book: Mapping[str, Any]) -> bool:
+    bounds = _band_bounds(book)
+    return bounds is not None and bounds[0] > bounds[1] + 1e-12
+
+
+def band_prob_home(book: Mapping[str, Any]) -> Optional[float]:
+    """Midpoint of the P(home) range the two runners' prices jointly allow; None when a bound is missing or the
+    book contradicts itself (the range is empty, e.g. a stale or mixed book)."""
+    bounds = _band_bounds(book)
+    if bounds is None:
+        return None
+    low, high = bounds
+    if low > high + 1e-12:
+        return None
+    return float(min(1.0, max(0.0, (low + high) / 2.0)))
+
+
 def market_prob_home(book: Mapping[str, Any], method: str = DEFAULT_DEVIG) -> Optional[float]:
     """De-vigged home win probability from a snapshot book.
 
@@ -164,8 +203,13 @@ def market_prob_home(book: Mapping[str, Any], method: str = DEFAULT_DEVIG) -> Op
     uses whichever of its prices are present. Returns None when either runner has no usable price, or when the
     implied probabilities are not positive.
     """
-    if method not in _DEVIG:
+    if method not in _DEVIG and method != "band":
         raise ValueError(f"unknown de-vig method {method!r}; expected one of {DEVIG_METHODS}")
+    if method == "band":
+        banded = band_prob_home(book)
+        if banded is not None or _band_crossed(book):
+            return banded
+        method = "power"  # a price is missing: no band to read
     ph = implied(book.get("back_home"), book.get("lay_home"))
     pa = implied(book.get("back_away"), book.get("lay_away"))
     if ph is None or pa is None or ph <= 0.0 or pa <= 0.0:
@@ -309,6 +353,8 @@ def apply_fav_longshot(p_market: ArrayLike, fit: FavLongshotFit) -> np.ndarray:
 __all__ = [
     "DEVIG_METHODS",
     "DEFAULT_DEVIG",
+    "TRADING_DEVIG",
+    "band_prob_home",
     "implied",
     "takeable",
     "overround",

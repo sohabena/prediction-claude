@@ -80,6 +80,7 @@ class Variant:
     kelly_fraction: float = 0.25
     max_match_loss: float = 100_000.0
     max_trade_risk: float = 25_000.0  # risk added by one enter/add/flip trade, so the budget lasts the whole match
+    min_trade_stake: float = 1_000.0  # smaller trades are noise a person would not place by hand
     bankroll: float = 5_000_000.0
     hedge_edge: float = 0.01
     max_trades_per_match: int = 40
@@ -247,7 +248,7 @@ def _build(
         # Risk-adding trades are capped one at a time so the match budget can still be traded on both sides later
         risk_per_unit = 1.0 if cand.side == BACK else cand.price - 1.0
         size = min(size, variant.max_trade_risk / risk_per_unit)
-    if not size >= SIGNAL_MIN_STAKE:
+    if not size >= max(SIGNAL_MIN_STAKE, variant.min_trade_stake):
         return None
     return OrderIntent(cand.side, cand.selection, _limit_price(variant, cand), size, reason)
 

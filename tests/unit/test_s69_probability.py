@@ -111,18 +111,22 @@ def test_required_run_rate_matches_training_rule() -> None:
 
 
 # --------------------------------------------------------------------------- market
-def test_p_market_is_power_devig_of_the_book() -> None:
+def test_p_market_is_the_band_midpoint_of_the_book() -> None:
+    # Trading uses the band: the midpoint of the range both runners' prices allow (never outside the book)
     svc = _service(StubRatings(set()))
     est = svc.estimate(MATCH, BOOK, as_of=AS_OF)
-    assert est.p_market == pytest.approx(market_prob_home(flat_book(BOOK)))
+    assert est.p_market == pytest.approx(market_prob_home(flat_book(BOOK), "band"))
 
 
 def test_p_market_accepts_flat_book_and_rejects_unusable_book() -> None:
     svc = _service(StubRatings(set()))
     flat = {"back_home": 1.9, "lay_home": 2.0, "back_away": 2.05, "lay_away": 2.2}
-    assert svc.estimate(MATCH, flat, as_of=AS_OF).p_market == pytest.approx(market_prob_home(flat))
-    missing = {"home": {"back": None, "lay": None}, "away": {"back": 2.0, "lay": 2.2}}
-    assert svc.estimate(MATCH, missing, as_of=AS_OF).p_market is None
+    assert svc.estimate(MATCH, flat, as_of=AS_OF).p_market == pytest.approx(market_prob_home(flat, "band"))
+    # Away prices alone still pin P(home) = 1 - P(away): between 1 - 1/2.0 and 1 - 1/2.2
+    away_only = {"home": {"back": None, "lay": None}, "away": {"back": 2.0, "lay": 2.2}}
+    assert svc.estimate(MATCH, away_only, as_of=AS_OF).p_market == pytest.approx((0.5 + (1 - 1 / 2.2)) / 2)
+    empty = {"home": {"back": None, "lay": None}, "away": {"back": None, "lay": None}}
+    assert svc.estimate(MATCH, empty, as_of=AS_OF).p_market is None
     assert svc.estimate(MATCH, None, as_of=AS_OF).p_market is None
 
 
