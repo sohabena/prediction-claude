@@ -237,7 +237,7 @@ only, 1 at least one failure (or the database could not be read).
 | `results` | a match's last tick is over 6 h old with no result, or a result has an empty winner | |
 | `results_missing` (S76) | | a real match's last tick is over 3 h old with no win, tie, no_result or abandoned result |
 | `start_time_consistency` (S86) | | a real match's listing-derived and JSON-derived starts differ by over 15 min, or its `actual_start_time` is over 60 min after `match_start_time` |
-| `gaps` | | a gap over 5 min inside one live match |
+| `gaps` | | a gap over 5 min inside one live match (a gap after the site closed or suspended match odds is a stoppage, reported apart) |
 | `srl` | never | never (count only) |
 
 `srl` counts simulated (SRL) matches. They are recorded on purpose, so they never fail a check. `is_simulated`
