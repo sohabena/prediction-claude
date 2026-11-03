@@ -62,6 +62,11 @@ LAY_FAIL = 0.10
 PIPELINE_V2 = "livescore-v2"  # S68: score feed pipeline that carries the live score (see parsers/lotusbook_score.py)
 PIPELINE_LEGACY = "legacy"  # S68: score feed pipeline with no score in its body
 DRIFT_WINDOW_DAYS = 7  # S65: settled matches used for the champion's calibration and drift check
+PAPER_LOG_PATH = ROOT / "logs" / "paper_trader.log"  # S73: one JSON line per paper trader cycle
+PAPER_FRESH_FAIL_S = 5 * 60  # trader log older than this while matches are live: fail
+PAPER_SETTLE_FAIL_S = 12 * 3600  # filled bets still open this long after their result: fail
+# Per match, per variant: mirrors MAX_MATCH_LOSS in virtual_trading/paper_trader.py (the cap on the worst outcome)
+PAPER_MATCH_LOSS = 100_000.0
 
 Fetch = Callable[[str, dict[str, Any]], Awaitable[list[dict[str, Any]]]]
 
@@ -282,6 +287,20 @@ SQL: dict[str, str] = {
         WHERE r.completed_at >= CAST(:now AS timestamptz) - INTERVAL '7 days'
           AND r.winner IS NOT NULL AND r.winner <> ''
     """,
+    "paper_open_fills": """
+        SELECT variant, match_id, side, selection, price_filled, stake
+        FROM paper_bets
+        WHERE status = 'filled' AND price_filled IS NOT NULL
+    """,
+    "paper_stale_settlement": """
+        SELECT p.variant, p.match_id, COUNT(*) AS bets, MIN(m.completed_at) AS result_at
+        FROM paper_bets p
+        JOIN match_results m ON m.match_id = p.match_id
+        WHERE p.status = 'filled'
+          AND m.result_type IN ('win', 'tie', 'no_result', 'no result', 'abandoned', 'abandonment')
+          AND m.completed_at <= CAST(:now AS timestamptz) - INTERVAL '12 hours'
+        GROUP BY p.variant, p.match_id
+    """,
     "results": """
         WITH ticks AS (
             SELECT match_id, time FROM odds_ticks WHERE time >= :since
@@ -372,6 +391,22 @@ async def check_freshness(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]:
     if live > 0 and (newest is None or newest > LIVE_FRESH_FAIL_S):
         return _check("freshness", FAIL, newest, detail + f"; fail above {LIVE_FRESH_FAIL_S // 60} min while live")
     return _check("freshness", OK, newest, detail)
+
+
+def _last_cycle_at(path: Path) -> Optional[datetime]:
+    """``cycle_at`` of the last JSON line in the paper trader log (reads only the file's tail), or None."""
+    try:
+        with path.open("rb") as fh:
+            fh.seek(0, 2)
+            fh.seek(max(0, fh.tell() - 65536))
+            lines = [ln for ln in fh.read().splitlines() if ln.strip()]
+        if not lines:
+            return None
+        cycle_at = json.loads(lines[-1].decode("utf-8")).get("cycle_at")
+        value = datetime.fromisoformat(str(cycle_at))
+    except (OSError, ValueError, AttributeError):
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
 
 def _fmt_age(seconds: Optional[float]) -> str:
@@ -628,6 +663,49 @@ async def check_misattribution(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any
     return _check("misattribution", FAIL if flagged else OK, len(flagged), detail)
 
 
+async def check_paper_trading(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]:
+    """S73: the paper trader is running while matches are live, no variant's worst-case exposure on a match is beyond
+    the 100,000 cap, and no filled paper bet is still open 12 h after its result. Any breach is a failure."""
+    from strategy.base import bet_gross_pnl
+
+    live = _int((await fetch("freshness", p))[0]["live_now"])
+    problems: list[str] = []
+    log_path = Path(p.get("paper_log") or PAPER_LOG_PATH)
+    cycle_at = _last_cycle_at(log_path)
+    age = None if cycle_at is None else (p["now"] - cycle_at).total_seconds()
+    if age is None:
+        trader = "no trader log"
+    else:
+        trader = f"last cycle {age:.0f}s ago"
+    if live > 0 and (age is None or age > PAPER_FRESH_FAIL_S):
+        problems.append(f"trader stale ({trader}) while {live} match(es) live")
+
+    pnl: dict[tuple[str, str], dict[str, float]] = {}
+    for row in await fetch("paper_open_fills", p):
+        bucket = pnl.setdefault((row["variant"], str(row["match_id"])), {"home": 0.0, "away": 0.0})
+        for outcome in ("home", "away"):
+            bucket[outcome] += bet_gross_pnl(row["side"], row["selection"], float(row["price_filled"]),
+                                             float(row["stake"]), outcome)
+    worst_by_key = {key: max(0.0, -min(v.values())) for key, v in pnl.items()}
+    over = sorted((key, w) for key, w in worst_by_key.items() if w > PAPER_MATCH_LOSS)
+    if over:
+        problems.append("worst-case beyond " + f"{PAPER_MATCH_LOSS:,.0f}" + ": " + ", ".join(
+            f"{variant} {mid} ({w:,.0f})" for (variant, mid), w in over[:3]))
+
+    stale = await fetch("paper_stale_settlement", p)
+    stale_bets = sum(_int(r["bets"]) for r in stale)
+    if stale_bets:
+        problems.append(f"{stale_bets} filled paper bet(s) on {len(stale)} match(es) still open over "
+                        f"{PAPER_SETTLE_FAIL_S // 3600} h after the result")
+
+    max_worst = max(worst_by_key.values(), default=0.0)
+    detail = (f"{trader}; {live} match(es) live; {len(worst_by_key)} variant-match position(s) open, "
+              f"max worst-case {max_worst:,.0f} (cap {PAPER_MATCH_LOSS:,.0f})")
+    if problems:
+        return _check("paper_trading", FAIL, max_worst, detail + "; " + "; ".join(problems))
+    return _check("paper_trading", OK, max_worst, detail)
+
+
 CHECKS: list[Callable[[Fetch, dict[str, Any]], Awaitable[dict[str, Any]]]] = [
     check_freshness,
     check_price_sanity,
@@ -641,6 +719,7 @@ CHECKS: list[Callable[[Fetch, dict[str, Any]], Awaitable[dict[str, Any]]]] = [
     check_srl,
     check_misattribution,
     check_model_drift,  # S65, appended so the existing check order is unchanged
+    check_paper_trading,  # S73, appended last
 ]
 
 

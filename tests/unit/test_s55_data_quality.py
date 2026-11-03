@@ -46,7 +46,22 @@ def healthy_rows() -> dict[str, list[dict[str, Any]]]:
         "score_pipelines": [{"match_id": "m1", "score_pipeline": "livescore-v2"}],
         "results": [_match("m0", age_s=7200.0, has_result=True, winner="India", result_type="win")],
         "misattribution_ticks": [],
+        "paper_open_fills": [],
+        "paper_stale_settlement": [],
     }
+
+
+def _write_cycle(path: Path, cycle_at: datetime) -> Path:
+    path.write_text(json.dumps({"cycle_at": cycle_at.isoformat(), "intents": 0}) + chr(10), encoding="utf-8")
+    return path
+
+
+@pytest.fixture(autouse=True)
+def fresh_paper_log(tmp_path, monkeypatch):
+    """S73: the paper trader log is read by the paper_trading check; a healthy day has a cycle a minute old."""
+    path = _write_cycle(tmp_path / "paper_trader.log", NOW - timedelta(seconds=60))
+    monkeypatch.setattr(dqm, "PAPER_LOG_PATH", path)
+    return path
 
 
 def fake_fetch(rows: dict[str, list[dict[str, Any]]]):
@@ -119,7 +134,7 @@ def test_healthy_day_is_ok_with_exit_zero():
     assert [c["name"] for c in report["checks"]] == [
         "freshness", "price_sanity", "duplicates", "match_page_coverage", "lay_completeness",
         "score_coverage", "registry", "results", "gaps", "srl", "misattribution",
-        "model_drift",
+        "model_drift", "paper_trading",
     ]
 
 
@@ -430,6 +445,7 @@ def test_run_once_writes_one_json_line_and_returns_the_record(tmp_path, monkeypa
         return [dict(r) for r in healthy[name]]
 
     monkeypatch.setattr(dqm, "_db_fetch", fake_db_fetch)
+    monkeypatch.setattr(dqm, "PAPER_LOG_PATH", _write_cycle(tmp_path / "paper_trader.log", datetime.now(UTC) - timedelta(seconds=60)))
 
     class FakeSession:
         async def execute(self, statement, bound=None):
@@ -585,3 +601,77 @@ def test_results_unresolved_row_of_a_match_still_being_recorded_is_provisional()
     assert one_check(dqm.check_results, rows)["status"] == "ok"
     rows["results"] = [_match("gone", age_s=3 * 3600.0, has_result=True, winner="", result_type="unresolved")]
     assert one_check(dqm.check_results, rows)["status"] == "fail"
+
+
+# --------------------------------------------------------------------------- paper_trading (S73)
+def _fill(variant="w05_e03", match_id="m1", side="BACK", selection="home", price=2.0, stake=1000.0) -> dict[str, Any]:
+    return {"variant": variant, "match_id": match_id, "side": side, "selection": selection,
+            "price_filled": price, "stake": stake}
+
+
+def test_paper_trading_ok_when_trader_is_fresh_and_positions_are_within_cap():
+    rows = healthy_rows()
+    rows["paper_open_fills"] = [
+        _fill(selection="home", stake=90_000.0),
+        _fill(selection="away", stake=90_000.0),  # both sides: the worst home/away outcome is 0
+    ]
+    check = by_name(run(rows))["paper_trading"]
+    assert check["status"] == "ok"
+    assert check["value"] == pytest.approx(0.0)
+
+
+def test_paper_trading_fails_when_the_trader_log_is_stale_while_matches_are_live(tmp_path, monkeypatch):
+    monkeypatch.setattr(dqm, "PAPER_LOG_PATH", _write_cycle(tmp_path / "t.log", NOW - timedelta(minutes=10)))
+    check = by_name(run(healthy_rows()))["paper_trading"]
+    assert check["status"] == "fail"
+    assert "trader stale" in check["detail"]
+
+
+def test_paper_trading_fails_without_any_trader_log_while_matches_are_live(tmp_path, monkeypatch):
+    monkeypatch.setattr(dqm, "PAPER_LOG_PATH", tmp_path / "absent.log")
+    check = by_name(run(healthy_rows()))["paper_trading"]
+    assert check["status"] == "fail"
+    assert "no trader log" in check["detail"]
+
+
+def test_paper_trading_ignores_a_stale_trader_when_nothing_is_live(tmp_path, monkeypatch):
+    monkeypatch.setattr(dqm, "PAPER_LOG_PATH", _write_cycle(tmp_path / "t.log", NOW - timedelta(hours=3)))
+    rows = healthy_rows()
+    rows["freshness"] = [{"odds_age_s": 5.0, "market_age_s": 30.0, "live_now": 0}]
+    assert by_name(run(rows))["paper_trading"]["status"] == "ok"
+
+
+def test_paper_trading_fails_when_one_match_is_beyond_the_hundred_thousand_cap():
+    rows = healthy_rows()
+    rows["paper_open_fills"] = [_fill(price=2.0, stake=150_000.0)]  # BACK home: away side loses 150,000
+    check = by_name(run(rows))["paper_trading"]
+    assert check["status"] == "fail"
+    assert "worst-case beyond 100,000" in check["detail"]
+    assert check["value"] == pytest.approx(150_000.0)
+
+
+def test_paper_trading_cap_is_per_variant_and_per_match():
+    rows = healthy_rows()
+    rows["paper_open_fills"] = [
+        _fill(variant="w03_e03", stake=80_000.0),
+        _fill(variant="w05_e03", stake=80_000.0),  # same match, different variant: each is within the cap
+        _fill(variant="w05_e03", match_id="m2", stake=80_000.0),
+    ]
+    assert by_name(run(rows))["paper_trading"]["status"] == "ok"
+
+
+def test_paper_trading_fails_on_filled_bets_still_open_after_twelve_hours():
+    rows = healthy_rows()
+    rows["paper_stale_settlement"] = [
+        {"variant": "w05_e03", "match_id": "m9", "bets": 2, "result_at": NOW - timedelta(hours=13)}
+    ]
+    check = by_name(run(rows))["paper_trading"]
+    assert check["status"] == "fail"
+    assert "still open over 12 h after the result" in check["detail"]
+
+
+def test_paper_trading_queries_are_selects_over_the_ledger_and_results():
+    for name in ("paper_open_fills", "paper_stale_settlement"):
+        sql = dqm.SQL[name].strip().upper()
+        assert sql.startswith("SELECT")
+        assert "PAPER_BETS" in sql

@@ -53,6 +53,12 @@ COPY scripts/retrain_weekly.py /app/scripts/retrain_weekly.py
 COPY scripts/cricsheet_harmonizer.py /app/scripts/cricsheet_harmonizer.py
 COPY scripts/synthetic_market.py /app/scripts/synthetic_market.py
 
+# S72 paper trader (profile recording): virtual bets from the models; writes only to paper_bets
+# Whole package: the paper trader imports several of its modules (ledger, review, risk helpers)
+COPY virtual_trading/ /app/virtual_trading/
+COPY scripts/run_paper_trader.py /app/scripts/run_paper_trader.py
+COPY scripts/paper_report.py /app/scripts/paper_report.py
+
 # Create non-root user; logs/ is bind-mounted from the host so heartbeats are visible there
 RUN useradd --create-home phoenix && mkdir -p /app/logs && chown -R phoenix /app/logs
 USER phoenix

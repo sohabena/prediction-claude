@@ -80,7 +80,9 @@ def cricsheet_fingerprint(data_root: Path) -> dict[str, Any]:
         for path in root.rglob("*.json"):
             files += 1
             newest = max(newest, path.stat().st_mtime)
-    return {"data_root": str(data_root), "files": files, "newest_mtime": newest}
+    # No absolute path and whole seconds only: the host and the Docker containers share one cache file through a bind
+    # mount, see the same files under different roots, and report mtimes at different precision.
+    return {"files": files, "newest_mtime": int(newest)}
 
 
 def build_ratings(data_root: Path = DEFAULT_DATA_ROOT) -> CricketRatings:

@@ -183,6 +183,34 @@ services:
     networks:
       - phoenix-data
 
+  # S72: paper trader, virtual bets every 15 s on live and upcoming real matches (SRL excluded). No real money.
+  # Built from the scraper's Dockerfile. Reads the database, writes only paper_bets; logs to ./logs/paper_trader.log.
+  paper-trader:
+    build:
+      context: .
+      dockerfile: Dockerfile.scraper
+    container_name: phoenix-paper-trader
+    command: ["python", "scripts/run_paper_trader.py", "--loop"]
+    environment:
+      - POSTGRES_HOST=timescaledb
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-phoenix}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-phoenix_secure_2026}
+      - POSTGRES_DB=${POSTGRES_DB:-phoenix_betting}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_FORMAT=json
+    volumes:
+      - ./logs:/app/logs
+      - ./models:/app/models
+      - ./data:/app/data
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles: ["recording"]
+    networks:
+      - phoenix-data
+
   rl-trainer:
     build:
       context: .
