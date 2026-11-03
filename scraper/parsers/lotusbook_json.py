@@ -113,20 +113,37 @@ def _markets(payload: Any) -> list[dict]:
 
 
 def event_meta(payload: Any) -> Optional[EventMeta]:
-    """Competition and start time of the event, taken from its first market."""
+    """Competition and start time of the event.
+
+    The start time is the ``openDate`` most markets agree on, not the first market's: the exchange market on a real
+    match page can carry its own creation time (2026-11-03, West Indies A v England Lions: one market said
+    2026-11-02 13:28:36 UTC while the event starts at 17:00), and the first market's place in the list varies.
+    """
+    meta: Optional[EventMeta] = None
+    votes: dict[datetime, int] = {}
     for market in _markets(payload):
         event = market.get("event") or {}
         competition = market.get("competition") or {}
         event_id = str(event.get("id") or market.get("groupById") or "")
         if not event_id:
             continue
-        return EventMeta(
-            event_id=event_id,
-            competition_id=str(competition.get("id") or ""),
-            competition_name=str(competition.get("name") or "").strip(),
-            open_date=_open_date(event.get("openDate")),
-        )
-    return None
+        opened = _open_date(event.get("openDate"))
+        if opened is not None:
+            votes[opened] = votes.get(opened, 0) + 1
+        if meta is None:
+            meta = EventMeta(
+                event_id=event_id,
+                competition_id=str(competition.get("id") or ""),
+                competition_name=str(competition.get("name") or "").strip(),
+                open_date=None,
+            )
+    if meta is None:
+        return None
+    if votes:
+        # Most votes wins; on a tie the later time (a creation stamp precedes the start, never follows it)
+        best = max(votes.items(), key=lambda item: (item[1], item[0]))[0]
+        meta = EventMeta(meta.event_id, meta.competition_id, meta.competition_name, best)
+    return meta
 
 
 def event_records(payload: Any, match_id: str, observed_at: datetime) -> list[MarketRecord]:

@@ -55,7 +55,9 @@ RESULTS_SQL = """
            EXTRACT(EPOCH FROM (CAST(:now AS timestamptz) - l.last_time)) AS age_s,
            r.match_id IS NOT NULL AS has_result,
            r.winner,
-           r.result_type
+           r.result_type,
+           -- A match that never went live needs no result (2026-11-03: a 6 Nov match was listed as "missing")
+           (EXISTS (SELECT 1 FROM odds_ticks o WHERE o.match_id = l.match_id AND o.is_live)) AS went_live
     FROM last_tick l
     LEFT JOIN names n ON n.match_id = l.match_id
     LEFT JOIN match_results r ON r.match_id = l.match_id
@@ -102,6 +104,8 @@ def select_missing(
             continue
         if not is_real(row) or has_decided_result(row):
             continue
+        if row.get("went_live") is False:
+            continue  # never in play: nothing to settle yet
         start = row.get("match_start_time")
         missing.append({
             "match_id": str(row["match_id"]),

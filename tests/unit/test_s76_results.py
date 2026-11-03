@@ -594,3 +594,17 @@ def test_report_render_without_missing_is_unchanged():
     state = rep.review.review([], {"w05_e03": 1_000_000.0}, now=NOW, n_resamples=50, draws=50)
     assert "## Results missing" not in rep.render(state, [], NOW)
     assert "## Results missing" in rep.render(state, [], NOW, [])
+
+
+def test_a_listed_match_that_never_went_live_is_not_missing_a_result():
+    """2026-11-03: Sudurpaschim Royals v Karnali Yaks (starts 6 Nov) was listed as missing a result."""
+    from datetime import datetime, timedelta, timezone
+
+    from scripts.results_reconciliation import select_missing
+
+    now = datetime(2026, 11, 3, 21, 0, tzinfo=timezone.utc)
+    base = {"match_id": "lb_1", "team_home": "A", "team_away": "B", "competition": "Nepal Premier League",
+            "is_simulated": False, "match_start_time": now + timedelta(days=2), "last_time": now - timedelta(hours=5),
+            "has_result": False, "winner": None, "result_type": None}
+    assert select_missing([{**base, "went_live": False}], now) == []
+    assert len(select_missing([{**base, "went_live": True}], now)) == 1

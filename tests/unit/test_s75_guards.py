@@ -345,14 +345,14 @@ def test_control_with_two_trades_is_still_ok_and_other_variants_do_not_count_tow
     assert _sanity(rows)["status"] == "ok"
 
 
-def test_filled_bet_with_a_probability_gap_above_twenty_points_fails():
+def test_filled_bet_with_a_probability_gap_above_twenty_points_warns():
     rows = s55.healthy_rows()
     rows["paper_sanity_edges"] = [  # p 0.75 at 2.0 (implied 0.50): a gap of 0.25
         {"variant": "w05_e03", "match_id": "m1", "side": "BACK", "selection": "home", "edge": 0.5, "price_filled": 2.0,
          "p_used": 0.75}
     ]
     check = _sanity(rows)
-    assert check["status"] == "fail"
+    assert check["status"] == "warn"  # reviewed, not a failure: late chases can genuinely differ by 20 points
     assert "probability gap over 20%" in check["detail"]
 
 

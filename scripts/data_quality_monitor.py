@@ -191,15 +191,17 @@ SQL: dict[str, str] = {
     """,
     "prematch_pages": """
         WITH started AS (
-            SELECT s.match_id, s.team_home, s.team_away, s.competition, s.match_start_time,
+            -- Scored on matches that actually started (S86 actual_start_time), at their real off: a scheduled start
+            -- can be stale (2026-11-03: New Zealand v India, still at a pre-timezone-fix 20:30, had not started).
+            SELECT s.match_id, s.team_home, s.team_away, s.competition, s.actual_start_time AS match_start_time,
                    (SELECT MIN(o.time) FROM odds_ticks o
                      WHERE o.match_id = s.match_id
-                       AND o.time BETWEEN s.match_start_time - INTERVAL '2 days' AND s.match_start_time) AS first_listed
+                       AND o.time BETWEEN s.actual_start_time - INTERVAL '2 days' AND s.actual_start_time) AS first_listed
             FROM match_training_status s
-            WHERE s.match_start_time IS NOT NULL
-              AND s.match_start_time >= CAST(:prematch_since AS timestamptz)
-              AND s.match_start_time >= CAST(:since AS timestamptz)
-              AND s.match_start_time <= CAST(:now AS timestamptz)
+            WHERE s.actual_start_time IS NOT NULL
+              AND s.actual_start_time >= CAST(:prematch_since AS timestamptz)
+              AND s.actual_start_time >= CAST(:since AS timestamptz)
+              AND s.actual_start_time <= CAST(:now AS timestamptz)
         )
         SELECT st.match_id, st.team_home, st.team_away, st.competition, st.match_start_time,
                (st.first_listed IS NOT NULL
@@ -625,7 +627,7 @@ async def check_registry(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]:
 async def check_results(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]:
     real = await fetch("results", p)  # SRL included: its results are recorded too (S50)
     stale = [r for r in real if _num(r["age_s"]) is not None
-             and _num(r["age_s"]) > RESULT_STALE_S and not r["has_result"]]
+             and _num(r["age_s"]) > RESULT_STALE_S and not r["has_result"] and r.get("went_live") is not False]
     # An 'unresolved' row for a match that is still being recorded is provisional (it left the listing for a while,
     # e.g. an innings break); it only counts once the match has been quiet for RESULT_PROVISIONAL_S.
     # A tie, no result or abandonment has no winner by definition (S76: entered from public scorecards).
@@ -835,15 +837,21 @@ async def check_paper_sanity(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]:
             f"{variant} {mid} ({n})" for variant, mid, n in busy[:3]))
     edges = await fetch("paper_sanity_edges", p)
     high = [r for r in edges if (_prob_gap(r) or 0.0) > PAPER_SANITY_PROB_GAP_MAX]
+    # A large probability gap is a warning to review, not a failure: late in a chase the in-play model and the price
+    # can genuinely differ by 20 points (2026-11-03, West Indies A v England Lions: 0.90 v 0.69, and the model was
+    # right). The control trading and churn stay failures.
+    gap_note = ""
     if high:
-        problems.append(f"{len(high)} filled bet(s) with a probability gap over {PAPER_SANITY_PROB_GAP_MAX:.0%}: "
-                        + ", ".join(f"{r['variant']} {r['match_id']} {r['side']} {r['selection']} "
-                                    f"(gap {_prob_gap(r):.3f})" for r in high[:3]))
+        gap_note = (f"{len(high)} filled bet(s) with a probability gap over {PAPER_SANITY_PROB_GAP_MAX:.0%} (review): "
+                    + ", ".join(f"{r['variant']} {r['match_id']} {r['side']} {r['selection']} "
+                                f"(gap {_prob_gap(r):.3f})" for r in high[:3]))
     detail = (f"{control} {PAPER_SANITY_CONTROL} trade(s) in 24 h (max {PAPER_SANITY_CONTROL_MAX}); busiest "
               f"variant-match {busiest} trade(s) (max {PAPER_SANITY_MATCH_TRADES_MAX}); {len(edges)} matched bet(s) "
               f"checked for a probability gap over {PAPER_SANITY_PROB_GAP_MAX:.0%}")
     if problems:
-        return _check("paper_sanity", FAIL, busiest, detail + "; " + "; ".join(problems))
+        return _check("paper_sanity", FAIL, busiest, "; ".join([detail, *problems] + ([gap_note] if gap_note else [])))
+    if gap_note:
+        return _check("paper_sanity", WARN, busiest, detail + "; " + gap_note)
     return _check("paper_sanity", OK, busiest, detail)
 
 

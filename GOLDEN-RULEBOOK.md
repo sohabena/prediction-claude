@@ -86,7 +86,12 @@ user `phoenix`.
 **Times:**
 - Site times are IST; the scraper's browser is pinned to `Asia/Kolkata`. Before 2026-11-03 04:15 UTC it was not, and
   listing start times stored before then can be **5.5 h early** (lb_36262294).
-- **The match JSON `openDate` beats the listing's start text**; they can disagree by hours.
+- **The match JSON `openDate` beats the listing's start text**; they can disagree by hours. Take the `openDate` most
+  markets agree on: one market can carry its own creation time (West Indies A v England Lions: 13:28 the day before).
+- Registry rows created before the timezone fix can still hold a start 5.5 h early until their match page opens;
+  checks that need "did it start" use `actual_start_time` or a live tick, never the scheduled start.
+- Some matches carry only the `_BR` match-odds market (runners always `suspended`) and no score feed: then nothing
+  on the page settles them, and the result must come from a public scorecard.
 - **`actual_start_time`** (registry) is the real off: set once from the listing's live badge or the first ball.
   In-play decisions, the pre-match CLV reference and dataset snapshots use it. **The match JSON's `"inPlay": true`
   is NOT a start signal**: it means in-play betting is allowed and is true as soon as a pre-match page opens.
@@ -233,6 +238,8 @@ once; it must be bought, never scraped, and only on the operator's decision.
 | The JSON `inPlay` flag was taken as the off: a 17:00 match "started" at 15:45 | The off comes from the listing badge or the first ball only |
 | A pre-start "live" 0/0 score row switched pre-match bets to the in-play model | Use the live score only when the match is in play |
 | A field's meaning was assumed from its name | Verify a new signal on a real match before anything trades on it |
+| The first market's openDate was taken as the start | Use the openDate most markets agree on |
+| A match listed for 6 Nov was reported as "missing a result" | Results are expected only for matches that went live |
 
 ## 10. Working in this repo with Claude Code
 

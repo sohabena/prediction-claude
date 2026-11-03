@@ -66,7 +66,7 @@ the operator still pass the trust gate (`strategy/trust.py`).
   LAY stakes are sized at their limit price, so a fill above the decision price cannot breach the 100,000
   worst case (a replay found one at 101,994 before this).
 - **Monitor `paper_sanity` (FAIL).** The control places more than 2 trades in 24 h, a filled bet's probability is more
-  than 20 points from its price's implied probability (not the edge, which is large at long odds), or a variant trades
+  than 20 points from its price's implied probability (a WARN to review, not the edge, which is large at long odds), or a variant trades
   one match more than 35 times (budget 30). Counts bets decided from 2026-11-03 12:36 UTC (S90 live).
 - **Settlement.** Every cycle; `draw`, `tie`, `no_result` and `abandoned` void; matches with any decided result are
   no longer candidates. Missing results are listed daily (`scripts/results_reconciliation.py`) and entered by hand

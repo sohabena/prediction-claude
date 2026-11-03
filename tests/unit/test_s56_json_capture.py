@@ -241,6 +241,15 @@ class TestParserFixtures:
         assert real.competition_name == "NCL GT20"
         assert real.open_date == datetime(2026, 11, 2, 23, 0, tzinfo=timezone.utc)  # 04:30 IST on 3 Nov
 
+    def test_start_time_is_the_open_date_most_markets_agree_on(self):
+        """2026-11-03, West Indies A v England Lions: one market carried a creation time (13:28:36 the day before)."""
+        payload = copy.deepcopy(REAL_EVENT)
+        markets = payload["result"]
+        odd = copy.deepcopy(markets[0])
+        odd["event"]["openDate"] = "2026-11-02T18:58:36+05:30"
+        markets.insert(0, odd)
+        assert event_meta(payload).open_date == datetime(2026, 11, 2, 23, 0, tzinfo=timezone.utc)
+
     def test_no_settlement_while_winner_is_open_or_absent(self):
         assert settlement_of(SRL_EVENT) is None  # Winner is OPEN
         assert settlement_of(REAL_EVENT) is None  # no Winner market on this event
