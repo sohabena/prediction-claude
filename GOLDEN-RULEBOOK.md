@@ -95,6 +95,10 @@ user `phoenix`.
 - **`actual_start_time`** (registry) is the real off: set once from the listing's live badge or the first ball.
   In-play decisions, the pre-match CLV reference and dataset snapshots use it. **The match JSON's `"inPlay": true`
   is NOT a start signal**: it means in-play betting is allowed and is true as soon as a pre-match page opens.
+- The listing's live badge can come on during a rain delay before any ball (Dolphins v Western Province,
+  2026-11-03, abandoned without a ball bowled): `actual_start_time` is when the market went in play.
+- Competitions get renamed (South Africa's T20 Challenge became the **Pro20 Cup** in 2026-27; Western Province play
+  as the Cobras): search results by the current name. SuperSport, CricTracker and CricHeroes have same-day results.
 - **The score feed sends a "live" 0/0 row before the start** (status `live`, 0 overs). It is not the off; the trader
   uses the live score only once the match is in play.
 
