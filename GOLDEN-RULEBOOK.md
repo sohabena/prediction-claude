@@ -87,8 +87,11 @@ user `phoenix`.
 - Site times are IST; the scraper's browser is pinned to `Asia/Kolkata`. Before 2026-11-03 04:15 UTC it was not, and
   listing start times stored before then can be **5.5 h early** (lb_36262294).
 - **The match JSON `openDate` beats the listing's start text**; they can disagree by hours.
-- **`actual_start_time`** (registry) is the real off: set once from the match JSON in-play flag, the listing's live
-  badge or the first ball. In-play decisions, the pre-match CLV reference and dataset snapshots use it.
+- **`actual_start_time`** (registry) is the real off: set once from the listing's live badge or the first ball.
+  In-play decisions, the pre-match CLV reference and dataset snapshots use it. **The match JSON's `"inPlay": true`
+  is NOT a start signal**: it means in-play betting is allowed and is true as soon as a pre-match page opens.
+- **The score feed sends a "live" 0/0 row before the start** (status `live`, 0 overs). It is not the off; the trader
+  uses the live score only once the match is in play.
 
 **Results:**
 - The score feed's text ("Lumbini Lions won by 8 wickets") is the source of record when present.
@@ -227,6 +230,9 @@ once; it must be bought, never scraped, and only on the operator's decision.
 | Sanity alarm fired on real long-odds disagreements | Alarm on probability gap, not edge |
 | Churn of 40+ trades per match from Kelly increments | Target position with a no-trade band; ticket budget |
 | Test fakes pass where SQL fails (`row IS NOT NULL`) | Run new SQL once, read-only, against the real DB |
+| The JSON `inPlay` flag was taken as the off: a 17:00 match "started" at 15:45 | The off comes from the listing badge or the first ball only |
+| A pre-start "live" 0/0 score row switched pre-match bets to the in-play model | Use the live score only when the match is in play |
+| A field's meaning was assumed from its name | Verify a new signal on a real match before anything trades on it |
 
 ## 10. Working in this repo with Claude Code
 

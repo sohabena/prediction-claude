@@ -508,7 +508,9 @@ async def run_cycle(
             continue
         book, ages = found
         rows = context.get(cand.match_id, [])
-        state = _state_rows(rows, now)
+        # The score feed sends a "live" 0/0 row before the start (2026-11-03, West Indies A v England Lions at 16:23
+        # for a 17:00 start): before the off the pre-match model prices the match, not the in-play model.
+        state = _state_rows(rows, now) if cand.in_play else None
         fmt = rows[-1].get("match_format") if rows else None
         match = {
             "match_id": cand.match_id,

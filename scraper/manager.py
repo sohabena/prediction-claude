@@ -19,7 +19,7 @@ from playwright.async_api import Browser, BrowserContext, Playwright, async_play
 from features.data_quality import TickValidator
 from features.extractors.category_features import MatchCategoryClassifier, MatchTier
 from scraper.live_match_tracker import LiveMatchTracker
-from scraper.actual_start import SOURCE_JSON_IN_PLAY, SOURCE_LISTING_LIVE, SOURCE_SCORE_FIRST_BALL, is_first_ball
+from scraper.actual_start import SOURCE_LISTING_LIVE, SOURCE_SCORE_FIRST_BALL, is_first_ball
 from scraper.match_filter import MatchClassifier, is_simulated_name
 from scraper.lotus_result_detector import LotusResultDetector
 from scraper.market_pages import (
@@ -929,10 +929,6 @@ class ScraperManager:
         ) -> None:
             await self._on_market_score(store["events"].get(match_id, event), state, pipeline, observed_at)
 
-        async def on_in_play(match_id: str, observed_at: datetime) -> None:
-            # S86: the market JSON's inPlay flag is the first start signal (first one wins)
-            await self._set_actual_start_once(match_id, SOURCE_JSON_IN_PLAY, observed_at)
-
         worker = MarketPageWorker(
             match_id=mid,
             page=page,
@@ -942,7 +938,9 @@ class ScraperManager:
             on_meta=on_meta,
             on_settled=self._on_market_settled,
             on_score=on_score,
-            on_in_play=on_in_play,
+            # No on_in_play: the market JSON's "inPlay" flag means in-play betting is ALLOWED, not that the match has
+            # started. It is true as soon as a pre-match page opens (2026-11-03: West Indies A v England Lions got an
+            # "actual start" at 15:45 for a 17:00 start). The off comes from the listing badge or the first ball.
         )
         worker.seed(await self._last_market_state(mid))
         self._market_stops[mid] = stop

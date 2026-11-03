@@ -587,3 +587,14 @@ def test_replay_load_selects_null_when_the_column_is_missing():
     registry_sql = next(s for s in seen if "FROM match_training_status WHERE" in s)
     assert "NULL::timestamptz AS actual_start_time" in registry_sql
     assert feed._registry["m1"].get("actual_start_time") is None
+
+
+def test_the_market_json_in_play_flag_is_not_a_start_signal():
+    """2026-11-03: "inPlay": true means in-play betting is allowed; it is true as soon as a pre-match page opens."""
+    import inspect
+
+    from scraper import manager
+
+    source = inspect.getsource(manager.ScraperManager)
+    assert "on_in_play=" not in source
+    assert "SOURCE_JSON_IN_PLAY" not in source

@@ -3,7 +3,9 @@
 ``match_training_status.actual_start_time`` and ``actual_start_source`` are set ONCE, by the first signal that
 arrives. The signals and their names (the value stored in ``actual_start_source``):
 
-1. ``json_in_play``: the match page's market JSON carries ``"inPlay": true`` (scraper/parsers/lotusbook_json.py).
+1. ``json_in_play``: RETIRED 2026-11-03. The market JSON's ``"inPlay": true`` means in-play betting is allowed, not
+   that the match started: it is true as soon as a pre-match page opens. It is no longer wired; the name stays so
+   the precedence helper and old rows keep their meaning.
 2. ``listing_live``: the listing shows the live badge (``OddsEvent.is_live``, scraper/manager.py ``_on_events``).
 3. ``score_first_ball``: the score feed shows the first ball of the first innings (scraper/parsers/lotusbook_score.py).
 4. ``listing_backfill`` / ``score_backfill``: scripts/backfill_actual_start.py, from recorded rows. Never live.

@@ -286,3 +286,14 @@ async def test_switch_at_the_off_pre_match_model_then_market_only():
     after_rows = [r for r in _new_rows(session, after) if not is_placebo(r.variant)]  # S85: model rows
     assert all(r.reason not in NEW_RISK for r in after_rows)
     assert all(r.source == "market_only" and r.in_play is True and r.p_model is None for r in after_rows)
+
+
+@pytest.mark.asyncio
+async def test_a_live_score_row_before_the_off_does_not_switch_to_the_in_play_model():
+    """2026-11-03: the score feed sent a "live" 0/0 row 37 min before a 17:00 start; pre-match stays pre-match."""
+    start = T0 + timedelta(minutes=30)
+    feed = FakeFeed(registry=[_registry(start)], prices=[_price(T0 - MIN / 2)], last={MID: T0},
+                    context=[_state(T0 - timedelta(seconds=20))])
+    report = await pt.run_cycle(MemorySession(), feed, FakeProbability(p_model=0.9), pt.build_variants(), now=T0)
+    assert report["matches"][0]["in_play"] is False
+    assert report["matches"][0]["source"] == "prematch"
