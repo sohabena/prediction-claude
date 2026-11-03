@@ -24,7 +24,26 @@ export function Sidebar() {
   const statusLabel = isHealthy ? "System Healthy" : isDegraded ? "System Degraded" : health ? "System Unhealthy" : "Connecting...";
 
   return (
-    <aside className="fixed left-0 top-0 h-screen w-64 bg-zinc-900/60 backdrop-blur-xl border-r border-zinc-800/50 flex flex-col shadow-2xl z-50">
+    <>
+    {/* Phone: a top bar with the three pages and the health dot; the sidebar is for md and up */}
+    <header className="md:hidden sticky top-0 z-50 flex items-center gap-2 px-4 py-3 bg-zinc-900/90 backdrop-blur-xl border-b border-zinc-800/50">
+      <span className="font-black text-phoenix-400 mr-2">PHOENIX</span>
+      <nav className="flex gap-1 flex-1">
+        {navItems.map((item) => (
+          <Link
+            key={item.href}
+            href={item.href}
+            className={`px-3 py-1.5 rounded-lg text-sm ${
+              pathname === item.href ? "bg-phoenix-500/20 text-phoenix-400 font-semibold" : "text-zinc-400"
+            }`}
+          >
+            {item.label}
+          </Link>
+        ))}
+      </nav>
+      <div className={`w-2.5 h-2.5 rounded-full ${statusColor}`} title={statusLabel} />
+    </header>
+    <aside className="hidden md:flex fixed left-0 top-0 h-screen w-64 bg-zinc-900/60 backdrop-blur-xl border-r border-zinc-800/50 flex-col shadow-2xl z-50">
       {/* Logo */}
       <div className="p-6 border-b border-zinc-800/50 relative overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-br from-phoenix-500/10 to-transparent pointer-events-none" />
@@ -61,5 +80,6 @@ export function Sidebar() {
         </div>
       </div>
     </aside>
+    </>
   );
 }

@@ -42,7 +42,7 @@ class EventMeta:
 
 @dataclass(frozen=True)
 class Settlement:
-    """A Winner (match odds) market that is CLOSED. ``winner`` is the single WINNER/WON runner name, or None."""
+    """A settled Winner (match odds) market. ``winner`` is the single WINNER/WON runner name, or None."""
 
     market_id: str
     winner: Optional[str]
@@ -200,28 +200,35 @@ def in_play_of(payload: Any) -> bool:
 
 
 def settlement_of(payload: Any) -> Optional[Settlement]:
-    """The Winner (match odds) market when it is CLOSED, else None.
+    """The settled Winner (match odds) market, else None.
 
-    ``winner`` is set only when exactly one runner carries status WINNER or WON (wording not yet verified
-    against a live close; the statuses seen are returned so the log can confirm it).
+    Verified on a real finish (lb_36267634, 2026-11-03 14:08 UTC): the exchange market showed runner statuses
+    ``winner`` / ``loser`` while the market itself was still ``suspended``; the bookmaker match-odds market closed
+    with both runners ``suspended``. So a market counts as settled when it is CLOSED or a runner carries a winner
+    status, and the first match-odds market naming exactly one winner is preferred over a closed one naming none.
     """
+    fallback: Optional[Settlement] = None
     for market in _markets(payload):
         market_type, _name = _classify_list_market(str(market.get("name") or ""))
         if market_type != "match_odds":
             continue
-        if str(market.get("status") or "").upper() != "CLOSED":
-            return None
         runners = [r for r in market.get("runners") or [] if isinstance(r, dict)]
         statuses = tuple(
             (str(r.get("name") or ""), str(r.get("status") or "").upper()) for r in runners
         )
         winners = [name for name, status in statuses if status in WINNER_STATUSES and name]
-        return Settlement(
+        closed = str(market.get("status") or "").upper() == "CLOSED"
+        if not closed and not winners:
+            continue
+        settlement = Settlement(
             market_id=str(market.get("id") or ""),
             winner=winners[0] if len(winners) == 1 else None,
             runner_statuses=statuses,
         )
-    return None
+        if settlement.winner is not None:
+            return settlement
+        fallback = fallback or settlement
+    return fallback
 
 
 def menu_competitions(payload: Any) -> dict[str, tuple[str, str]]:

@@ -61,6 +61,10 @@ class ResultError(ValueError):
     """A refusal. Nothing is written when this is raised."""
 
 
+class OverwriteRefused(ResultError):
+    """A refusal to replace a trusted result (S91: the API answers 409 for it, and 422 for other refusals)."""
+
+
 @dataclass(frozen=True)
 class Request:
     match_id: str
@@ -129,9 +133,9 @@ def check_overwrite(existing: Optional[Mapping[str, Any]], force: bool, settled_
     if existing is None or not has_decided_result(existing):
         return
     if not force:
-        raise ResultError(f"{match_id} already has a trusted result ({describe(existing)}); pass --force to replace it")
+        raise OverwriteRefused(f"{match_id} already has a trusted result ({describe(existing)}); pass --force to replace it")
     if settled_bets:
-        raise ResultError(
+        raise OverwriteRefused(
             f"{settled_bets} paper bet(s) on {match_id} are already settled against the existing result; a "
             "replacement would not re-settle them. Correct those bets by hand first."
         )

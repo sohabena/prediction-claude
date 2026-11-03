@@ -269,6 +269,32 @@ class TestSettlementParsing:
         assert settlement_of(self._closed(["WINNER", "WINNER"])).winner is None
 
 
+    def test_suspended_market_with_lowercase_winner_status_settles(self):
+        """Real finish, lb_36267634 at 14:08 UTC: market still suspended, runners 'winner' / 'loser'."""
+        payload = copy.deepcopy(SRL_EVENT)
+        market = _market(payload, "1.76108412.340._BR")
+        market["status"] = "SUSPENDED"
+        for runner, status in zip(market["runners"], ["winner", "loser"]):
+            runner["status"] = status
+        assert settlement_of(payload).winner == "Sri Lanka SRL"
+
+    def test_a_market_naming_the_winner_beats_a_closed_one_naming_none(self):
+        """The bookmaker match-odds market closed with both runners suspended; the exchange one named the winner."""
+        payload = copy.deepcopy(SRL_EVENT)
+        exchange = _market(payload, "1.76108412.340._BR")
+        bookmaker = copy.deepcopy(exchange)
+        bookmaker["id"] = "bookmaker-1"
+        bookmaker["status"] = "CLOSED"
+        for runner in bookmaker["runners"]:
+            runner["status"] = "SUSPENDED"
+        exchange["status"] = "SUSPENDED"
+        for runner, status in zip(exchange["runners"], ["loser", "winner"]):
+            runner["status"] = status
+        markets = payload["result"] if isinstance(payload, dict) and "result" in payload else None
+        assert markets is not None
+        markets.insert(0, bookmaker)
+        assert settlement_of(payload).winner == "New Zealand SRL"
+
 # ── 2. cricket menu mapping ───────────────────────────────────────────────────────
 
 

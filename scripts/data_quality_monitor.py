@@ -73,7 +73,10 @@ PAPER_SETTLE_FAIL_S = 12 * 3600  # filled bets still open this long after their 
 PAPER_MATCH_LOSS = 120_000.0
 PAPER_SANITY_CONTROL = "market_only"  # S75: the control variant, which should place (almost) nothing
 PAPER_SANITY_CONTROL_MAX = 2  # trades by the control in 24 h
-PAPER_SANITY_EDGE_MAX = 0.20  # a filled bet whose recorded edge at its decision price is above this is implausible
+# A filled bet whose probability differs from the price's implied probability by more than this is implausible. A
+# probability gap, not the edge: at long odds a few points of probability is a large edge (2026-11-03: 0.085 vs
+# 0.043 at 23.0 is an edge of 0.95, a real model-market disagreement, not a pricing bug).
+PAPER_SANITY_PROB_GAP_MAX = 0.20
 PAPER_SANITY_MATCH_TRADES_MAX = 35  # trades by one variant on one match in 24 h (budget 30 tickets, plus reduces)
 # Bets decided before the S90 strategy went live (2026-11-03 12:36 UTC, written into the two SQL queries) are not
 # counted: they were placed by code that S75 and S90 replaced (S90 limits a variant to 10 tickets per match).
@@ -121,9 +124,13 @@ SQL: dict[str, str] = {
           (SELECT COUNT(*) FROM market_ticks t
              CROSS JOIN LATERAL (VALUES (t.back), (t.lay)) AS p(v)
            WHERE t.time >= :since AND p.v = 0) AS zero_prices,
+          -- The 1.01 floor is the exchange's (match odds). Bookmaker-style markets quote finer steps near the end of
+          -- a match (2026-11-03: "Bookmaker 0 Commission" at 1.0075), so for them only a price above 1.0 is required.
           (SELECT COUNT(*) FROM market_ticks t
              CROSS JOIN LATERAL (VALUES (t.back), (t.lay)) AS p(v)
-           WHERE t.time >= :since AND p.v <> 0 AND (p.v < :min_odds OR p.v > :max_odds)) AS out_of_range,
+           WHERE t.time >= :since AND p.v <> 0
+             AND (CASE WHEN t.market_type = 'match_odds' THEN p.v < :min_odds ELSE p.v <= 1.0 END
+                  OR p.v > :max_odds)) AS out_of_range,
           (SELECT COUNT(*) FROM market_ticks t
            WHERE t.time >= :since AND t.market_type IN ('match_odds', 'bookmaker')
              AND t.back > t.lay) AS crossed,
@@ -348,7 +355,7 @@ SQL: dict[str, str] = {
         GROUP BY variant, match_id
     """,
     "paper_sanity_edges": """
-        SELECT variant, match_id, side, selection, edge, price_filled
+        SELECT variant, match_id, side, selection, edge, price_filled, p_used
         FROM paper_bets
         WHERE status IN ('filled', 'settled', 'void')
           AND price_filled IS NOT NULL
@@ -789,6 +796,14 @@ async def check_paper_trading(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]
     return _check("paper_trading", OK, max_worst, detail)
 
 
+def _prob_gap(row: dict[str, Any]) -> Optional[float]:
+    """|p_used - 1/price|: how far the bet's probability is from the one its fill price implies."""
+    p, price = _num(row.get("p_used")), _num(row.get("price_filled"))
+    if p is None or price is None or price <= 1.0:
+        return None
+    return abs(p - 1.0 / price)
+
+
 async def check_paper_sanity(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]:
     """S75: a sanity check on the paper trader's decisions over the last 24 h. It fails when the market_only control
     placed more than 2 trades, when a filled bet's recorded edge at its decision price is above 20% (implausible), or
@@ -808,14 +823,14 @@ async def check_paper_sanity(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]:
         problems.append(f"{len(busy)} variant-match(es) over {PAPER_SANITY_MATCH_TRADES_MAX} trades: " + ", ".join(
             f"{variant} {mid} ({n})" for variant, mid, n in busy[:3]))
     edges = await fetch("paper_sanity_edges", p)
-    high = [r for r in edges if _num(r["edge"]) is not None and _num(r["edge"]) > PAPER_SANITY_EDGE_MAX]
+    high = [r for r in edges if (_prob_gap(r) or 0.0) > PAPER_SANITY_PROB_GAP_MAX]
     if high:
-        problems.append(f"{len(high)} filled bet(s) with recorded edge over {PAPER_SANITY_EDGE_MAX:.0%}: " + ", ".join(
-            f"{r['variant']} {r['match_id']} {r['side']} {r['selection']} (edge {_num(r['edge']):.3f})"
-            for r in high[:3]))
+        problems.append(f"{len(high)} filled bet(s) with a probability gap over {PAPER_SANITY_PROB_GAP_MAX:.0%}: "
+                        + ", ".join(f"{r['variant']} {r['match_id']} {r['side']} {r['selection']} "
+                                    f"(gap {_prob_gap(r):.3f})" for r in high[:3]))
     detail = (f"{control} {PAPER_SANITY_CONTROL} trade(s) in 24 h (max {PAPER_SANITY_CONTROL_MAX}); busiest "
               f"variant-match {busiest} trade(s) (max {PAPER_SANITY_MATCH_TRADES_MAX}); {len(edges)} matched bet(s) "
-              f"checked for edge over {PAPER_SANITY_EDGE_MAX:.0%}")
+              f"checked for a probability gap over {PAPER_SANITY_PROB_GAP_MAX:.0%}")
     if problems:
         return _check("paper_sanity", FAIL, busiest, detail + "; " + "; ".join(problems))
     return _check("paper_sanity", OK, busiest, detail)

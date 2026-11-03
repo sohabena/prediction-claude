@@ -281,8 +281,10 @@ winner on the data seen so far, and the settled-winner path has never produced a
 
 - Settled-market capture: since 2026-11-03 11:31 UTC an open match page stays `MARKET_COMPLETED_LINGER_S` (30 min)
   after its match's result instead of closing at once (before, the Biratnagar page closed 6 s after the score said
-  completed). After the next real finish, check the Winner runner statuses in `market_ticks`; until then the
-  WINNER/WON wording stays unverified and the scoreboard text is the source of record.
+  completed). **Verified 2026-11-03** on Lumbini Lions v Pokhara Avengers (lb_36267634): the score feed said Lumbini
+  won by 8 wickets at 14:04:59; at 14:08:13 the exchange match-odds market showed runner statuses `winner` / `loser`
+  while the market was still `suspended`; the bookmaker match-odds market closed at 14:11:24 with both runners
+  `suspended`. `settlement_of` now reads the winner from either state and prefers a market naming one winner.
 - Tie and no-result wording (`Match tied`, `No result`) is not in any stored feed text yet. Both parsers accept the
   usual forms; that is unverified too.
 

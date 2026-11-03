@@ -345,20 +345,23 @@ def test_control_with_two_trades_is_still_ok_and_other_variants_do_not_count_tow
     assert _sanity(rows)["status"] == "ok"
 
 
-def test_filled_bet_with_recorded_edge_above_twenty_percent_fails():
+def test_filled_bet_with_a_probability_gap_above_twenty_points_fails():
     rows = s55.healthy_rows()
-    rows["paper_sanity_edges"] = [
-        {"variant": "w05_e03", "match_id": "m1", "side": "BACK", "selection": "home", "edge": 0.25, "price_filled": 2.0}
+    rows["paper_sanity_edges"] = [  # p 0.75 at 2.0 (implied 0.50): a gap of 0.25
+        {"variant": "w05_e03", "match_id": "m1", "side": "BACK", "selection": "home", "edge": 0.5, "price_filled": 2.0,
+         "p_used": 0.75}
     ]
     check = _sanity(rows)
     assert check["status"] == "fail"
-    assert "recorded edge over 20%" in check["detail"]
+    assert "probability gap over 20%" in check["detail"]
 
 
-def test_edge_of_exactly_twenty_percent_is_not_implausible():
+def test_a_large_edge_at_long_odds_with_a_small_probability_gap_is_not_implausible():
+    """2026-11-03, Lumbini v Pokhara: p 0.085 at 23.0 (implied 0.043) is an edge of 0.95 but a gap of 0.04."""
     rows = s55.healthy_rows()
     rows["paper_sanity_edges"] = [
-        {"variant": "w05_e03", "match_id": "m1", "side": "BACK", "selection": "home", "edge": 0.20, "price_filled": 2.0}
+        {"variant": "w05_e03", "match_id": "m1", "side": "BACK", "selection": "away", "edge": 0.954,
+         "price_filled": 23.0, "p_used": 0.085}
     ]
     assert _sanity(rows)["status"] == "ok"
 

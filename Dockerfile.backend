@@ -35,6 +35,19 @@ COPY shared/ /app/shared/
 COPY features/ /app/features/
 COPY backend/ /app/backend/
 
+# S91 read-only paper and data API. backend/routers/paper.py and data.py import, at import time, the paper trader's
+# scorecard, review, ledger and bet model, the training market and gate helpers, the match filter and the result tools.
+# Same modules the paper trader image copies (Dockerfile.scraper); the rest of scraper/, training/ and virtual_trading/
+# is not needed by these routes, but the packages are copied whole, as in that image, so their imports resolve.
+COPY scraper/__init__.py /app/scraper/__init__.py
+COPY scraper/match_filter.py /app/scraper/match_filter.py
+COPY strategy/ /app/strategy/
+COPY training/ /app/training/
+COPY virtual_trading/ /app/virtual_trading/
+COPY scripts/paper_report.py /app/scripts/paper_report.py
+COPY scripts/results_reconciliation.py /app/scripts/results_reconciliation.py
+COPY scripts/set_result.py /app/scripts/set_result.py
+
 # Create non-root user
 RUN useradd --create-home phoenix
 USER phoenix
