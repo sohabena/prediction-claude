@@ -254,22 +254,30 @@ SQL: dict[str, str] = {
             GROUP BY match_id
         ),
         ticks AS (
-            SELECT o.match_id, o.time
+            SELECT o.match_id, o.time, FALSE AS halted
             FROM odds_ticks o JOIN span s ON s.match_id = o.match_id
             WHERE o.time >= :since AND o.time BETWEEN s.t0 AND s.t1
             UNION ALL
-            SELECT m.match_id, m.time
+            -- A match-odds row showing the market closed or suspended: the site offered no price after it, so a gap
+            -- that follows is a stoppage (rain, bad light, a market reset), not lost recording (2026-11-03, lb_76227860).
+            SELECT m.match_id, m.time,
+                   (m.market_type = 'match_odds' AND lower(m.status) IN ('closed', 'suspended')) AS halted
             FROM market_ticks m JOIN span s ON s.match_id = m.match_id
             WHERE m.time >= :since AND m.time BETWEEN s.t0 AND s.t1
         ),
+        per_time AS (
+            SELECT match_id, time, bool_or(halted) AS halted FROM ticks GROUP BY match_id, time
+        ),
         gaps AS (
             SELECT match_id, time,
-                   EXTRACT(EPOCH FROM time - LAG(time) OVER (PARTITION BY match_id ORDER BY time)) AS gap_s
-            FROM ticks
+                   EXTRACT(EPOCH FROM time - LAG(time) OVER (PARTITION BY match_id ORDER BY time)) AS gap_s,
+                   COALESCE(LAG(halted) OVER (PARTITION BY match_id ORDER BY time), FALSE) AS after_halt
+            FROM per_time
         )
         SELECT match_id,
-               MAX(gap_s) FILTER (WHERE time >= :heartbeat_since) AS max_gap_s,
-               MAX(gap_s) FILTER (WHERE time < :heartbeat_since) AS max_gap_before_heartbeat_s
+               MAX(gap_s) FILTER (WHERE time >= :heartbeat_since AND NOT after_halt) AS max_gap_s,
+               MAX(gap_s) FILTER (WHERE time < :heartbeat_since AND NOT after_halt) AS max_gap_before_heartbeat_s,
+               MAX(gap_s) FILTER (WHERE after_halt) AS max_halted_gap_s
         FROM gaps
         GROUP BY match_id
     """,
@@ -725,6 +733,9 @@ async def check_gaps(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]:
     )
     if before:
         detail += f"; {len(before)} match(es) had longer gaps before the live heartbeat (not scored)"
+    halted = [r for r in gaps if r.get("max_halted_gap_s") is not None and float(r["max_halted_gap_s"]) > GAP_WARN_S]
+    if halted:
+        detail += f"; {len(halted)} match(es) with a longer gap while the market was closed or suspended (not scored)"
     return _check("gaps", WARN if long_gaps else OK, worst_s, detail)
 
 

@@ -431,6 +431,20 @@ def test_gaps_before_the_live_heartbeat_are_reported_but_not_scored():
     assert c["status"] == "ok" and "before the live heartbeat (not scored)" in c["detail"]
 
 
+
+def test_a_gap_while_the_market_was_closed_is_reported_but_not_scored():
+    """2026-11-03, lb_76227860: the site closed match odds at 05:10 and reopened at 05:25 (a stoppage)."""
+    rows = healthy_rows()
+    rows["gaps"] = [{"match_id": "m1", "max_gap_s": 120.0, "max_gap_before_heartbeat_s": None,
+                     "max_halted_gap_s": 933.0}]
+    c = one_check(dqm.check_gaps, rows)
+    assert c["status"] == "ok" and "while the market was closed or suspended (not scored)" in c["detail"]
+
+
+def test_gaps_sql_excuses_only_a_gap_after_a_closed_or_suspended_match_odds_row():
+    sql = dqm.SQL["gaps"]
+    assert "lower(m.status) IN ('closed', 'suspended')" in sql and "NOT after_halt" in sql
+
 # --------------------------------------------------------------------------- SRL
 def test_srl_is_counted_and_never_a_failure():
     rows = healthy_rows()
