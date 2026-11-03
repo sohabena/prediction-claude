@@ -111,6 +111,7 @@ services:
       - SCRAPER_RECORD_ALL=1
       - SCRAPER_RECORD_PREMATCH=1
       - SCRAPER_MARKET_PAGES=${SCRAPER_MARKET_PAGES:-1}
+      - SCRAPER_MARKET_WORKER_CAP=${SCRAPER_MARKET_WORKER_CAP:-12}
       - SCRAPER_STALL_MINUTES=${SCRAPER_STALL_MINUTES:-10}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - LOG_FORMAT=json
@@ -124,6 +125,31 @@ services:
         condition: service_healthy
     restart: unless-stopped
     profiles: ["dev", "prod", "recording"]
+    networks:
+      - phoenix-data
+
+  # S55: read-only data quality checks, hourly. Built from the scraper's Dockerfile, so it runs the same code.
+  quality-monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile.scraper
+    container_name: phoenix-quality-monitor
+    command: ["python", "scripts/data_quality_monitor.py", "--interval", "3600", "--quarantine"]
+    environment:
+      - POSTGRES_HOST=timescaledb
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-phoenix}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-phoenix_secure_2026}
+      - POSTGRES_DB=${POSTGRES_DB:-phoenix_betting}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_FORMAT=json
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles: ["recording"]
     networks:
       - phoenix-data
 

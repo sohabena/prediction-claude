@@ -125,11 +125,13 @@ def odds_ratio_pct(side: str, entry: float, closing: Optional[float]) -> Optiona
 def build_audit_rows(
     bets: Sequence[Mapping[str, Any]],
     ticks_by_match: Mapping[str, Sequence[Mapping[str, Any]]],
+    *,
+    include_simulated: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Turn SQL bet rows and their match ticks into per-bet audit rows.
 
-    Returns ``(rows, counts)``. Simulated matches and bets whose action is not a
-    BACK/LAY on HOME/AWAY are skipped and counted.
+    Returns ``(rows, counts)``. Simulated matches (unless ``include_simulated``, S50 opt-in) and
+    bets whose action is not a BACK/LAY on HOME/AWAY are skipped and counted.
     """
     counts = {"bets_read": len(bets), "excluded_simulated": 0, "excluded_unknown_action": 0}
     rows: list[dict[str, Any]] = []
@@ -138,7 +140,9 @@ def build_audit_rows(
         ticks = sorted(ticks_by_match.get(match_id, ()), key=lambda t: t["time"])
         competition = next((t.get("competition") for t in ticks if t.get("competition")), "")
         tick_teams = {t.get("team_home") for t in ticks} | {t.get("team_away") for t in ticks}
-        if is_simulated_name(competition, bet.get("team_home"), bet.get("team_away"), *tick_teams):
+        if not include_simulated and is_simulated_name(
+            competition, bet.get("team_home"), bet.get("team_away"), *tick_teams
+        ):
             counts["excluded_simulated"] += 1
             continue
         if not _valid_action(bet.get("action")):
@@ -198,8 +202,13 @@ def summarise(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     }
 
 
-async def run_audit(session: Any, limit: int, source: str = "all") -> dict[str, Any]:
-    """Run the read-only audit over the ``limit`` most recent settled bets, priced from ``source`` ticks."""
+async def run_audit(
+    session: Any, limit: int, source: str = "all", *, include_simulated: bool = False,
+) -> dict[str, Any]:
+    """Run the read-only audit over the ``limit`` most recent settled bets, priced from ``source`` ticks.
+
+    Simulated (SRL) matches are excluded unless ``include_simulated`` is True (S50 opt-in).
+    """
     tick_query = ticks_sql(source)  # validate before touching the session
     await session.execute(text("SET TRANSACTION READ ONLY"))
     bet_result = await session.execute(BETS_SQL, {"limit": limit})
@@ -212,7 +221,7 @@ async def run_audit(session: Any, limit: int, source: str = "all") -> dict[str, 
         for r in tick_result.mappings().all():
             ticks_by_match[str(r["match_id"])].append(dict(r))
 
-    rows, counts = build_audit_rows(bets, ticks_by_match)
+    rows, counts = build_audit_rows(bets, ticks_by_match, include_simulated=include_simulated)
     logger.info("clv_audit_built", **counts, rows=len(rows), source=source)
     return {"counts": counts, "source": source, **summarise(rows)}
 
@@ -259,13 +268,13 @@ def format_report(report: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
-async def _run_cli(limit: int, source: str) -> str:
+async def _run_cli(limit: int, source: str, include_simulated: bool = False) -> str:
     from shared.db import close_database, get_session_factory
 
     factory = get_session_factory()
     try:
         async with factory() as session:
-            report = await run_audit(session, limit, source=source)
+            report = await run_audit(session, limit, source=source, include_simulated=include_simulated)
             await session.rollback()
     finally:
         await close_database()
@@ -278,10 +287,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         help="most recent settled bets to audit (default 100)")
     parser.add_argument("--source", choices=SOURCES, default=CLV_REFERENCE_SOURCE,
                         help="price feed for the 60 s and 10 m CLV: betfair or lotusbook (default: CLV_REFERENCE_SOURCE), or all")
+    parser.add_argument("--include-simulated", action="store_true",
+                        help="S50 opt-in: include simulated (SRL/virtual) matches; excluded by default")
     args = parser.parse_args(argv)
     if args.limit < 1:
         parser.error("--limit must be >= 1")
-    print(asyncio.run(_run_cli(args.limit, args.source)))
+    if args.include_simulated:
+        print(asyncio.run(_run_cli(args.limit, args.source, True)))
+    else:
+        print(asyncio.run(_run_cli(args.limit, args.source)))
     return 0
 
 

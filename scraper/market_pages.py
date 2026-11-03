@@ -1,21 +1,29 @@
-"""Read-only market-page worker for LotusBook match pages: Winner (match odds), Bookmaker and session markets.
+"""Read-only market-page worker for LotusBook match pages: Winner (match odds), Bookmaker, session and
+S52 list markets, plus the Sportradar scoreboard on the same page.
 
 Rules enforced here: one page per live recorded match, polled no faster than every 3 s,
-read via ``page.content()`` only (no clicks, no form input, no login), reloaded every
-``RELOAD_EVERY_S``. Simulated matches are never started. Records are stored only when their
-content changes.
+read via ``page.content()`` only (no clicks, no form input, no login, no requests other than the match
+page itself), reloaded every ``RELOAD_EVERY_S``. Simulated (SRL) matches are recorded like real ones.
+Records are stored per market: a record is written only when its own content changes, and a market
+that disappears from the page is written once with ``status='closed'``.
+
+S56: the page's own market JSON (``sma-event`` responses, read passively through ``page.on("response")``) is
+the primary source. The DOM parse runs only when no JSON has arrived for ``JSON_FRESH_S`` seconds. The JSON
+also gives the competition and start time (``on_meta``) and the Winner settlement (``on_settled``).
 """
 
 from __future__ import annotations
 
 import asyncio
 import time
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Optional
 from urllib.parse import urljoin
 
-from scraper.match_filter import is_simulated_name
-from scraper.parsers.lotusbook_markets import MarketRecord, content_fingerprint, parse_market_html
+from scraper.parsers.lotusbook_json import EventMeta, event_id_from_url, event_meta, event_records, settlement_of
+from scraper.parsers.lotusbook_markets import MarketRecord, parse_market_html
+from scraper.parsers.lotusbook_scoreboard import ScoreboardState, parse_scoreboard_html
 from shared.logging import setup_logging
 
 logger = setup_logging("market_pages")
@@ -25,8 +33,17 @@ MAX_CONSECUTIVE_ERRORS = 5
 PAGE_LOAD_TIMEOUT_MS = 60_000
 # Reload the match page this often so a stalled live connection cannot freeze the recorded prices.
 RELOAD_EVERY_S = 300.0
+# S56: the DOM parse runs only when no market JSON has arrived for this long.
+JSON_FRESH_S = 30.0
 
 StoreFn = Callable[[str, list[MarketRecord]], Awaitable[None]]
+# (match_id, scoreboard state or None when the widget is absent from the page, observed_at)
+ScoreboardFn = Callable[[str, Optional[ScoreboardState], datetime], Awaitable[None]]
+# (match_id, competition and start time from the market JSON)
+MetaFn = Callable[[str, EventMeta], Awaitable[None]]
+# (match_id, winner runner name, observed_at) for a CLOSED Winner market with exactly one winner
+SettledFn = Callable[[str, str, datetime], Awaitable[None]]
+MarketKey = tuple[str, str, str]  # (market_type, market_name, selection)
 
 
 def clamp_poll_interval(interval: float) -> float:
@@ -35,11 +52,13 @@ def clamp_poll_interval(interval: float) -> float:
 
 
 def eligibility(*, is_live: bool, team_home: str, team_away: str, competition: str = "") -> tuple[bool, str]:
-    """Return ``(eligible, reason)``. Simulated (SRL and similar) matches are never eligible."""
+    """Return ``(eligible, reason)``. Only live matches get a page.
+
+    S50: simulated (SRL and similar) matches are recorded like real ones, so they are eligible too.
+    They are kept apart downstream (never approved or published); see scraper/manager.py.
+    """
     if not is_live:
         return False, "not_live"
-    if is_simulated_name(team_home, team_away, competition):
-        return False, "simulated"
     return True, "ok"
 
 
@@ -74,8 +93,25 @@ async def open_match_page(context: Any, url: str) -> Any:
     return page
 
 
+def _closed(prev: MarketRecord, now: datetime) -> MarketRecord:
+    """A market that left the page: same key, no prices, no lines, status ``closed``."""
+    return replace(
+        prev,
+        time=now,
+        back=None,
+        lay=None,
+        line_no=None,
+        rate_no=None,
+        line_yes=None,
+        rate_yes=None,
+        back_size=None,
+        lay_size=None,
+        status="closed",
+    )
+
+
 class MarketPageWorker:
-    """Polls one match page and hands changed records to ``store``."""
+    """Polls one match page and hands changed market records and the scoreboard to the callbacks."""
 
     def __init__(
         self,
@@ -85,6 +121,9 @@ class MarketPageWorker:
         poll_interval: float = MIN_POLL_INTERVAL_S,
         reload_every: float = RELOAD_EVERY_S,
         clock: Callable[[], float] = time.monotonic,
+        on_scoreboard: Optional[ScoreboardFn] = None,
+        on_meta: Optional[MetaFn] = None,
+        on_settled: Optional[SettledFn] = None,
     ) -> None:
         self.match_id = match_id
         self.page = page
@@ -93,28 +132,210 @@ class MarketPageWorker:
         self.reload_every = reload_every
         self._clock = clock
         self._last_load = clock()
-        self._last_fingerprint: Optional[str] = None
+        self._on_scoreboard = on_scoreboard
+        self._on_meta = on_meta
+        self._on_settled = on_settled
+        # Last stored record per market key. A key absent from it is either new or was closed.
+        self._last_by_key: dict[MarketKey, MarketRecord] = {}
         self.stored_snapshots = 0
+        # S56 passive JSON capture state
+        self._attached_at: Optional[float] = None  # set by attach(); None means DOM-only (S47 behaviour)
+        self._json_at: Optional[float] = None      # clock time of the last market JSON ingested
+        self._json_snapshots = 0
+        self._json_error_logged = False
+        self._meta_sent: Optional[tuple] = None
+        self._settled_sent = False
+        self._closed_logged = False
+        self._tasks: set[asyncio.Task] = set()
+
+    # ── S56: passive capture of the page's own market JSON ─────────────────────────────
+
+    @property
+    def json_snapshots(self) -> int:
+        """Market JSON bodies ingested for this match."""
+        return self._json_snapshots
+
+    def attach(self) -> None:
+        """Listen to the page's own responses. Passive: it reads responses the page requested, nothing else.
+
+        A page object without ``on`` (a test double, for example) is left alone and the worker stays DOM-only.
+        """
+        if self._attached_at is not None:
+            return
+        self._attached_at = self._clock()
+        page_on = getattr(self.page, "on", None)
+        if callable(page_on):
+            page_on("response", self._on_response)
+
+    def _on_response(self, response: Any) -> None:
+        """Synchronous listener: ignores every URL except this match's ``sma-event`` JSON."""
+        try:
+            url = response.url
+        except Exception:
+            return
+        event_id = event_id_from_url(url)
+        if event_id is None or not self._is_own_event(event_id):
+            return
+        task = asyncio.ensure_future(self.handle_response(response))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    def _is_own_event(self, event_id: str) -> bool:
+        if not self.match_id.startswith("lb_"):
+            return True
+        return self.match_id[len("lb_"):] == event_id
+
+    async def handle_response(self, response: Any) -> None:
+        """Read one ``sma-event`` response body and ingest it. A body that fails to parse is logged once."""
+        try:
+            payload = await response.json()
+        except Exception as exc:
+            if not self._json_error_logged:
+                self._json_error_logged = True
+                logger.warning("market_json_unreadable", match_id=self.match_id, error=str(exc))
+            return
+        await self.ingest_event_json(payload)
+
+    def _json_is_fresh(self) -> bool:
+        """True while the market JSON is the source: attached, and a body arrived within JSON_FRESH_S.
+        Before the first body, the window counts from attach()."""
+        if self._attached_at is None:
+            return False
+        last = self._json_at if self._json_at is not None else self._attached_at
+        return self._clock() - last < JSON_FRESH_S
+
+    async def ingest_event_json(self, payload: Any) -> int:
+        """Turn one event JSON body into records, hand over meta and settlement, store the changed records.
+
+        Returns the number of records stored. A body that cannot be parsed is logged once and skipped.
+        """
+        now = datetime.now(timezone.utc)
+        try:
+            records = event_records(payload, self.match_id, now)
+            meta = event_meta(payload)
+            settlement = settlement_of(payload)
+        except Exception as exc:
+            if not self._json_error_logged:
+                self._json_error_logged = True
+                logger.warning("market_json_parse_error", match_id=self.match_id, error=str(exc))
+            return 0
+
+        self._json_at = self._clock()
+        self._json_snapshots += 1
+
+        if meta is not None:
+            await self._send_meta(meta)
+        if settlement is not None:
+            await self._send_settlement(settlement, now)
+
+        if not records:
+            return 0
+        changed = self._changed_records(records, now)
+        if not changed:
+            return 0
+        await self.store(self.match_id, changed)
+        self.stored_snapshots += 1
+        return len(changed)
+
+    async def _send_meta(self, meta: EventMeta) -> None:
+        if self._on_meta is None:
+            return
+        key = (meta.competition_id, meta.competition_name, meta.open_date.isoformat() if meta.open_date else None)
+        if key == self._meta_sent:
+            return
+        self._meta_sent = key
+        try:
+            await self._on_meta(self.match_id, meta)
+        except Exception as exc:  # the registry update must never stop the recording
+            logger.warning("market_meta_callback_error", match_id=self.match_id, error=str(exc))
+
+    async def _send_settlement(self, settlement: Any, observed_at: datetime) -> None:
+        if not self._closed_logged:
+            self._closed_logged = True
+            logger.info(
+                "winner_market_closed",
+                match_id=self.match_id,
+                market_id=settlement.market_id,
+                winner=settlement.winner,
+                runner_statuses=[list(item) for item in settlement.runner_statuses],
+            )
+        if self._settled_sent or settlement.winner is None or self._on_settled is None:
+            return
+        self._settled_sent = True
+        try:
+            await self._on_settled(self.match_id, settlement.winner, observed_at)
+        except Exception as exc:
+            logger.warning("market_settled_callback_error", match_id=self.match_id, error=str(exc))
+
+    def seed(self, records: list[MarketRecord]) -> None:
+        """Start from the last stored state of each market (read from the DB), so a restarted worker does not rewrite
+        every unchanged market once."""
+        for record in records:
+            self._last_by_key[(record.market_type, record.market_name, record.selection)] = record
+
+    def _changed_records(self, records: list[MarketRecord], now: datetime) -> list[MarketRecord]:
+        """Records whose own content differs from the last stored record of the same key, plus one
+        ``closed`` record for each key that disappeared from the page."""
+        current: dict[MarketKey, MarketRecord] = {}
+        for record in records:
+            current[(record.market_type, record.market_name, record.selection)] = record
+
+        changed: list[MarketRecord] = []
+        for key, record in current.items():
+            previous = self._last_by_key.get(key)
+            if previous is None or previous.content_key() != record.content_key():
+                changed.append(record)
+                self._last_by_key[key] = record
+
+        # A key that left the page is written once as closed and remembered as closed, so a closed market that
+        # flickers in and out of the feed is not rewritten on every poll.
+        for key in [k for k in self._last_by_key if k not in current]:
+            previous = self._last_by_key[key]
+            if previous.status == "closed" and previous.back is None and previous.lay is None:
+                continue
+            closed = _closed(previous, now)
+            changed.append(closed)
+            self._last_by_key[key] = closed
+        return changed
+
+    async def _scoreboard_step(self, html: str, now: datetime) -> None:
+        if self._on_scoreboard is None:
+            return
+        state = parse_scoreboard_html(html)
+        try:
+            await self._on_scoreboard(self.match_id, state, now)
+        except Exception as exc:  # the scoreboard must never stop the market recording
+            logger.warning("scoreboard_callback_error", match_id=self.match_id, error=str(exc))
 
     async def poll_once(self) -> int:
-        """Read the page once. Return the number of records stored (0 when unchanged)."""
+        """Read the page once. Return the number of market records stored (0 when unchanged).
+
+        A page with no market blocks at all is treated as a transient read: nothing is stored and no
+        market is closed. Closing needs a page that still shows markets.
+        """
         if self._clock() - self._last_load >= self.reload_every:
             await self.page.reload(wait_until="domcontentloaded", timeout=PAGE_LOAD_TIMEOUT_MS)
             self._last_load = self._clock()
         html = await self.page.content()
-        records = parse_market_html(html, self.match_id, datetime.now(timezone.utc))
+        now = datetime.now(timezone.utc)
+        await self._scoreboard_step(html, now)
+
+        # S56: the market JSON is the primary source; the DOM parse runs only when it has been silent a while
+        if self._json_is_fresh():
+            return 0
+        records = parse_market_html(html, self.match_id, now)
         if not records:
             return 0
-        fingerprint = content_fingerprint(records)
-        if fingerprint == self._last_fingerprint:
+        changed = self._changed_records(records, now)
+        if not changed:
             return 0
-        self._last_fingerprint = fingerprint
-        await self.store(self.match_id, records)
+        await self.store(self.match_id, changed)
         self.stored_snapshots += 1
-        return len(records)
+        return len(changed)
 
     async def run(self, stop: asyncio.Event) -> None:
         """Poll until ``stop`` is set or too many consecutive errors occur."""
+        self.attach()
         errors = 0
         while not stop.is_set():
             try:

@@ -27,7 +27,7 @@ logger = setup_logging("lotusbook_markets")
 
 SOURCE = "lotusbook"
 MARKET_TYPES = ("match_odds", "bookmaker", "session", "other")
-STATUSES = ("open", "suspended", "ball_running")
+STATUSES = ("open", "suspended", "ball_running", "closed")
 
 _RUNNER_LIST_SUFFIX = " runners and odds"
 # "Winner (incl. super over)", "Match Odds"
@@ -67,6 +67,12 @@ class MarketRecord:
     rate_yes: Optional[float] = None
     status: str = "open"
     source: str = SOURCE
+    # S56: fields from the page's own market JSON (None for DOM-parsed records)
+    market_id: Optional[str] = None
+    back_size: Optional[float] = None
+    lay_size: Optional[float] = None
+    runner_status: Optional[str] = None
+    source_updated_at: Optional[datetime] = None
 
     def content_key(self) -> tuple:
         """Everything except the timestamp. Used to skip unchanged snapshots."""
@@ -81,6 +87,9 @@ class MarketRecord:
             self.line_yes,
             self.rate_yes,
             self.status,
+            self.back_size,
+            self.lay_size,
+            self.runner_status,
         )
 
 
@@ -285,11 +294,90 @@ def parse_market_html(html: str, match_id: str, observed_at: datetime) -> list[M
     return records
 
 
+# S52: SRL-style per-innings markets, e.g. "1st innings over 18 - Trinbago Knight Riders SRL total"
+_INN_OVER_TOTAL_RE = re.compile(
+    r"^\s*(\d+)(?:st|nd|rd|th)\s+innings\s+over\s+(\d+)\s+-\s+(.+?)\s+total\s*$", re.IGNORECASE
+)
+_INN_OVER_ODD_EVEN_RE = re.compile(
+    r"^\s*(\d+)(?:st|nd|rd|th)\s+innings\s+over\s+(\d+)\s+-\s+(.+?)\s+odd/even\s*$", re.IGNORECASE
+)
+_INN_DISMISSAL_RE = re.compile(
+    r"^\s*(\d+)(?:st|nd|rd|th)\s+innings\s+-\s+(.+?)\s+dismissal\s+method(?:\s*\(extended\))?\s*$",
+    re.IGNORECASE,
+)
+_WICKET_ORDINAL_RE = re.compile(r"\b(\d+)(?:st|nd|rd|th)\b", re.IGNORECASE)
+_LINE_SELECTION_RE = re.compile(r"^\s*(under|over)\s+(\d+(?:\.\d+)?)\s*$", re.IGNORECASE)
+
+
+def _slug(text: str) -> str:
+    """Team or player text as a name component: words joined with underscores."""
+    return "_".join(text.split())
+
+
+def _capitalise(text: str) -> str:
+    """"under 6.5" -> "Under 6.5"; the first letter only, so team and player spelling is kept."""
+    text = " ".join(text.split())
+    return text[:1].upper() + text[1:]
+
+
+def _player_slug(subject: str) -> str:
+    """"Hosein, Akeal Jerome (SRL)" and "Narine, Sunil - SRL" -> "Hosein_Akeal_Jerome", "Narine_Sunil"."""
+    name = re.sub(r"\s*\(SRL\)", "", subject)
+    name = re.sub(r"\s*-\s*SRL\s*$", "", name)
+    return _slug(name.replace(",", " "))
+
+
 def _classify_list_market(raw: str) -> tuple[str, str]:
-    market_type, market_name = normalise_market_name(raw)
+    """Market type and name for a list-market label (the text before " runners and odds").
+
+    S52 names: "Winner" / "Match Odds" -> match_odds; "<n>st|nd|rd|th innings over <k> - <team> total" ->
+    over_runs:inn<n>:over<k>:<Team>; "... odd/even" -> odd_even:inn<n>:over<k>:<Team>;
+    "<n>st innings - <player> dismissal method" -> dismissal:inn<n>:<Player> (or <Team>:wicket<n> for a
+    team-wide "<Team> 8th dismissal method"). Anything else -> other, with the raw label.
+    """
+    text = " ".join((raw or "").split())
+    match = _INN_OVER_TOTAL_RE.match(text)
+    if match:
+        inn, over, team = match.groups()
+        return "over_runs", f"over_runs:inn{int(inn)}:over{int(over)}:{_slug(team)}"
+    match = _INN_OVER_ODD_EVEN_RE.match(text)
+    if match:
+        inn, over, team = match.groups()
+        return "other", f"odd_even:inn{int(inn)}:over{int(over)}:{_slug(team)}"
+    match = _INN_DISMISSAL_RE.match(text)
+    if match:
+        inn, subject = match.groups()
+        ordinal = _WICKET_ORDINAL_RE.search(subject)
+        if ordinal:
+            # Team-wide "<Team> 1st dismissal method": keep the team, or both teams' markets collide
+            team = subject[: ordinal.start()].strip()
+            team_part = f"{_slug(team)}:" if team else ""
+            return "other", f"dismissal:inn{int(inn)}:{team_part}wicket{int(ordinal.group(1))}"
+        return "other", f"dismissal:inn{int(inn)}:{_player_slug(subject)}"
+    market_type, market_name = normalise_market_name(text)
     if market_type == "other" and _MATCH_ODDS_RE.match(market_name):
         return "match_odds", "match_odds"
     return market_type, market_name
+
+
+def _list_selection(market_type: str, market_name: str, runner: str) -> tuple[str, Optional[float], Optional[float]]:
+    """``(selection, line_no, line_yes)`` for a runner in a list market.
+
+    Over-run lines ("under 6.5" / "over 6.5") keep their line as a float: ``line_no`` for Under,
+    ``line_yes`` for Over. Two blocks with different lines differ in selection, so they never share a PK.
+    """
+    if market_type == "over_runs":
+        match = _LINE_SELECTION_RE.match(runner)
+        if match:
+            side, line = match.group(1).lower(), float(match.group(2))
+            selection = f"{side.capitalize()} {match.group(2)}"
+            if side == "under":
+                return selection, line, None
+            return selection, None, line
+        return _capitalise(runner), None, None
+    if market_type == "other" and market_name.startswith("odd_even:"):
+        return _capitalise(runner), None, None
+    return runner, None, None
 
 
 def _cell_price(button: Optional[_Node]) -> Optional[float]:
@@ -339,17 +427,25 @@ def _parse_runner_lists(root: _Node, match_id: str, observed_at: datetime) -> li
             back_cell, lay_cell = _best_cells(row)
             back, lay = _cell_price(back_cell), _cell_price(lay_cell)
             status = _status_of(row)
-            if not name or (back is None and lay is None and status == "open"):
+            if back is None and lay is None and status == "open":
+                if market_type != "match_odds":
+                    continue
+                # A Winner runner with every cell "-" is a suspended market, not a missing one: record it
+                status = "suspended"
+            if not name:
                 continue
+            selection, line_no, line_yes = _list_selection(market_type, market_name, name)
             records.append(
                 MarketRecord(
                     time=observed_at,
                     match_id=match_id,
                     market_type=market_type,
                     market_name=market_name,
-                    selection=name,
+                    selection=selection,
                     back=back,
                     lay=lay,
+                    line_no=line_no,
+                    line_yes=line_yes,
                     status=status,
                 )
             )

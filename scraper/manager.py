@@ -18,11 +18,13 @@ from playwright.async_api import Browser, BrowserContext, Playwright, async_play
 from features.data_quality import TickValidator
 from features.extractors.category_features import MatchCategoryClassifier, MatchTier
 from scraper.live_match_tracker import LiveMatchTracker
-from scraper.match_filter import MatchClassifier
+from scraper.match_filter import MatchClassifier, is_simulated_name
 from scraper.lotus_result_detector import LotusResultDetector
 from scraper.market_pages import MarketPageWorker, build_match_url, eligibility, open_match_page, resolve_match_href
+from scraper.parsers.lotusbook_json import EventMeta, is_menu_url, menu_competitions
 from scraper.parsers.lotusbook_markets import MarketRecord
 from scraper.worker import ScraperWorker
+from scripts.quarantine_ticks import GAP_S, batch_copy_match_ids, is_decisive
 from shared.config import get_settings
 from shared.constants import CHANNEL_MATCH_CONTEXT, CHANNEL_MATCH_EVENTS, KEY_ACTIVE_MATCHES, KEY_MATCH_CONTEXT
 from shared.db import get_session
@@ -34,7 +36,12 @@ logger = setup_logging("scraper_manager")
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 FEED_STATE_PATH = ROOT_DIR / "logs" / "scraper_feed.json"
-MARKET_WORKER_CAP = 4  # S47: max extra match pages open at once (politeness)
+# S47/S52: read-only match pages. The cap is read from SCRAPER_MARKET_WORKER_CAP (default below).
+MARKET_WORKER_CAP_DEFAULT = 12
+MARKET_RESTART_DELAY_S = 60.0    # a worker that ended while its match is live is restarted after this
+MARKET_MAX_RESTARTS = 5          # per match, for the process lifetime
+MARKET_ABSENT_STOP_S = 600.0     # a worker stops when its match has not been seen live for this long
+MARKET_SWEEP_S = 30.0            # how often the janitor checks completion and absence
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -97,8 +104,15 @@ class ScraperManager:
         self._scrape_approved_ids: set[str] = set()  # cached from DB
         self._completed_match_ids: set[str] = set()
         self._last_stored_fingerprint: dict[str, str] = {}  # matches with results
+        self._last_stored_at: dict[str, datetime] = {}
         self._quality_stats = {"stored": 0, "warnings": 0, "rejected": 0, "recorded_unapproved": 0,
-                               "recorded_prematch": 0}
+                               "recorded_prematch": 0, "recorded_simulated": 0,
+                               "post_settlement_tick_rejected": 0, "cross_match_copy_rejected": 0}
+        # S57 recording guard: when each match was last decided (settled), when its last event was seen, and the
+        # matches whose post-settlement ticks are refused from now on.
+        self._decided_at: dict[str, datetime] = {}
+        self._last_seen_at: dict[str, datetime] = {}
+        self._settled_rejecting: set[str] = set()
         self._result_detector = LotusResultDetector()
         self._last_approved_refresh: datetime | None = None
         # S37: record every qualifying live match. Approval only controls live publishing.
@@ -109,9 +123,19 @@ class ScraperManager:
         self._last_live_event_at: str | None = None
         # S47: one read-only market-page worker per eligible live match.
         self._listing_page: Any = None
-        self._market_attempted: set[str] = set()
         self._market_tasks: dict[str, asyncio.Task] = {}
         self._market_stops: dict[str, asyncio.Event] = {}
+        self._market_ended_at: dict[str, datetime] = {}   # worker ended by error: restart after the delay
+        self._market_restarts: dict[str, int] = {}
+        self._market_live_seen: dict[str, datetime] = {}  # last live event per match (absence check)
+        self._market_janitor_task: asyncio.Task | None = None
+        self._scoreboard_last: dict[str, dict] = {}       # last stored scoreboard context per match
+        self._scoreboard_missing_logged: set[str] = set()
+        self._scoreboard_result_sent: set[str] = set()
+        # S56: competition of every cricket event from the listing page's sma-menu response
+        self._competition_by_event: dict[str, tuple[str, str]] = {}
+        self._registry_without_competition: set[str] = set()
+        self._menu_tasks: set[asyncio.Task] = set()
 
     async def start(self) -> None:
         """Start the scraper manager: launch browser, begin scraping."""
@@ -132,10 +156,14 @@ class ScraperManager:
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/120.0.0.0 Safari/537.36"
             ),
+            # S56: the site renders India Standard Time; pin the clock so the page text and JSON agree
+            timezone_id="Asia/Kolkata",
         )
 
         page = await self._context.new_page()
         self._listing_page = page
+        # S56: passive listener, attached before the first navigation so the page's own menu response is seen
+        page.on("response", self._on_listing_response)
         await page.goto(
             self.settings.scraper.betting_site_url,
             wait_until="domcontentloaded",
@@ -213,8 +241,10 @@ class ScraperManager:
             from sqlalchemy import select
             from backend.models.results import MatchResultRecord
             async with get_session() as session:
+                # An unresolved result (match vanished without decisive prices, S54) does not complete a match:
+                # a later scoreboard result may still land, and the match may reappear.
                 result = await session.execute(
-                    select(MatchResultRecord.match_id)
+                    select(MatchResultRecord.match_id).where(MatchResultRecord.result_type != "unresolved")
                 )
                 ids = {row[0] for row in result.fetchall()}
                 self._completed_match_ids = ids
@@ -244,6 +274,31 @@ class ScraperManager:
         except Exception as e:
             logger.error("result_listener_error", error=str(e))
 
+    def _on_listing_response(self, response: Any) -> None:
+        """Passive listener on the listing page (S56): only the cricket menu response is read."""
+        try:
+            url = response.url
+        except Exception:
+            return
+        if not is_menu_url(url):
+            return
+        task = asyncio.ensure_future(self._read_cricket_menu(response))
+        self._menu_tasks.add(task)
+        task.add_done_callback(self._menu_tasks.discard)
+
+    async def _read_cricket_menu(self, response: Any) -> None:
+        try:
+            payload = await response.json()
+        except Exception as e:
+            logger.warning("cricket_menu_unreadable", error=str(e))
+            return
+        mapping = menu_competitions(payload)
+        if not mapping:
+            logger.warning("cricket_menu_empty")
+            return
+        self._competition_by_event.update(mapping)
+        logger.info("cricket_menu_loaded", events=len(mapping))
+
     async def _on_events(self, events: list[OddsEvent]) -> None:
         """Handle new odds events.
 
@@ -259,6 +314,8 @@ class ScraperManager:
         now = datetime.now(timezone.utc)
         current_batch_ids: set[str] = set()
         live_batch_ids: set[str] = set()
+        # S57: matches in this batch quoting another match's exact four-price book (refused below)
+        copy_match_ids = batch_copy_match_ids(events)
 
         # Check runtime dynamic scraper settings from Redis
         try:
@@ -296,8 +353,19 @@ class ScraperManager:
             self._last_approved_refresh = now
 
         for event in events:
+            # S56: the cricket menu names every event's competition; it overrides the listing-derived one
+            # (S53 team table stays as the fallback for events the menu does not list). Before any gate.
+            menu = self._competition_by_event.get(event.match_id[len("lb_"):]) if event.match_id.startswith("lb_") else None
+            if menu is not None and menu[1] != event.competition:
+                event = event.model_copy(update={"competition": menu[1]})
+
+            # S50: simulated (SRL / virtual) matches are recorded like real ones (results included), but they
+            # are never approved and never published to Redis. They bypass the
+            # qualifies() filter because that filter rejects them, and recording must not depend on it.
+            simulated = is_simulated_name(event.competition, event.team_home, event.team_away)
+
             # Match filter: skip non-qualifying matches
-            if not self._match_filter.qualifies(event):
+            if not simulated and not self._match_filter.qualifies(event):
                 continue
 
             accepted_count += 1
@@ -305,24 +373,8 @@ class ScraperManager:
             if event.is_live:
                 live_batch_ids.add(event.match_id)
 
-            # Track active matches (always, for the frontend listing)
-            self._active_matches[event.match_id] = {
-                "match_id": event.match_id,
-                "team_home": event.team_home,
-                "team_away": event.team_away,
-                "competition": event.competition,
-                "is_live": event.is_live,
-                "back_home": event.back_home,
-                "lay_home": event.lay_home,
-                "back_away": event.back_away,
-                "lay_away": event.lay_away,
-                "score_text": getattr(event, "score_text", None) or (f"{event.score}/{event.wickets} ({event.overs} ov)" if getattr(event, "overs", None) is not None else None),
-                "scheduled_time": event.scheduled_time.isoformat() if event.scheduled_time else None,
-                "last_update": now.isoformat(),
-            }
-
-            # Feed odds into result detector (for all qualifying matches)
-            # Score data will be added below after LiveMatchTracker updates
+            # Result detection runs for every recorded match, SRL included; the detector never publishes
+            # simulated results (S50).
             self._result_detector.update_tick(
                 match_id=event.match_id,
                 team_home=event.team_home,
@@ -335,19 +387,41 @@ class ScraperManager:
                 lay_away=event.lay_away,
             )
 
-            # ── SIMULATED GATE: never register or record SRL / simulated events, whatever the filter setting ──
-            if self._match_filter.reject_if_simulated(event):
-                continue
+            if not simulated:
+                # Track active matches (always, for the frontend listing). Real matches only: this
+                # list is published to Redis (KEY_ACTIVE_MATCHES).
+                self._active_matches[event.match_id] = {
+                    "match_id": event.match_id,
+                    "team_home": event.team_home,
+                    "team_away": event.team_away,
+                    "competition": event.competition,
+                    "is_live": event.is_live,
+                    "back_home": event.back_home,
+                    "lay_home": event.lay_home,
+                    "back_away": event.back_away,
+                    "lay_away": event.lay_away,
+                    "score_text": getattr(event, "score_text", None) or (f"{event.score}/{event.wickets} ({event.overs} ov)" if getattr(event, "overs", None) is not None else None),
+                    "scheduled_time": event.scheduled_time.isoformat() if event.scheduled_time else None,
+                    "last_update": now.isoformat(),
+                }
 
-            # Register first-seen matches as "discovered" (no tick storage yet)
+            # Register first-seen matches as "discovered" (no tick storage yet); simulated ones
+            # are registered with scrape_status "simulated" and is_simulated=True
             if event.match_id not in self._seen_match_ids:
                 self._seen_match_ids.add(event.match_id)
+                await self._upsert_training_status(event, auto_approve_enabled=auto_approve_enabled)
+                if not event.competition:
+                    self._registry_without_competition.add(event.match_id)
+            elif event.competition and event.match_id in self._registry_without_competition:
+                # Registered before the listing menu arrived: fill the competition once it is known
+                self._registry_without_competition.discard(event.match_id)
                 await self._upsert_training_status(event, auto_approve_enabled=auto_approve_enabled)
 
             # ── RECORD GATE (S37): approval no longer decides recording ──
             # With SCRAPER_RECORD_ALL on (default) every qualifying match is recorded while live.
             # Approved matches additionally go to live consumers (publish + MatchContext) below.
-            approved = event.match_id in self._scrape_approved_ids
+            # S50: simulated matches are never approved, whatever the approval cache says.
+            approved = (not simulated) and event.match_id in self._scrape_approved_ids
             if not approved and not self._record_all:
                 continue
 
@@ -416,6 +490,21 @@ class ScraperManager:
                     )
                     continue  # Skip storing this tick
 
+            # ── S57 recording guard: a price that does not belong to this match is not recorded ──
+            # Placed before anything is published or stored, so a refused tick reaches neither the DB nor Redis.
+            if event.match_id in copy_match_ids:
+                self._quality_stats["cross_match_copy_rejected"] += 1
+                logger.warning("cross_match_copy_rejected", match_id=event.match_id,
+                               back_home=event.back_home, lay_home=event.lay_home,
+                               back_away=event.back_away, lay_away=event.lay_away)
+                continue
+            if self._settlement_guard_refuses(event):
+                self._quality_stats["post_settlement_tick_rejected"] += 1
+                logger.warning("post_settlement_tick_rejected", match_id=event.match_id,
+                               decided_at=self._decided_at.get(event.match_id).isoformat()
+                               if event.match_id in self._decided_at else None)
+                continue
+
             # Derive MatchContext for every recorded live match (score state is part of the recording);
             # publish to Redis for live consumers only for approved matches.
             context = None
@@ -430,6 +519,8 @@ class ScraperManager:
                 self._quality_stats["recorded_unapproved"] += 1
             if prematch:
                 self._quality_stats["recorded_prematch"] += 1
+            if simulated:
+                self._quality_stats["recorded_simulated"] += 1
 
             # Store to DB (recording, independent of approval)
             self._quality_stats["stored"] += 1
@@ -476,6 +567,8 @@ class ScraperManager:
             new_results = await self._result_detector.check_completed(current_batch_ids)
             for r in new_results:
                 mid = r["match_id"]
+                if r.get("result_type") == "unresolved":
+                    continue
                 self._completed_match_ids.add(mid)
                 logger.info(
                     "match_result_auto_detected",
@@ -530,6 +623,7 @@ class ScraperManager:
 
     PREMATCH_MIN_INTERVAL_S = 30.0     # at most one stored pre-match tick per match per 30 s
     PREMATCH_HEARTBEAT_S = 900.0       # store an unchanged pre-match price at least every 15 min
+    LIVE_HEARTBEAT_S = 300.0           # store an unchanged live price at least every 5 min
 
     def _prematch_due(self, event: OddsEvent, now: datetime) -> bool:
         """True when a not-yet-live match's prices should be stored now.
@@ -601,54 +695,115 @@ class ScraperManager:
         except Exception as e:
             logger.debug("context_publish_error", match_id=context.match_id, error=str(e))
 
-    # ── S47: Bookmaker / session markets via one read-only page per live match ──
+    # ── S47/S52: market and scoreboard recording via one read-only page per live match ──
+
+    def _market_now(self) -> datetime:
+        return datetime.now(timezone.utc)
+
+    @staticmethod
+    def _market_cap() -> int:
+        """Max match pages open at once, from SCRAPER_MARKET_WORKER_CAP (invalid values use the default)."""
+        raw = os.getenv("SCRAPER_MARKET_WORKER_CAP", "").strip()
+        if not raw:
+            return MARKET_WORKER_CAP_DEFAULT
+        try:
+            return max(1, int(raw))
+        except ValueError:
+            logger.warning("market_worker_cap_invalid", value=raw)
+            return MARKET_WORKER_CAP_DEFAULT
 
     async def _ensure_market_worker(self, event: OddsEvent) -> None:
-        """Start one read-only market-page worker for an eligible live match.
+        """Start, or restart after an error, the read-only market-page worker of a live match.
 
-        Never clicks, never inputs, never logs in. Simulated matches never start a worker.
-        Workers stop when the match completes or on shutdown.
+        Called from the live branch of ``_on_events`` only, so pre-match matches never get a page. Never
+        clicks, never inputs, never logs in. Simulated (SRL) matches get a page too (S50).
         """
-        self._sweep_market_workers()
         mid = event.match_id
-        if mid in self._market_attempted or not _env_flag("SCRAPER_MARKET_PAGES", default=True):
+        now = self._market_now()
+        self._market_live_seen[mid] = now
+        if not _env_flag("SCRAPER_MARKET_PAGES", default=True):
             return
-        eligible, reason = eligibility(
+        eligible, _reason = eligibility(
             is_live=event.is_live,
             team_home=event.team_home,
             team_away=event.team_away,
             competition=event.competition,
         )
-        if not eligible:
-            if reason == "simulated":
-                self._market_attempted.add(mid)
+        if not eligible or mid in self._market_tasks:
             return
+
+        ended_at = self._market_ended_at.get(mid)
+        if ended_at is not None:
+            if (now - ended_at).total_seconds() < MARKET_RESTART_DELAY_S:
+                return
+            if self._market_restarts.get(mid, 0) >= MARKET_MAX_RESTARTS:
+                return
+            self._market_restarts[mid] = self._market_restarts.get(mid, 0) + 1
+            del self._market_ended_at[mid]
+            logger.info("market_worker_restarting", match_id=mid, restart=self._market_restarts[mid])
+
         if not mid.startswith("lb_") or self._listing_page is None or self._context is None:
             return
-        if len(self._market_tasks) >= MARKET_WORKER_CAP:
-            logger.warning("market_worker_cap_reached", cap=MARKET_WORKER_CAP, match_id=mid)
+        cap = self._market_cap()
+        if len(self._market_tasks) >= cap:
+            logger.warning("market_worker_cap_reached", cap=cap, match_id=mid)
             return
-        self._market_attempted.add(mid)
         try:
             href = await resolve_match_href(self._listing_page, mid[len("lb_"):])
             if not href:
                 logger.warning("market_href_not_found", match_id=mid)
+                self._market_ended_at[mid] = now
                 return
             url = build_match_url(self.settings.scraper.betting_site_url, href)
             page = await open_match_page(self._context, url)
         except Exception as e:
             logger.warning("market_page_open_failed", match_id=mid, error=str(e))
+            self._market_ended_at[mid] = now
             return
         stop = asyncio.Event()
+
+        async def on_meta(match_id: str, meta: EventMeta, _event: OddsEvent = event) -> None:
+            await self._apply_market_meta(_event, meta)
+
         worker = MarketPageWorker(
             match_id=mid,
             page=page,
             store=self._store_market_records,
             poll_interval=self.settings.scraper.poll_interval,
+            on_scoreboard=self._on_market_scoreboard,
+            on_meta=on_meta,
+            on_settled=self._on_market_settled,
         )
+        worker.seed(await self._last_market_state(mid))
         self._market_stops[mid] = stop
         self._market_tasks[mid] = asyncio.create_task(self._run_market_worker(mid, worker, page, stop))
+        self._ensure_market_janitor()
         logger.info("market_worker_started", match_id=mid, url=url)
+
+    async def _last_market_state(self, match_id: str) -> list[MarketRecord]:
+        """The latest stored record of every market of a match (empty when none, or on a DB error)."""
+        from sqlalchemy import text
+
+        try:
+            async with get_session() as session:
+                result = await session.execute(
+                    text(
+                        """
+                        SELECT DISTINCT ON (market_type, market_name, selection)
+                               time, match_id, market_type, market_name, selection, back, lay, line_no, rate_no,
+                               line_yes, rate_yes, status, source, market_id, back_size, lay_size, runner_status,
+                               source_updated_at
+                        FROM market_ticks
+                        WHERE match_id = :match_id AND time > now() - INTERVAL '2 days'
+                        ORDER BY market_type, market_name, selection, time DESC
+                        """
+                    ),
+                    {"match_id": match_id},
+                )
+                return [MarketRecord(**dict(r._mapping)) for r in result.fetchall()]
+        except Exception as e:
+            logger.warning("market_state_seed_failed", match_id=match_id, error=str(e))
+            return []
 
     async def _run_market_worker(self, mid: str, worker: MarketPageWorker, page: Any, stop: asyncio.Event) -> None:
         try:
@@ -660,12 +815,101 @@ class ScraperManager:
                 pass
             self._market_tasks.pop(mid, None)
             self._market_stops.pop(mid, None)
-            logger.info("market_worker_stopped", match_id=mid, snapshots=worker.stored_snapshots)
+            intentional = stop.is_set()
+            if not intentional:
+                # Ended by errors or a closed page: _ensure_market_worker restarts it after the delay.
+                self._market_ended_at[mid] = self._market_now()
+            logger.info(
+                "market_worker_stopped", match_id=mid, snapshots=worker.stored_snapshots, intentional=intentional
+            )
 
-    def _sweep_market_workers(self) -> None:
-        for mid in list(self._market_stops):
-            if mid in self._completed_match_ids:
-                self._market_stops[mid].set()
+    def _ensure_market_janitor(self) -> None:
+        task = self._market_janitor_task
+        if task is None or task.done():
+            self._market_janitor_task = asyncio.create_task(self._market_janitor())
+
+    async def _market_janitor(self) -> None:
+        """Runs while any market worker is open; applies the completion and absence stops."""
+        while self._market_tasks:
+            await asyncio.sleep(MARKET_SWEEP_S)
+            self._sweep_market_workers(self._market_now())
+
+    def _sweep_market_workers(self, now: datetime) -> None:
+        """Ask a worker to stop when its match completed, or has not been seen live for MARKET_ABSENT_STOP_S."""
+        for mid, stop in list(self._market_stops.items()):
+            if stop.is_set():
+                continue
+            completed = mid in self._completed_match_ids
+            seen = self._market_live_seen.get(mid)
+            absent = seen is not None and (now - seen).total_seconds() > MARKET_ABSENT_STOP_S
+            if completed or absent:
+                logger.info(
+                    "market_worker_stop_requested", match_id=mid, reason="completed" if completed else "absent"
+                )
+                stop.set()
+
+    async def _on_market_scoreboard(self, match_id: str, state: Any, observed_at: datetime) -> None:
+        """Scoreboard step of a market poll (S52). ``state`` is None when the widget is not on the page.
+
+        A match context row is stored only when the derived context changed. A finished scoreboard comment
+        is handed to the result detector once per match.
+        """
+        from scraper.parsers.lotusbook_scoreboard import parse_result_comment, to_match_context
+
+        if state is None:
+            if match_id not in self._scoreboard_missing_logged:
+                self._scoreboard_missing_logged.add(match_id)
+                logger.info("scoreboard_not_rendered", match_id=match_id)
+            return
+
+        context = to_match_context(state, match_id, observed_at)
+        if context is not None:
+            fingerprint = context.model_dump(mode="json", exclude={"timestamp"})
+            if fingerprint != self._scoreboard_last.get(match_id):
+                self._scoreboard_last[match_id] = fingerprint
+                # Stored only (publish=False): live consumers keep the odds-derived context.
+                await self._publish_match_context(None, context, publish=False, store=True)
+                logger.info(
+                    "scoreboard_context_stored",
+                    match_id=match_id,
+                    source="lotusbook_scoreboard",
+                    score=context.score,
+                    wickets=context.wickets,
+                    overs=context.overs,
+                    innings=context.innings,
+                    status=context.status.value,
+                )
+
+        if match_id not in self._scoreboard_result_sent and parse_result_comment(state.comment) is not None:
+            self._scoreboard_result_sent.add(match_id)
+            await self._result_detector.update_scoreboard(match_id, state.comment, finished=True)
+
+    async def _apply_market_meta(self, event: OddsEvent, meta: EventMeta) -> None:
+        """Registry update from the market JSON (S56): competition and start time (UTC, from openDate).
+
+        Goes through ``_upsert_training_status`` with the event copied to the JSON values. The copy only
+        carries the JSON competition when one is given, so an empty name never blanks a known one.
+        """
+        updates: dict[str, Any] = {}
+        if meta.competition_name:
+            updates["competition"] = meta.competition_name
+        if meta.open_date is not None:
+            updates["scheduled_time"] = meta.open_date
+        if not updates:
+            return
+        refreshed = event.model_copy(update=updates)
+        await self._upsert_training_status(
+            refreshed,
+            auto_approve_enabled=bool(self.settings.scraper.auto_approve_matches),
+            from_market_json=True,
+        )
+
+    async def _on_market_settled(self, match_id: str, winner: str, observed_at: datetime) -> None:
+        """A CLOSED Winner market with one WINNER/WON runner (S56). Written as a settled result, once per match."""
+        result = await self._result_detector.update_settled(match_id, winner, source="lotusbook_settled")
+        if result is not None:
+            self._completed_match_ids.add(match_id)
+            logger.info("match_result_settled_json", match_id=match_id, winner=result.get("winner", ""))
 
     async def _store_market_records(self, match_id: str, records: list[MarketRecord]) -> None:
         """Write changed market records to market_ticks (storage call only)."""
@@ -689,6 +933,11 @@ class ScraperManager:
                             rate_yes=r.rate_yes,
                             status=r.status,
                             source=r.source,
+                            market_id=r.market_id,
+                            back_size=r.back_size,
+                            lay_size=r.lay_size,
+                            runner_status=r.runner_status,
+                            source_updated_at=r.source_updated_at,
                         )
                         for r in records
                     ]
@@ -696,13 +945,42 @@ class ScraperManager:
         except Exception as e:
             logger.error("market_db_store_error", match_id=match_id, error=str(e))
 
+    def _settlement_guard_refuses(self, event: OddsEvent) -> bool:
+        """S57: True when this tick must not be recorded because the match has already settled.
+
+        A tick is decisive when one side is back <= 1.05 or lay <= 1.06 while the other side is backed at 15 or
+        more (or not quoted). After a decisive tick, a non-decisive tick that comes after a gap of at least 5
+        minutes since the match's previous event starts the post-settlement reset, and every later tick of that
+        match is refused as well.
+        """
+        match_id = event.match_id
+        ts = event.timestamp if event.timestamp.tzinfo else event.timestamp.replace(tzinfo=timezone.utc)
+        previous = self._last_seen_at.get(match_id)
+        self._last_seen_at[match_id] = ts
+        if match_id in self._settled_rejecting:
+            return True
+        tick = {"back_home": event.back_home, "lay_home": event.lay_home,
+                "back_away": event.back_away, "lay_away": event.lay_away}
+        if is_decisive(tick):
+            self._decided_at[match_id] = ts
+            return False
+        if match_id in self._decided_at and previous is not None and (ts - previous).total_seconds() >= GAP_S:
+            self._settled_rejecting.add(match_id)
+            return True
+        return False
+
     async def _store_odds_tick(self, event: OddsEvent) -> None:
         """Store an odds event to TimescaleDB with volume + context data."""
-        # Dedup: skip storing if prices/score haven't changed
+        # Dedup: skip storing if prices/score haven't changed, except a live heartbeat every LIVE_HEARTBEAT_S so a
+        # gap in the recording always means the recorder was down, never just a quiet market
         fp = f"{event.back_home}|{event.lay_home}|{event.back_away}|{event.lay_away}|{event.score_text}"
-        if self._last_stored_fingerprint.get(event.match_id) == fp:
+        now = datetime.now(timezone.utc)
+        last_at = self._last_stored_at.get(event.match_id)
+        heartbeat_due = event.is_live and last_at is not None and (now - last_at).total_seconds() >= self.LIVE_HEARTBEAT_S
+        if self._last_stored_fingerprint.get(event.match_id) == fp and not heartbeat_due:
             return
         self._last_stored_fingerprint[event.match_id] = fp
+        self._last_stored_at[event.match_id] = now
         import re as _re
         from backend.models.odds import OddsTick
 
@@ -765,7 +1043,9 @@ class ScraperManager:
         except Exception as e:
             logger.error("db_store_error", match_id=event.match_id, error=str(e))
 
-    async def _upsert_training_status(self, event: OddsEvent, auto_approve_enabled: bool = False) -> None:
+    async def _upsert_training_status(
+        self, event: OddsEvent, auto_approve_enabled: bool = False, from_market_json: bool = False,
+    ) -> None:
         """Insert match_training_status for a newly discovered match.
 
         Two-phase approval:
@@ -775,16 +1055,23 @@ class ScraperManager:
         When auto_approve_enabled is True, ICC/international/major franchise matches
         get scrape_approved automatically. Non-international matches and SRL/virtual/cyber
         are NEVER auto-approved. Otherwise all start as 'discovered'.
+
+        S50: simulated (SRL / virtual) matches get scrape_status 'simulated' and is_simulated=True,
+        are never auto-approved, and are dropped from the approved cache even if a row says otherwise.
         """
         from backend.models.match_status import MatchTrainingStatus
 
+        simulated = is_simulated_name(event.competition, event.team_home, event.team_away)
         category = self._category_classifier.classify(
             competition=event.competition,
             team_home=event.team_home,
             team_away=event.team_away,
         )
         is_intl_major = self._match_filter.is_international_or_major(event)
-        if auto_approve_enabled and is_intl_major:
+        if simulated:
+            should_auto = False
+            scrape_status = "simulated"
+        elif auto_approve_enabled and is_intl_major:
             auto_tiers = {
                 MatchTier.ICC_EVENT,
                 MatchTier.INTERNATIONAL_BILATERAL,
@@ -809,6 +1096,21 @@ class ScraperManager:
                     # Update start time if it was missing and we now have it
                     if record.match_start_time is None and event.scheduled_time is not None:
                         record.match_start_time = event.scheduled_time
+                    # Fill a competition that was unknown when the row was created (listing menu, S56)
+                    if not record.competition and event.competition:
+                        record.competition = event.competition
+                    # S56: the market JSON is the authority for competition and start time
+                    if from_market_json:
+                        if event.competition and record.competition != event.competition:
+                            record.competition = event.competition
+                        if event.scheduled_time is not None and record.match_start_time != event.scheduled_time:
+                            record.match_start_time = event.scheduled_time
+
+                    record.is_simulated = simulated
+                    if simulated:
+                        record.scrape_status = "simulated"
+                        self._scrape_approved_ids.discard(event.match_id)
+                        return
 
                     # Auto-upgrade to scrape_approved if should_auto is True
                     if should_auto and record.scrape_status != "scrape_approved":
@@ -844,6 +1146,7 @@ class ScraperManager:
                     training_status=training_status,
                     auto_approved=should_auto,
                     match_start_time=event.scheduled_time,
+                    is_simulated=simulated,
                 )
                 session.add(record)
 
@@ -856,6 +1159,7 @@ class ScraperManager:
                 match_id=event.match_id,
                 scrape_status=scrape_status,
                 auto_approved=should_auto,
+                is_simulated=simulated,
                 tier=category.tier.value,
                 teams=f"{event.team_home} vs {event.team_away}",
             )

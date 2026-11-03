@@ -29,3 +29,10 @@ class MarketTick(Base):
     rate_yes: Mapped[float | None] = mapped_column(Float, nullable=True)
     status: Mapped[str] = mapped_column(String, default="open")  # open | suspended | ball_running
     source: Mapped[str] = mapped_column(String, default="lotusbook")
+
+    # S56: fields from the page's own market JSON (nullable: DOM-parsed rows leave them empty)
+    market_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    back_size: Mapped[float | None] = mapped_column(Float, nullable=True)
+    lay_size: Mapped[float | None] = mapped_column(Float, nullable=True)
+    runner_status: Mapped[str | None] = mapped_column(String, nullable=True)
+    source_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

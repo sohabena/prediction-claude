@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, func
+from sqlalchemy import Boolean, DateTime, Float, Integer, String, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.models.base import Base
@@ -37,6 +37,12 @@ class MatchTrainingStatus(Base):
 
     # True when the system auto-approved (ICC/International/Major Franchise)
     auto_approved: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # S50: True for simulated (SRL / virtual / e-cricket) matches. They are recorded but never approved,
+    # published or used for training unless a reader opts in (include_simulated=True).
+    is_simulated: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False,
+    )
 
     # Total recorded odds/microstructure ticks for this match
     tick_count: Mapped[int] = mapped_column(Integer, default=0)

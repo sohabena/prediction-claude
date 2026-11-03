@@ -111,3 +111,26 @@ def test_keep_awake_holds_only_while_container_runs(tmp_path, monkeypatch):
     ka.run(0, is_running=lambda: next(states), apply=lambda hold: calls.append(hold) or True,
            sleep=lambda s: None, max_cycles=3)
     assert calls == [True, True, False, False]  # hold, refresh, release on stop, release on exit
+
+
+async def test_registry_competition_is_filled_once_the_listing_menu_is_known(monkeypatch, manager_env):
+    mgr = _new_manager(monkeypatch, record_all=None)
+    first = live_event(match_id="m11").model_copy(update={"competition": ""})
+    await mgr._on_events([first])
+    assert mgr._upsert_training_status.await_count == 1
+    await mgr._on_events([first])  # still unknown: no second registry write
+    assert mgr._upsert_training_status.await_count == 1
+    await mgr._on_events([first.model_copy(update={"competition": "NCL GT20"})])
+    assert mgr._upsert_training_status.await_count == 2
+    assert mgr._upsert_training_status.await_args.args[0].competition == "NCL GT20"
+
+
+async def test_unchanged_live_price_is_stored_again_as_a_heartbeat(monkeypatch, manager_env):
+    mgr = _new_manager(monkeypatch, record_all=None)
+    event = live_event(match_id="m12")
+    await mgr._on_events([event])
+    await mgr._on_events([event])  # unchanged, immediately: not stored
+    assert len(_ticks(manager_env.session)) == 1
+    mgr._last_stored_at["m12"] -= timedelta(seconds=mgr.LIVE_HEARTBEAT_S)
+    await mgr._on_events([event])  # unchanged, 5 min later: heartbeat
+    assert len(_ticks(manager_env.session)) == 2

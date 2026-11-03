@@ -499,19 +499,20 @@ def load_recorded_real(family: Optional[str] = None, base_dir: Path = RECORDED_R
 
 
 # --------------------------------------------------------------------------- DB layer
-def select_real_rows(rows: Iterable[Any]) -> tuple[list[dict[str, Any]], int]:
+def select_real_rows(rows: Iterable[Any], include_simulated: bool = False) -> tuple[list[dict[str, Any]], int]:
     """Keep only real LotusBook ticks from simulated-free matches; return ``(kept, dropped)``.
 
     Synthetic rows (``source='cricsheet_official'``) and simulated-league names (SRL, Virtual, ...)
-    are dropped even if the SQL filter let them through.
+    are dropped even if the SQL filter let them through. ``include_simulated=True`` (S50 opt-in)
+    keeps simulated-league rows; synthetic rows are always dropped.
     """
     kept: list[dict[str, Any]] = []
     dropped = 0
     for row in rows:
         d = _as_dict(row)
-        if d.get("source") != RECORDED_ODDS_SOURCE or is_simulated_name(
+        if d.get("source") != RECORDED_ODDS_SOURCE or (not include_simulated and is_simulated_name(
             d.get("competition"), d.get("team_home"), d.get("team_away")
-        ):
+        )):
             dropped += 1
             continue
         kept.append(d)
@@ -528,7 +529,9 @@ async def _historical_table_exists(session: Any) -> bool:
     return _as_dict(row).get("t") is not None
 
 
-async def _fetch_matches() -> list[dict[str, Any]]:
+async def _fetch_matches(include_simulated: bool = False) -> list[dict[str, Any]]:
+    """Load recorded matches with their odds and context. Simulated (SRL) matches are skipped
+    unless ``include_simulated`` is True (S50 opt-in)."""
     from sqlalchemy import text
 
     from shared.db import get_session
@@ -554,7 +557,7 @@ async def _fetch_matches() -> list[dict[str, Any]]:
         for r in results:
             res = _as_dict(r)
             mid = res["match_id"]
-            if is_simulated_name(res.get("team_home"), res.get("team_away")):
+            if not include_simulated and is_simulated_name(res.get("team_home"), res.get("team_away")):
                 simulated_matches += 1
                 continue
             odds: list[Any] = []
@@ -565,7 +568,7 @@ async def _fetch_matches() -> list[dict[str, Any]]:
                     ),
                     {"m": mid, "src": RECORDED_ODDS_SOURCE},
                 )
-                kept, dropped = select_real_rows(rows.fetchall())
+                kept, dropped = select_real_rows(rows.fetchall(), include_simulated=include_simulated)
                 dropped_rows += dropped
                 odds.extend(kept)
             if not odds:
@@ -599,7 +602,10 @@ def _resolver() -> Callable[[dict[str, Any]], str]:
 
 
 async def main_async(args: argparse.Namespace) -> int:
-    matches = await _fetch_matches()
+    if getattr(args, "include_simulated", False):
+        matches = await _fetch_matches(include_simulated=True)
+    else:
+        matches = await _fetch_matches()
     if not matches:
         print(
             "No recorded matches: nothing qualified after excluding simulated (SRL/virtual) and "
@@ -652,6 +658,8 @@ def main() -> int:
     p.add_argument("--min-ticks", type=int, default=50)
     p.add_argument("--min-coverage", type=float, default=0.6)
     p.add_argument("--force", action="store_true", help="legacy format only")
+    p.add_argument("--include-simulated", action="store_true",
+                   help="S50 opt-in: include simulated (SRL/virtual) matches; excluded by default")
     return asyncio.run(main_async(p.parse_args()))
 
 

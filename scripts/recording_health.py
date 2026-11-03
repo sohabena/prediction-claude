@@ -5,9 +5,12 @@ ticks, the share of recorded matches with match context and with a result. It al
 synthetic rows (``source != 'lotusbook'``) and simulated rows (SRL / Virtual / E-Cricket names)
 in ``odds_ticks``, and reads the recorder heartbeat written by the scraper and the watchdog.
 
+From S50 on, SRL matches are recorded on purpose and tagged, so simulated rows are reported as a
+count only. Only synthetic rows are contamination.
+
 Exit codes:
     0  clean and the recorder is fresh
-    1  synthetic or simulated rows exist in ``odds_ticks``
+    1  synthetic rows exist in ``odds_ticks``
     2  the recorder heartbeat is stale or missing (no contamination found)
 
 Usage::
@@ -235,7 +238,8 @@ async def collect(session: Any, *, since: datetime) -> dict[str, Any]:
 
 
 def exit_code(report: dict[str, Any], feed: dict[str, Any]) -> int:
-    if report["contamination"]["synthetic_rows"] or report["contamination"]["simulated_rows"]:
+    # Simulated (SRL) rows are recorded on purpose since S50: counted and shown, never a failure.
+    if report["contamination"]["synthetic_rows"]:
         return EXIT_CONTAMINATED
     if feed["stale"]:
         return EXIT_STALE
@@ -265,7 +269,7 @@ def render(report: dict[str, Any], feed: dict[str, Any]) -> str:
         lines.append("no recorded matches in the window")
     c = report["contamination"]
     lines.append(f"synthetic rows in odds_ticks: {c['synthetic_rows']}")
-    lines.append(f"simulated rows in odds_ticks: {c['simulated_rows']}")
+    lines.append(f"simulated rows in odds_ticks (SRL, recorded on purpose, not a failure): {c['simulated_rows']}")
     for ex in c["examples"]:
         lines.append(f"  - {ex}")
     lines.append("recorder: " + ("STALE" if feed["stale"] else "fresh"))

@@ -190,15 +190,17 @@ def trust_metrics(
     allocated_bankroll: float,
     missed_count: Optional[int] = None,
     n_bootstrap: int = 10_000,
+    include_simulated: bool = False,
 ) -> dict[str, Optional[float]]:
     """Trust criteria inputs from annotated bets (see :func:`annotate_reference`).
 
-    Only settled bets on real matches count. ``None`` means not measured, which fails its criterion.
+    Only settled bets on real matches count (simulated/SRL bets only with ``include_simulated``, S50 opt-in).
+    ``None`` means not measured, which fails its criterion.
     ``missed_count`` is the number of signals that were not filled (None until S40 records them).
     The returned dict also holds reporting-only fields (``reference_clv_n``, ``reference_clv_mean``,
     ``lotusbook_clv_mean``); they are not criteria.
     """
-    real = [b for b in annotated if b.get("is_real", True)]
+    real = [b for b in annotated if include_simulated or b.get("is_real", True)]
     settled = [b for b in real if b.get("settled_at") is not None and b.get("profit_loss") is not None]
 
     clv_rows = [b for b in settled if b.get("reference_clv") is not None]

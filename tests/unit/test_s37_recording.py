@@ -173,15 +173,15 @@ async def test_approved_live_event_is_also_published(monkeypatch, manager_env):
     assert manager_env.redis.published, "approved matches must still reach live consumers"
 
 
-async def test_simulated_event_is_not_recorded_even_with_filter_disabled(monkeypatch, manager_env):
+async def test_simulated_event_is_recorded_but_never_published(monkeypatch, manager_env):
+    """S50 reversed S37's rule: SRL is recorded (tagged in the registry) but never reaches live consumers."""
     mgr = _new_manager(monkeypatch, record_all=None)
-    mgr._match_filter.enabled = False  # discovery-only mode admits everything, recording must not
+    mgr._match_filter.enabled = False
     await mgr._on_events([live_event(match_id="srl1", team_home="Hobart Hurricanes SRL",
                                      team_away="New Zealand SRL", competition="Simulated Reality League")])
-    assert [o for o in manager_env.session.added if isinstance(o, OddsTick)] == []
-    assert mgr._match_filter.stats["simulated_rejected"] >= 1
-    # Simulated matches are not even registered as discovered
-    mgr._upsert_training_status.assert_not_awaited()
+    assert len([o for o in manager_env.session.added if isinstance(o, OddsTick)]) == 1
+    assert manager_env.redis.published == []
+    mgr._upsert_training_status.assert_awaited()
 
 
 # --------------------------------------------------------------------------- simulated rejection

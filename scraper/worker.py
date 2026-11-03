@@ -3,7 +3,7 @@ Scraper worker: manages a Playwright page for scraping LotusBook cricket odds.
 Uses DOM polling with optional WebSocket interception.
 
 Tailored to LotusBook's Tailwind CSS grid layout:
-  - .eventHeadName containers group matches by competition
+  - Listing rows carry no competition; the parser derives it from team names
   - Match links use a[href*="/cricket/"][href*="vs"] (site dropped id=inPlayTeamName)
   - Odds in sibling col-span-6 divs with back/lay cells
 """
@@ -132,40 +132,43 @@ LOTUSBOOK_EXTRACT_JS = r"""
             }
 
             // --- Competition name ---
-            // Walk up to the .eventHeadName parent to find competition
+            // The 2026-11 listing has no per-row competition element (verified against
+            // tests/fixtures/lotusbook/listing_page_20261103.html: the left-menu competition names are
+            // not linked to rows, and the In Play / Upcoming Events headings are not competitions).
+            // An explicit data attribute is used if LotusBook adds one; otherwise the parser maps the
+            // competition from the team names (scraper/parsers/lotusbook_parser.py COMPETITION_BY_TEAM).
             let competition = '';
-            let container = link.closest('.eventHeadName');
-            if (container) {
-                // The first link in the container that has a competition icon
-                const compLink = container.querySelector(
-                    'a[href*="/cricket/"]:not([href*="vs"])'
-                );
-                if (compLink) {
-                    // Clean: remove emoji prefix
-                    competition = compLink.textContent.trim().replace(/^[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]+/u, '').trim();
-                }
-                if (!competition) {
-                    const ct = (container.textContent || '').substring(0, 1500);
-                    if (/Indian Premier League|Tata\s*IPL|\bIPL\s*20/i.test(ct)) {
-                        competition = 'Indian Premier League';
-                    }
-                }
+            const compEl = link.closest('[data-competition]');
+            if (compEl) {
+                competition = (compEl.getAttribute('data-competition') || '').trim();
             }
 
             // --- Odds extraction ---
             // On lotusbook.cc, odds sit directly in link.nextElementSibling (col-span-6 lg:col-span-7 div).
+            // The odds must belong to THIS match's row. A suspended row has no price buttons; walking further up the
+            // page then finds the next match's odds and records them under this match (seen 2026-11-02:
+            // Oman v Netherlands carried Melbourne Stars W prices). So only look inside ancestors that contain no
+            // other match link; otherwise the row has no prices (stored as null).
+            const ODDS_SEL = 'button[data-odd-type], [class*="backBtnBg"], [class*="layBtnBg"]';
+            function ownsOnlyThisMatch(el) {
+                const others = Array.from(el.querySelectorAll('a[href*="/cricket/"][href*="vs"]'))
+                    .filter(a => a.getAttribute('href') !== href);
+                return others.length === 0;
+            }
             let oddsDiv = link.nextElementSibling;
-            if (!oddsDiv || !oddsDiv.querySelector('button, [class*="backBtnBg"], [class*="layBtnBg"]')) {
+            if (!oddsDiv || !oddsDiv.querySelector(ODDS_SEL) || !ownsOnlyThisMatch(oddsDiv)) {
                 let w = link;
                 oddsDiv = null;
                 for (let depth = 0; depth < 10 && w; depth++) {
                     const sib = w.nextElementSibling;
-                    if (sib && sib.querySelector &&
-                        sib.querySelector('button[data-odd-type], [class*="backBtnBg"], [class*="layBtnBg"]')) {
-                        oddsDiv = sib;
+                    if (sib && sib.querySelector && sib.querySelector(ODDS_SEL)) {
+                        if (ownsOnlyThisMatch(sib) && (!w.parentElement || ownsOnlyThisMatch(w.parentElement))) {
+                            oddsDiv = sib;
+                        }
                         break;
                     }
                     w = w.parentElement;
+                    if (w && !ownsOnlyThisMatch(w)) break;  // left this match's row
                 }
             }
 
@@ -356,7 +359,7 @@ class ScraperWorker:
         Extract match data from LotusBook's DOM using targeted JS evaluation.
 
         LotusBook uses a Tailwind CSS grid layout:
-          - .eventHeadName containers group matches by competition
+          - Listing rows carry no competition; the parser derives it from team names
           - a#inPlayTeamName links hold team names (span.text-text_color_primary1)
           - Odds in the next sibling col-span-6 div with backBtnBg/layBtnBg cells
           - Live indicator via #inPlay element or score pattern in #inPlayTime

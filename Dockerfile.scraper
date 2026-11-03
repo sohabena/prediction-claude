@@ -38,6 +38,8 @@ COPY features/ /app/features/
 COPY backend/__init__.py /app/backend/__init__.py
 COPY backend/models/ /app/backend/models/
 COPY scripts/run_scraper_forever.py /app/scripts/run_scraper_forever.py
+COPY scripts/data_quality_monitor.py /app/scripts/data_quality_monitor.py
+COPY scripts/quarantine_ticks.py /app/scripts/quarantine_ticks.py
 
 # Create non-root user; logs/ is bind-mounted from the host so heartbeats are visible there
 RUN useradd --create-home phoenix && mkdir -p /app/logs && chown -R phoenix /app/logs

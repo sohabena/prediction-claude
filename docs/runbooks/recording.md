@@ -196,3 +196,47 @@ Pre-run backup: `data/backups/phoenix_pre_recording_20261102.dump`. Restore with
    - `python scripts/recording_health.py`;
    - the tick count: `docker exec phoenix-timescaledb psql -U phoenix -d phoenix_betting -c "SELECT date(time), is_live,
      count(*), count(distinct match_id) FROM odds_ticks WHERE source='lotusbook' GROUP BY 1,2 ORDER BY 1 DESC LIMIT 6"`.
+
+## 8. Data quality report (S55)
+
+`scripts/data_quality_monitor.py` runs ten read-only checks over the last 24 h and writes the result to
+`logs/data_quality.jsonl` (one JSON line per run). The `quality-monitor` service (profile `recording`) runs it
+every hour. Run it once by hand with `python scripts/data_quality_monitor.py`. Exit codes: 0 all ok, 2 warnings
+only, 1 at least one failure (or the database could not be read).
+
+| Check | Fails when | Warns when |
+|-------|------------|------------|
+| `freshness` | a match is live and the newest row is over 15 min old | |
+| `price_sanity` | a price is stored as 0, or a book is crossed (back > lay) | a price is outside (1.01, 1000] |
+| `duplicates` | over 1 % of `market_ticks` rows repeat the previous row | any repeated row |
+| `match_page_coverage` | | under 90 % of live matches have match-page rows |
+| `lay_completeness` | over 10 % of live listing ticks have no lay that the match page can fill | over 1 % |
+| `score_coverage` | over 10 % of matches with match-page rows have no score state | any |
+| `registry` | a recorded match has no registry row, or competition is empty | team-name variants for one match id |
+| `results` | a match's last tick is over 6 h old with no result, or a result has an empty winner | |
+| `gaps` | | a gap over 5 min inside one live match |
+| `srl` | never | never (count only) |
+
+`srl` counts simulated (SRL) matches. They are recorded on purpose, so they never fail a check. `is_simulated`
+counts are shown in the `registry` detail once that column exists.
+
+The report is read-only: it runs in a READ ONLY transaction and only executes `SELECT`. It does not repair data.
+Each `fail` or `warn` line names the matches to look at. Fix the cause in the scraper or the registry, not in the
+report.
+
+## 9. Quarantine, harmonisation and known limits (S57, 2026-11-03)
+
+- The `quality-monitor` container runs `scripts/data_quality_monitor.py --interval 3600 --quarantine`. Before each
+  report it moves rows that are not prices of their match from `odds_ticks` to `odds_ticks_quarantine` (kept, with
+  `reason`): `post_settlement` (prices after a decided match), `cross_match_copy` (two matches, same time, same book),
+  `placeholder_book` (LotusBook's default book, e.g. 1.92/1.99/2.02/2.10, seen on 3+ matches), `after_result` (ticks
+  after a trusted result). It then fills missing `competition` values on recent ticks from the registry.
+- Dry run any time: `docker exec phoenix-quality-monitor python scripts/quarantine_ticks.py` (add `--apply` to move).
+- Match-page workers seed their dedupe state from the last stored rows, so restarts do not rewrite markets.
+- Live listing ticks are re-stored every 5 min when unchanged (heartbeat), so a gap means the recorder was down.
+- **Known limit: no live score.** The Sportradar scoreboard does not render in headless Chromium and the page's
+  score feed returns empty `stats` (S51 report). `score_coverage` therefore warns; it never fails.
+- Results come from decisive prices, the market's settled winner, or (filled by hand, `source='public_scorecard'`)
+  public scorecards. Matches that vanish without a decisive price are `unresolved`.
+- Ticks and matches recorded before match-page recording began (2026-11-03 ~02:26 UTC) cannot have match-page lays;
+  the monitor reports them apart instead of scoring them.

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -224,13 +226,14 @@ class TestWorkerDedupe:
 
 
 class TestEligibility:
-    def test_simulated_match_is_never_eligible(self):
+    def test_live_simulated_match_is_eligible(self):
+        # S50: SRL match pages are recorded too (tagged as simulated in the registry)
         assert eligibility(
             is_live=True,
             team_home="Central Districts SRL",
             team_away="Auckland SRL",
             competition="Super Smash SRL",
-        ) == (False, "simulated")
+        ) == (True, "ok")
 
     def test_live_real_match_is_eligible(self):
         assert eligibility(is_live=True, team_home="Emirates Blues", team_away="Ajman") == (True, "ok")
@@ -241,21 +244,47 @@ class TestEligibility:
 
 class TestManagerWiring:
     @pytest.mark.asyncio
-    async def test_simulated_match_never_opens_a_market_page(self, monkeypatch):
+    async def test_live_simulated_match_opens_a_market_page(self, monkeypatch):
+        # S50/S52: SRL matches are recorded like real ones, so a live SRL match gets the read-only page too.
         opened: list = []
 
-        async def boom(context, url):
-            opened.append(url)
-            raise AssertionError("market page must not open for a simulated match")
+        class FakePage:
+            async def close(self):
+                pass
 
-        monkeypatch.setattr(manager_module, "open_match_page", boom)
+        class FakeWorker:
+            def __init__(self, **kwargs):
+                self.stored_snapshots = 0
+
+            def seed(self, records):
+                pass
+
+            async def run(self, stop):
+                await stop.wait()
+
+        async def fake_open(context, url):
+            opened.append(url)
+            return FakePage()
+
+        async def fake_href(page, lotus_id):
+            return "/cricket/central-districts-srl-vs-auckland-srl/4/76109044"
+
+        monkeypatch.setattr(manager_module, "open_match_page", fake_open)
+        monkeypatch.setattr(manager_module, "resolve_match_href", fake_href)
+        monkeypatch.setattr(manager_module, "MarketPageWorker", FakeWorker)
         mgr = manager_module.ScraperManager.__new__(manager_module.ScraperManager)
-        mgr._market_attempted = set()
         mgr._market_tasks = {}
         mgr._market_stops = {}
+        mgr._market_ended_at = {}
+        mgr._market_restarts = {}
+        mgr._market_live_seen = {}
+        mgr._market_janitor_task = None
         mgr._completed_match_ids = set()
         mgr._listing_page = object()
         mgr._context = object()
+        mgr.settings = SimpleNamespace(
+            scraper=SimpleNamespace(poll_interval=3.0, betting_site_url="https://lotusbook.cc/cricket")
+        )
         event = OddsEvent(
             match_id="lb_76109044",
             timestamp=NOW,
@@ -265,9 +294,12 @@ class TestManagerWiring:
             is_live=True,
         )
         await mgr._ensure_market_worker(event)
-        assert opened == []
+        assert opened == ["https://lotusbook.cc/cricket/central-districts-srl-vs-auckland-srl/4/76109044"]
+        assert set(mgr._market_tasks) == {"lb_76109044"}
+        mgr._market_stops["lb_76109044"].set()
+        await asyncio.wait(list(mgr._market_tasks.values()), timeout=2)
         assert mgr._market_tasks == {}
-        assert "lb_76109044" in mgr._market_attempted
+        assert "lb_76109044" not in mgr._market_ended_at  # an intentional stop is not an error
 
 
 class TestMigrationAndSchema:

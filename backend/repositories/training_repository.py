@@ -83,14 +83,21 @@ class TrainingRepository:
         }
 
     @staticmethod
-    async def get_recent_match_ticks(limit: int) -> list[Any]:
-        """Fetch all ticks for recent matches (for data quality evaluation)."""
+    async def get_recent_match_ticks(limit: int, include_simulated: bool = False) -> list[Any]:
+        """Fetch all ticks for recent matches (for data quality evaluation).
+
+        Simulated (SRL) matches are excluded unless ``include_simulated`` is True (S50).
+        """
         async with get_session() as session:
             result = await session.execute(
                 text("""
                     WITH recent_matches AS (
                         SELECT DISTINCT match_id
                         FROM odds_ticks
+                        WHERE CAST(:include_simulated AS BOOLEAN) OR NOT EXISTS (
+                            SELECT 1 FROM match_training_status mts
+                            WHERE mts.match_id = odds_ticks.match_id AND mts.is_simulated
+                        )
                         ORDER BY match_id DESC
                         LIMIT :limit
                     )
@@ -102,7 +109,7 @@ class TrainingRepository:
                     INNER JOIN recent_matches rm ON rm.match_id = t.match_id
                     ORDER BY t.match_id, t.time ASC
                 """),
-                {"limit": limit},
+                {"limit": limit, "include_simulated": include_simulated},
             )
             return result.fetchall()
 
