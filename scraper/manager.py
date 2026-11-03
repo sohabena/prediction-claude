@@ -230,6 +230,8 @@ class ScraperManager:
 
         # Pre-load already-resolved match IDs into detector
         self._result_detector.load_already_resolved(self._completed_match_ids)
+        # Restore matches that were live before this restart and have no result yet
+        await self._seed_detector_from_db()
 
         # Listen for new match results to mark matches as completed
         self._result_listener_task = asyncio.create_task(
@@ -262,6 +264,40 @@ class ScraperManager:
                 logger.info("scrape_approved_loaded", count=len(approved_ids))
         except Exception as e:
             logger.error("load_scrape_approved_error", error=str(e))
+
+    async def _seed_detector_from_db(self, hours: int = 12, last_ticks: int = 20) -> None:
+        """Give the result detector back every match that had a live tick in the last ``hours`` and has no result
+        row, with its last ``last_ticks`` listing rows. Without this a restart forgot them (2026-11-03: Hnb A v
+        Hayleys Group A and an SRL match never got a result row)."""
+        try:
+            from sqlalchemy import text as sa_text
+            async with get_session() as session:
+                rows = (await session.execute(sa_text(
+                    "WITH live AS ("
+                    "  SELECT DISTINCT o.match_id FROM odds_ticks o"
+                    "  WHERE o.is_live AND o.time > now() - make_interval(hours => :hours)"
+                    "    AND NOT EXISTS (SELECT 1 FROM match_results m WHERE m.match_id = o.match_id)"
+                    "), recent AS ("
+                    "  SELECT o.match_id, o.time, o.back_home, o.back_away, o.lay_home, o.lay_away,"
+                    "         row_number() OVER (PARTITION BY o.match_id ORDER BY o.time DESC) AS rn"
+                    "  FROM odds_ticks o JOIN live l ON l.match_id = o.match_id"
+                    "  WHERE o.time > now() - make_interval(hours => :hours)"
+                    ") "
+                    "SELECT r.match_id, r.time, r.back_home, r.back_away, r.lay_home, r.lay_away,"
+                    "       s.team_home, s.team_away, s.competition "
+                    "FROM recent r JOIN match_training_status s ON s.match_id = r.match_id "
+                    "WHERE r.rn <= :n ORDER BY r.match_id, r.time"
+                ), {"hours": hours, "n": last_ticks})).fetchall()
+            by_match: dict[str, list] = {}
+            names: dict[str, tuple[str, str, str]] = {}
+            for r in rows:
+                by_match.setdefault(r.match_id, []).append((r.time, r.back_home, r.back_away, r.lay_home, r.lay_away))
+                names[r.match_id] = (r.team_home or "", r.team_away or "", r.competition or "")
+            for mid, ticks in by_match.items():
+                self._result_detector.seed_live(mid, *names[mid], ticks)
+            logger.info("detector_seeded_from_db", matches=len(by_match))
+        except Exception as e:
+            logger.error("detector_seed_error", error=str(e))
 
     async def _load_registry_competitions(self) -> None:
         """Competitions already in the registry (last 3 days), the fallback until the site's menu feed arrives.

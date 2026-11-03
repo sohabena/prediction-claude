@@ -211,6 +211,34 @@ class LotusResultDetector:
         """Pre-load match IDs that already have results (from DB at startup)."""
         self._resolved_ids = set(match_ids)
 
+    def seed_live(
+        self,
+        match_id: str,
+        team_home: str,
+        team_away: str,
+        competition: str,
+        ticks: list[tuple[datetime, float | None, float | None, float | None, float | None]],
+    ) -> None:
+        """Restore a match that was live before a restart and has no result yet (2026-11-03: two restarts lost
+        matches, which then never got even an `unresolved` row). ``ticks`` are recorded
+        (time, back_home, back_away, lay_home, lay_away) rows, oldest first; ``last_seen`` is the last one, so the
+        absence rules run from the real last sighting. A match already tracked or resolved is left alone."""
+        if match_id in self._resolved_ids or match_id in self._matches or not ticks:
+            return
+        tracked = _TrackedMatch(match_id=match_id, team_home=team_home, team_away=team_away,
+                                competition=competition, was_live=True, last_seen=ticks[-1][0])
+        for when, bh, ba, lh, la in ticks[-MAX_TICK_HISTORY:]:
+            tracked.ticks.append((when, bh, ba, lh, la))
+            if bh is not None:
+                tracked.last_back_home = bh
+            if ba is not None:
+                tracked.last_back_away = ba
+            if lh is not None:
+                tracked.last_lay_home = lh
+            if la is not None:
+                tracked.last_lay_away = la
+        self._matches[match_id] = tracked
+
     def update_tick(
         self,
         match_id: str,

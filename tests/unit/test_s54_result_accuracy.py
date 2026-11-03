@@ -428,3 +428,24 @@ def test_manual_result_is_never_replaced_by_the_detector(monkeypatch):
     }))
     assert len(merged) == 1 and merged[0].winner == HOME
     assert published == []
+
+
+def test_a_match_seeded_after_a_restart_is_judged_from_its_last_recorded_tick(clock, stored):
+    """2026-11-03: restarts lost live matches, which then never got a result row."""
+    det = LotusResultDetector()
+    last = clock.now - timedelta(seconds=10_000)
+    det.seed_live(MID, HOME, AWAY, "Test Cup", [(last - timedelta(minutes=1), 1.8, 2.1, None, None),
+                                                (last, 1.9, 2.0, None, None)])
+    asyncio.run(det.check_completed(set()))
+    assert stored[-1]["match_id"] == MID and stored[-1]["result_type"] == "unresolved"
+
+
+def test_seeding_never_replaces_a_tracked_or_resolved_match(clock):
+    det = LotusResultDetector()
+    det.load_already_resolved({"done"})
+    det.seed_live("done", HOME, AWAY, "", [(clock.now, 1.5, 2.5, None, None)])
+    assert "done" not in det._matches
+    det.update_tick(match_id=MID, team_home=HOME, team_away=AWAY, competition="", is_live=True,
+                    back_home=1.4, back_away=3.0)
+    det.seed_live(MID, HOME, AWAY, "", [(clock.now - timedelta(hours=2), 9.0, 1.1, None, None)])
+    assert det._matches[MID].last_back_home == 1.4
