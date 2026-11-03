@@ -189,5 +189,6 @@ Details: `docs/architecture/paper-trading.md`, stories S69–S73.
 | `docs/architecture/profit-architecture.md` | Where profit can come from; validation ladder; Betfair constraint |
 | `docs/architecture/training-strategy.md` | Pillar 2 design and results |
 | `docs/architecture/paper-trading.md` | Pillar 3 design |
+| `docs/architecture/next-phase-plan.md` | Next phase: focus on Pillars 3 and 1, stories S74–S82 |
 | `docs/runbooks/recording.md` | Running and checking the recorder, quality monitor, quarantine |
 | `docs/stories/S37`–`S73` | Implemented stories, one per change |
