@@ -1,0 +1,437 @@
+{
+  "family": "t20",
+  "version": "v2",
+  "key": "all",
+  "gender_filter": null,
+  "timing": "season",
+  "stride": 3,
+  "data_root": "data",
+  "counts": {
+    "unlabelled": 194,
+    "labelled_matches": 6894
+  },
+  "ratings_rejected": {},
+  "caveats": [
+    "Cricsheet has no true home side: 'home' is a deterministic label (match-id parity); the home-ground term in the ratings uses venue history only.",
+    "Lineups are the Cricsheet player lists, assumed known before the match (a lineup feed is out of scope).",
+    "Market comparison is not part of this report; see scripts/eval_fair_value_vs_market.py (S38 rung R1)."
+  ],
+  "folds": [
+    {
+      "season": 2011,
+      "trained_through": "2009-12-12",
+      "calibration_season": 2010,
+      "n_train_matches": 224,
+      "n_calib_matches": 117,
+      "n_test_matches": 94,
+      "n_test_rows": 7471,
+      "model": {
+        "brier": 0.1874088585579651,
+        "log_loss": 0.5480648167425874,
+        "ece": 0.05058339092760129,
+        "n": 7471
+      },
+      "tier_mix_test": {
+        "1": 72,
+        "0": 22
+      },
+      "baseline_v1_state_only": {
+        "brier": 0.18654449504548665,
+        "log_loss": 0.5447502968670188,
+        "ece": 0.04640724747517667,
+        "n": 7471
+      }
+    },
+    {
+      "season": 2012,
+      "trained_through": "2010-12-30",
+      "calibration_season": 2011,
+      "n_train_matches": 341,
+      "n_calib_matches": 94,
+      "n_test_matches": 172,
+      "n_test_rows": 13530,
+      "model": {
+        "brier": 0.2313913552712708,
+        "log_loss": 0.6918093771502581,
+        "ece": 0.0919431966214784,
+        "n": 13530
+      },
+      "tier_mix_test": {
+        "1": 74,
+        "0": 98
+      },
+      "baseline_v1_state_only": {
+        "brier": 0.20638736712777717,
+        "log_loss": 0.6084442073815304,
+        "ece": 0.05611417455402288,
+        "n": 13530
+      }
+    },
+    {
+      "season": 2013,
+      "trained_through": "2011-11-29",
+      "calibration_season": 2012,
+      "n_train_matches": 435,
+      "n_calib_matches": 172,
+      "n_test_matches": 132,
+      "n_test_rows": 10553,
+      "model": {
+        "brier": 0.20412388967755118,
+        "log_loss": 0.5908610876378264,
+        "ece": 0.06571953403307798,
+        "n": 10553
+      },
+      "tier_mix_test": {
+        "1": 74,
+        "0": 58
+      },
+      "baseline_v1_state_only": {
+        "brier": 0.19751227163708168,
+        "log_loss": 0.5736275935905185,
+        "ece": 0.05834878822521297,
+        "n": 10553
+      }
+    },
+    {
+      "season": 2014,
+      "trained_through": "2012-12-28",
+      "calibration_season": 2013,
+      "n_train_matches": 607,
+      "n_calib_matches": 132,
+      "n_test_matches": 157,
+      "n_test_rows": 12302,
+      "model": {
+        "brier": 0.18700357737198464,
+        "log_loss": 0.5494491740170272,
+        "ece": 0.03856369256218953,
+        "n": 12302
+      },
+      "tier_mix_test": {
+        "1": 59,
+        "0": 98
+      },
+      "baseline_v1_state_only": {
+        "brier": 0.19252708934460408,
+        "log_loss": 0.5661756635421493,
+        "ece": 0.03225046792468676,
+        "n": 12302
+      }
+    },
+    {
+      "season": 2015,
+      "trained_through": "2013-12-13",
+      "calibration_season": 2014,
+      "n_train_matches": 739,
+      "n_calib_matches": 157,
+      "n_test_matches": 118,
+      "n_test_rows": 9337,
+      "model": {
+        "brier": 0.19516752287820546,
+        "log_loss": 0.5823888260140516,
+        "ece": 0.08661109979525378,
+        "n": 9337
+      },
+      "tier_mix_test": {
+        "1": 56,
+        "0": 62
+      },
+      "baseline_v1_state_only": {
+        "brier": 0.18076643358929612,
+        "log_loss": 0.5337026080446325,
+        "ece": 0.05447728944286375,
+        "n": 9337
+      }
+    },
+    {
+      "season": 2016,
+      "trained_through": "2014-12-05",
+      "calibration_season": 2015,
+      "n_train_matches": 896,
+      "n_calib_matches": 118,
+      "n_test_matches": 176,
+      "n_test_rows": 13760,
+      "model": {
+        "brier": 0.19960589063022657,
+        "log_loss": 0.5814294165625961,
+        "ece": 0.05199982695935669,
+        "n": 13760
+      },
+      "tier_mix_test": {
+        "1": 60,
+        "0": 116
+      },
+      "baseline_v1_state_only": {
+        "brier": 0.19757298717093988,
+        "log_loss": 0.5713758872625255,
+        "ece": 0.039852182235991816,
+        "n": 13760
+      }
+    },
+    {
+      "season": 2017,
+      "trained_through": "2015-12-05",
+      "calibration_season": 2016,
+      "n_train_matches": 1014,
+      "n_calib_matches": 176,
+      "n_test_matches": 121,
+      "n_test_rows": 9460,
+      "model": {
+        "brier": 0.20573728165301958,
+        "log_loss": 0.592855618942272,
+        "ece": 0.1310062298927851,
+        "n": 9460
+      },
+      "tier_mix_test": {
+        "1": 58,
+        "0": 63
+      },
+      "baseline_v1_state_only": {
+        "brier": 0.19968334655924375,
+        "log_loss": 0.5792384889408237,
+        "ece": 0.12615338334170112,
+        "n": 9460
+      }
+    },
+    {
+      "season": 2018,
+      "trained_through": "2016-12-04",
+      "calibration_season": 2017,
+      "n_train_matches": 1190,
+      "n_calib_matches": 121,
+      "n_test_matches": 240,
+      "n_test_rows": 18723,
+      "model": {
+        "brier": 0.1792434298455282,
+        "log_loss": 0.529275916530198,
+        "ece": 0.09422402172103532,
+        "n": 18723
+      },
+      "tier_mix_test": {
+        "1": 60,
+        "0": 180
+      },
+      "baseline_v1_state_only": {
+        "brier": 0.182364049333567,
+        "log_loss": 0.5338021154880342,
+        "ece": 0.07860514335365423,
+        "n": 18723
+      }
+    },
+    {
+      "season": 2019,
+      "trained_through": "2017-12-29",
+      "calibration_season": 2018,
+      "n_train_matches": 1311,
+      "n_calib_matches": 240,
+      "n_test_matches": 392,
+      "n_test_rows": 30233,
+      "model": {
+        "brier": 0.18047370210707,
+        "log_loss": 0.5284765373899387,
+        "ece": 0.03059157019614886,
+        "n": 30233
+      },
+      "tier_mix_test": {
+        "1": 57,
+        "0": 335
+      },
+      "baseline_v1_state_only": {
+        "brier": 0.17853834496634355,
+        "log_loss": 0.5215221907430966,
+        "ece": 0.034070010192965426,
+        "n": 30233
+      }
+    },
+    {
+      "season": 2020,
+      "trained_through": "2018-12-22",
+      "calibration_season": 2019,
+      "n_train_matches": 1551,
+      "n_calib_matches": 392,
+      "n_test_matches": 170,
+      "n_test_rows": 13510,
+      "model": {
+        "brier": 0.1709163618783315,
+        "log_loss": 0.5037180207207194,
+        "ece": 0.03420891338438499,
+        "n": 13510
+      },
+      "tier_mix_test": {
+        "1": 56,
+        "0": 114
+      },
+      "baseline_v1_state_only": {
+        "brier": 0.17783674772388594,
+        "log_loss": 0.5182599018875834,
+        "ece": 0.023848855329315306,
+        "n": 13510
+      }
+    },
+    {
+      "season": 2021,
+      "trained_through": "2019-12-20",
+      "calibration_season": 2020,
+      "n_train_matches": 1943,
+      "n_calib_matches": 170,
+      "n_test_matches": 440,
+      "n_test_rows": 34011,
+      "model": {
+        "brier": 0.17521493639616528,
+        "log_loss": 0.5249752553827949,
+        "ece": 0.023011600222561615,
+        "n": 34011
+      },
+      "tier_mix_test": {
+        "1": 59,
+        "0": 381
+      },
+      "baseline_v1_state_only": {
+        "brier": 0.1727243676746522,
+        "log_loss": 0.5098901257483703,
+        "ece": 0.022952132809402677,
+        "n": 34011
+      }
+    },
+    {
+      "season": 2022,
+      "trained_through": "2020-12-22",
+      "calibration_season": 2021,
+      "n_train_matches": 2113,
+      "n_calib_matches": 440,
+      "n_test_matches": 704,
+      "n_test_rows": 54600,
+      "model": {
+        "brier": 0.17439432165175084,
+        "log_loss": 0.5194109763155257,
+        "ece": 0.021915917058353003,
+        "n": 54600
+      },
+      "tier_mix_test": {
+        "1": 74,
+        "0": 630
+      },
+      "baseline_v1_state_only": {
+        "brier": 0.17796227023469513,
+        "log_loss": 0.5278855280174369,
+        "ece": 0.018157364245953937,
+        "n": 54600
+      }
+    },
+    {
+      "season": 2023,
+      "trained_through": "2021-12-23",
+      "calibration_season": 2022,
+      "n_train_matches": 2553,
+      "n_calib_matches": 704,
+      "n_test_matches": 660,
+      "n_test_rows": 50273,
+      "model": {
+        "brier": 0.16980324562869487,
+        "log_loss": 0.5055863335460593,
+        "ece": 0.04341590685213148,
+        "n": 50273
+      },
+      "tier_mix_test": {
+        "1": 73,
+        "0": 587
+      },
+      "baseline_v1_state_only": {
+        "brier": 0.1693913087708428,
+        "log_loss": 0.5020688138482432,
+        "ece": 0.04108866832710061,
+        "n": 50273
+      }
+    },
+    {
+      "season": 2024,
+      "trained_through": "2022-12-23",
+      "calibration_season": 2023,
+      "n_train_matches": 3257,
+      "n_calib_matches": 660,
+      "n_test_matches": 1010,
+      "n_test_rows": 77802,
+      "model": {
+        "brier": 0.16224146765345115,
+        "log_loss": 0.48412243448331105,
+        "ece": 0.03553458515356162,
+        "n": 77802
+      },
+      "tier_mix_test": {
+        "1": 71,
+        "0": 939
+      },
+      "baseline_v1_state_only": {
+        "brier": 0.16622909378671138,
+        "log_loss": 0.4916950779497556,
+        "ece": 0.03600267961033808,
+        "n": 77802
+      }
+    },
+    {
+      "season": 2025,
+      "trained_through": "2023-12-31",
+      "calibration_season": 2024,
+      "n_train_matches": 3917,
+      "n_calib_matches": 1010,
+      "n_test_matches": 983,
+      "n_test_rows": 75944,
+      "model": {
+        "brier": 0.15867437933490652,
+        "log_loss": 0.4735683370384054,
+        "ece": 0.01312880003865205,
+        "n": 75944
+      },
+      "tier_mix_test": {
+        "1": 70,
+        "0": 913
+      },
+      "baseline_v1_state_only": {
+        "brier": 0.17198908536396806,
+        "log_loss": 0.5076475791583782,
+        "ece": 0.01811165504160373,
+        "n": 75944
+      }
+    },
+    {
+      "season": 2026,
+      "trained_through": "2024-12-30",
+      "calibration_season": 2025,
+      "n_train_matches": 4927,
+      "n_calib_matches": 983,
+      "n_test_matches": 984,
+      "n_test_rows": 75256,
+      "model": {
+        "brier": 0.15719362507651158,
+        "log_loss": 0.47232611883474945,
+        "ece": 0.020333960280164418,
+        "n": 75256
+      },
+      "tier_mix_test": {
+        "1": 72,
+        "0": 912
+      },
+      "baseline_v1_state_only": {
+        "brier": 0.1652368642527362,
+        "log_loss": 0.48986763916369913,
+        "ece": 0.011146448221443431,
+        "n": 75256
+      }
+    }
+  ],
+  "min_train_matches": 200,
+  "min_test_matches": 30,
+  "pooled_model": {
+    "brier": 0.17195833585368656,
+    "log_loss": 0.5110776241644799,
+    "ece": 0.010482805402419578,
+    "n": 506765
+  },
+  "pooled_baseline_v1_state_only": {
+    "brier": 0.17500360077762833,
+    "log_loss": 0.5159923800520826,
+    "ece": 0.00826802176952744,
+    "n": 506765
+  },
+  "final_model": "models\\fair_value\\t20_v2_all.joblib",
+  "final_model_trained_through": "2026-10-25"
+}
