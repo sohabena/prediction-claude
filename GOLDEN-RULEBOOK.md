@@ -98,7 +98,12 @@ user `phoenix`.
 - Tie and no-result wording from the site is **not yet verified**.
 - A match that vanishes waits 45 min before it is called `unresolved` (innings breaks drop matches off the listing).
 - Missing results are listed daily; enter them from a public scorecard with `scripts/set_result.py` or the UI Data
-  page. Hand-entered results (`public_scorecard`, `manual_fix`) are never overwritten by the detector.
+  page. Hand-entered results (`public_scorecard`, `manual_fix`) are never overwritten by the detector. The detector
+  tracks vanished matches in memory, so a scraper restart can lose one (lb_76227866, 2026-11-03): the missing-results
+  list is the safety net. Public sources that worked: ESPNcricinfo, league sites (nclcricket.com), and CricHeroes for
+  Sri Lankan MCA and other domestic leagues (rain and DLS results included). Never invent a result.
+- Markets are classified in `scraper/parsers/lotusbook_markets.py`: `match_odds`, `bookmaker` ("Bookmaker ..."),
+  `over_runs` (session lines), `other`.
 
 **Recording rules:** every live match gets a read-only match page (cap 12, live first); real matches get theirs from
 75 min before the start (`PREMATCH_PAGE_LEAD_MIN`). Listing ticks are change-only, with a 5-min live heartbeat and a
@@ -184,10 +189,17 @@ to `odds_ticks_quarantine` (never deletes): post-settlement prices, cross-match 
 1. **A better model on slow horizons** (pre-match, toss, in-play states the market under-prices), strongest in
    low-profile competitions with lazy prices. The primary thesis; unproven.
 2. **Market behaviour:** over-reaction after wickets and big overs, drift. Testable on our price histories alone.
-3. **Soft bookmaker vs sharp exchange, now reachable:** we record both match-odds markets on every real match. A
-   first look (2026-11-03, two matches): in 6 to 7% of paired moments the bookmaker's back price was above the
-   exchange's lay price, i.e. a back above the exchange's fair range. Unverified (rows up to 10 s apart, bookmaker
-   rows can be stale, and the bookmaker may refuse or reprice), but it needs no model. **Highest-value untested lead.**
+3. **Soft bookmaker vs sharp exchange: tested 2026-11-03, no edge so far** (`scripts/analyse_soft_sharp.py`,
+   `reports/soft_sharp/`).
+   - The `_BR` match-odds market's runners have **never** been active on a real match: its prices are not bettable.
+     A first look that counted them was wrong.
+   - The real in-house bookmaker is **"Bookmaker 0 Commission"** (`market_type = 'bookmaker'`), recorded on only 2
+     real matches so far (both NPL). It beat the exchange (back above the exchange lay, or lay below the exchange
+     back) in about 10% of moments, by a median 1.4%, but only 9% of those survived the 60 s a person needs, and the
+     survivors had **negative** CLV against the exchange 10 minutes later.
+   - Reading: the bookmaker tends to **lead** the exchange (its traders react to the match), so a gap usually closes
+     toward the bookmaker's price. It is not a slow book. Re-run the script as more matches carry the bookmaker
+     market; do not trade it without positive clustered CLV over many matches.
 4. **Session ("fancy") markets:** over/runs lines are recorded (224 lines on one match). A runs model from Cricsheet
    against an in-house line is a realistic edge. Not yet built.
 5. **Not available:** latency or courtsiding (we are 10 to 30 s behind the pictures), market making, anything learned
@@ -239,11 +251,12 @@ once; it must be bought, never scraped, and only on the operator's decision.
 
 ## 11. State on 2026-11-03 (update when it changes)
 
-- Recording since 2026-11-01: 22 real and 16 SRL matches; 10 real matches with a decided result; monitor OK.
+- Recording since 2026-11-01: 22 real and 16 SRL matches; 11 real matches with a decided result; monitor OK.
 - Paper trading since 2026-11-03 09:00 UTC: 344 paper bets, 213 settled. Every strategy variant is net negative on
   its two settled matches (-72,630 to -118,828); `market_only` lost 63,994 during the morning's false-edge hour,
   before the band fix. **No variant has evidence of an edge; R1 3/200, R2 8/150, R3 1/30.**
 - Every story S37 to S95 is implemented except S78 (market-implied ratings), S79 (variant evolution; waits for
   more evidence), S80 (toss model), S81 (zero-downtime deploys).
-- Next priorities: (1) let evidence accumulate and keep the data clean; (2) test the soft-vs-sharp lead (section 8.3)
-  on recorded data; (3) S78 ratings for teams Cricsheet lacks; (4) S79 once clustered evidence exists.
+- Next priorities: (1) let evidence accumulate and keep the data clean; (2) re-run the soft-vs-sharp test (section 8.3)
+  as more matches carry the bookmaker market; (3) S78 ratings for teams Cricsheet lacks; (4) S79 once clustered
+  evidence exists.

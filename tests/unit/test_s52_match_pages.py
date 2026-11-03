@@ -236,6 +236,13 @@ class TestSrlClassification:
         assert narine == {"fielder catch", "bowled", "keeper catch", "lbw", "run out", "stumped"}
         assert all(r.market_type == "other" for r in dis)
 
+    def test_the_in_house_bookmaker_market_is_classified_as_bookmaker(self):
+        """2026-11-03: "Bookmaker 0 Commission" was stored as `other`, so bookmaker checks skipped it."""
+        from scraper.parsers.lotusbook_markets import _classify_list_market
+
+        assert _classify_list_market("Bookmaker 0 Commission") == ("bookmaker", "Bookmaker 0 Commission")
+        assert _classify_list_market("Bookmaker") == ("bookmaker", "bookmaker")
+
     def test_unpriced_winner_block_is_recorded_as_suspended(self):
         # Every price on the SRL Winner block is data-price="0" (not offered): a suspended market, kept with no prices.
         from scraper.parsers.lotusbook_markets import _classify_list_market

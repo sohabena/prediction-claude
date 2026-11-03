@@ -333,7 +333,8 @@ def _classify_list_market(raw: str) -> tuple[str, str]:
     S52 names: "Winner" / "Match Odds" -> match_odds; "<n>st|nd|rd|th innings over <k> - <team> total" ->
     over_runs:inn<n>:over<k>:<Team>; "... odd/even" -> odd_even:inn<n>:over<k>:<Team>;
     "<n>st innings - <player> dismissal method" -> dismissal:inn<n>:<Player> (or <Team>:wicket<n> for a
-    team-wide "<Team> 8th dismissal method"). Anything else -> other, with the raw label.
+    team-wide "<Team> 8th dismissal method"); "Bookmaker ..." -> bookmaker, with the raw label. Anything else ->
+    other, with the raw label.
     """
     text = " ".join((raw or "").split())
     match = _INN_OVER_TOTAL_RE.match(text)
@@ -357,6 +358,10 @@ def _classify_list_market(raw: str) -> tuple[str, str]:
     market_type, market_name = normalise_market_name(text)
     if market_type == "other" and _MATCH_ODDS_RE.match(market_name):
         return "match_odds", "match_odds"
+    if market_type == "other" and text.lower().startswith("bookmaker"):
+        # The site's in-house bookmaker, e.g. "Bookmaker 0 Commission" (2026-11-03): its runners are bettable,
+        # unlike the exchange page's `_BR` match-odds market. The raw name is kept.
+        return "bookmaker", text
     return market_type, market_name
 
 
