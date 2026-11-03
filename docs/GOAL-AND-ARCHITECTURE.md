@@ -193,6 +193,7 @@ full ranking: `docs/architecture/value-focused-plan.md`.
 
 | Document | Covers |
 |---|---|
+| `GOLDEN-RULEBOOK.md` (repo root, loaded by `CLAUDE.md`) | The goal, rules never broken, and every hard-won insight; read first |
 | `docs/architecture/profit-architecture.md` | Where profit can come from; validation ladder; Betfair constraint |
 | `docs/architecture/training-strategy.md` | Pillar 2 design and results |
 | `docs/architecture/paper-trading.md` | Pillar 3 design |
