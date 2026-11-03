@@ -109,6 +109,44 @@ class TestRealSnapshot:
         assert 'role="rowheader"' in REAL_MATCH_ODDS and "Market suspended" in REAL_MATCH_ODDS
 
 
+class TestRealWinnerMarket:
+    """Real Winner block (2026-11-03): the listing showed no lays for this match, the match page did."""
+
+    WINNER = (FIX / "winner_market_live_20261103.html").read_text(encoding="utf-8")
+
+    def test_best_back_and_lay_per_runner(self):
+        records = parse_market_html(self.WINNER, MID, NOW)
+        got = {(r.market_type, r.selection, r.back, r.lay, r.status) for r in records}
+        assert got == {
+            ("match_odds", "Toronto Kings", 1.52, 1.77, "open"),
+            ("match_odds", "Montreal Warriors", 2.3, 2.92, "open"),
+        }
+
+    def test_desktop_ladder_is_used_when_mobile_view_is_missing(self):
+        html = re.sub(r'<div aria-label="[^"]+ odds - mobile view">.*?</div><div aria-label', "<div aria-label",
+                      self.WINNER)
+        assert "mobile view" not in html
+        records = parse_market_html(html, MID, NOW)
+        assert {(r.selection, r.back, r.lay) for r in records} == {
+            ("Toronto Kings", 1.52, 1.77), ("Montreal Warriors", 2.3, 2.92),
+        }
+
+    def test_empty_cells_are_none_not_zero(self):
+        html = self.WINNER.replace('data-price="1.77"', 'data-price="0"')
+        toronto = _by(parse_market_html(html, MID, NOW), selection="Toronto Kings")[0]
+        assert toronto.back == 1.52 and toronto.lay is None
+
+    def test_suspended_runner_list_is_recorded_with_status(self):
+        html = (
+            '<div role="list" aria-label="Match Odds runners and odds"><div role="listitem">'
+            '<div role="rowheader" aria-label="Runner: India"></div>'
+            '<div role="status" aria-label="Market suspended">SUSPENDED</div></div></div>'
+        )
+        [rec] = parse_market_html(html, MID, NOW)
+        assert (rec.market_type, rec.selection, rec.back, rec.lay, rec.status) == (
+            "match_odds", "India", None, None, "suspended")
+
+
 class FakePage:
     def __init__(self, snapshots):
         self._snapshots = list(snapshots)
@@ -116,6 +154,34 @@ class FakePage:
 
     async def content(self):
         return self._snapshots.pop(0) if self._snapshots else self._last
+
+
+class TestWorkerReload:
+    @pytest.mark.asyncio
+    async def test_page_is_reloaded_after_the_interval_only(self):
+        winner = (FIX / "winner_market_live_20261103.html").read_text(encoding="utf-8")
+        page = FakePage([winner])
+        reloads = []
+
+        async def reload(**kwargs):
+            reloads.append(kwargs)
+
+        page.reload = reload
+        now = [0.0]
+        stored = []
+
+        async def store(mid, records):
+            stored.append(records)
+
+        worker = MarketPageWorker(MID, page, store, reload_every=300, clock=lambda: now[0])
+        await worker.poll_once()
+        now[0] = 299
+        await worker.poll_once()
+        assert reloads == []
+        now[0] = 300
+        await worker.poll_once()
+        assert len(reloads) == 1 and reloads[0]["wait_until"] == "domcontentloaded"
+        assert len(stored) == 1  # unchanged content after the reload stores nothing
 
 
 class TestWorkerDedupe:

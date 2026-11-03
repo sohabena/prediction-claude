@@ -17,7 +17,7 @@ class MarketTick(Base):
 
     time: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
     match_id: Mapped[str] = mapped_column(String, primary_key=True)
-    market_type: Mapped[str] = mapped_column(String, primary_key=True)  # bookmaker | session | other
+    market_type: Mapped[str] = mapped_column(String, primary_key=True)  # match_odds | bookmaker | session | other
     market_name: Mapped[str] = mapped_column(String, primary_key=True)
     selection: Mapped[str] = mapped_column(String, primary_key=True, default="")
 

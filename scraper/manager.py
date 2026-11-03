@@ -440,9 +440,12 @@ class ScraperManager:
             else:
                 await self._ensure_market_worker(event)
 
-            # Store MatchContext for every recorded match; publish it only for approved matches
+            # Store MatchContext for every recorded match; publish it only for approved matches.
+            # LotusBook often shows no score at all; a row is stored only when a score was actually read,
+            # so the table never holds placeholder 0/0 rows.
             if context is not None:
-                await self._publish_match_context(redis, context, publish=approved)
+                has_score = bool((event.score_text or "").strip())
+                await self._publish_match_context(redis, context, publish=approved, store=has_score)
                 # Feed score data into result detector for cross-referencing
                 tracker_state = self._live_match_tracker._matches.get(event.match_id)
                 fi_total = tracker_state.first_innings_total() if tracker_state else None
@@ -550,8 +553,10 @@ class ScraperManager:
     def _prices(event: OddsEvent) -> tuple:
         return (event.back_home, event.lay_home, event.back_draw, event.lay_draw, event.back_away, event.lay_away)
 
-    async def _publish_match_context(self, redis: Any, context: Any, publish: bool = True) -> None:
-        """Store derived MatchContext to DB, and publish it to Redis when ``publish``.
+    async def _publish_match_context(
+        self, redis: Any, context: Any, publish: bool = True, store: bool = True,
+    ) -> None:
+        """Store derived MatchContext to DB when ``store``, and publish it to Redis when ``publish``.
 
         Context is derived inline from LotusBook score_text with zero
         latency gap vs odds data. Every recorded match stores its context (it is part of
@@ -569,6 +574,9 @@ class ScraperManager:
                 # Cache in Redis (consumed by context_resolver.get_match_context)
                 key = KEY_MATCH_CONTEXT.format(match_id=context.match_id)
                 await redis.set_json(key, ctx_data, ttl=60)
+
+            if not store:
+                return
 
             # Store to TimescaleDB
             async with get_session() as session:

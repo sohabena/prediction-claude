@@ -73,6 +73,15 @@ async def test_unapproved_live_match_stores_score_state_but_publishes_nothing(mo
     assert manager_env.redis.published == []  # recording only; live consumers see approved matches
 
 
+async def test_live_match_without_score_stores_no_placeholder_context(monkeypatch, manager_env):
+    """The LotusBook listing often shows no score; no 0/0 placeholder row may be stored then."""
+    mgr = _new_manager(monkeypatch, record_all=None)
+    await mgr._on_events([live_event(match_id="m10").model_copy(update={"score_text": ""})])
+
+    assert len(_ticks(manager_env.session)) == 1
+    assert [o for o in manager_env.session.added if isinstance(o, MatchContextRecord)] == []
+
+
 def test_db_init_has_no_retention_by_default(monkeypatch):
     """Recorded LotusBook ticks are the only real price history: no retention unless opted in."""
     import inspect

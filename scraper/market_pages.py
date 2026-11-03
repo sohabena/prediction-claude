@@ -1,13 +1,15 @@
-"""Read-only market-page worker for LotusBook Bookmaker and session markets (S47).
+"""Read-only market-page worker for LotusBook match pages: Winner (match odds), Bookmaker and session markets.
 
 Rules enforced here: one page per live recorded match, polled no faster than every 3 s,
-read via ``page.content()`` only (no clicks, no form input, no login). Simulated matches
-are never started. Records are stored only when their content changes.
+read via ``page.content()`` only (no clicks, no form input, no login), reloaded every
+``RELOAD_EVERY_S``. Simulated matches are never started. Records are stored only when their
+content changes.
 """
 
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Optional
 from urllib.parse import urljoin
@@ -21,6 +23,8 @@ logger = setup_logging("market_pages")
 MIN_POLL_INTERVAL_S = 3.0
 MAX_CONSECUTIVE_ERRORS = 5
 PAGE_LOAD_TIMEOUT_MS = 60_000
+# Reload the match page this often so a stalled live connection cannot freeze the recorded prices.
+RELOAD_EVERY_S = 300.0
 
 StoreFn = Callable[[str, list[MarketRecord]], Awaitable[None]]
 
@@ -79,16 +83,24 @@ class MarketPageWorker:
         page: Any,
         store: StoreFn,
         poll_interval: float = MIN_POLL_INTERVAL_S,
+        reload_every: float = RELOAD_EVERY_S,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.match_id = match_id
         self.page = page
         self.store = store
         self.poll_interval = clamp_poll_interval(poll_interval)
+        self.reload_every = reload_every
+        self._clock = clock
+        self._last_load = clock()
         self._last_fingerprint: Optional[str] = None
         self.stored_snapshots = 0
 
     async def poll_once(self) -> int:
         """Read the page once. Return the number of records stored (0 when unchanged)."""
+        if self._clock() - self._last_load >= self.reload_every:
+            await self.page.reload(wait_until="domcontentloaded", timeout=PAGE_LOAD_TIMEOUT_MS)
+            self._last_load = self._clock()
         html = await self.page.content()
         records = parse_market_html(html, self.match_id, datetime.now(timezone.utc))
         if not records:

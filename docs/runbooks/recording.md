@@ -127,7 +127,7 @@ With no qualifying matches it prints "No recorded matches" and exits 0.
 |----------|---------|---------|
 | `SCRAPER_RECORD_ALL` | `1` | Record every qualifying live match, regardless of approval. Set `0` to restore approval-gated recording. |
 | `SCRAPER_STALL_MINUTES` | `10` | Restart the scraper when a live match has no processed event for this long. |
-| `SCRAPER_MARKET_PAGES` | `1` | S47: open one read-only match page per live recorded match and store Bookmaker and session markets to `market_ticks`. Set `0` to turn off. |
+| `SCRAPER_MARKET_PAGES` | `1` | S47: open one read-only match page per live recorded match and store its Winner (match odds) best back/lay, plus Bookmaker and session markets, to `market_ticks`. Set `0` to turn off. |
 
 ## 6. Bookmaker and session markets (S47)
 
@@ -135,10 +135,15 @@ Table `market_ticks` (migration `003_market_ticks`, hypertable in `backend/db_in
 not applied by the story. Apply it with the operator's usual step only after checking the table is empty
 or the change is intended. Rows are written only when a market's content changes.
 
-- `market_type`: `bookmaker`, `session` (names like `session:6_over:India`), or `other`.
+- `market_type`: `match_odds` (the Winner market: best back and best lay per runner), `bookmaker`,
+  `session` (names like `session:6_over:India`), or `other`.
 - `status`: `open`, `suspended`, or `ball_running`.
-- Selectors are UNVERIFIED for Bookmaker and session blocks. See the header of
-  `scraper/parsers/lotusbook_markets.py`.
+- `match_odds` selectors are VERIFIED on a live page (2026-11-03). This matters: for some live matches the
+  listing page shows "-" for every lay while the match page shows real lays, so `odds_ticks` (from the
+  listing) can be back-only and `market_ticks` holds the lays. Bookmaker and session selectors are still
+  UNVERIFIED. See the header of `scraper/parsers/lotusbook_markets.py`.
+- Applied to the live database on 2026-11-03 (table created from migration 003's DDL, then made a hypertable).
+- Simulated (SRL) matches never get a match page. At most 4 match pages are open at once.
 
 Health query to add to `scripts/recording_health.py` (not edited by S47):
 

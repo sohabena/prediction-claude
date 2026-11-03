@@ -1,4 +1,4 @@
-"""DOM -> market records for LotusBook Bookmaker and session ("fancy") markets (S47).
+"""DOM -> market records for LotusBook match pages: Winner (match odds), Bookmaker and session ("fancy") markets.
 
 Selector status (see docs/stories/S47 discovery notes):
 - VERIFIED on a live match page (2026-11-02): runner rows are ``role="listitem"`` with a
@@ -26,8 +26,12 @@ from shared.logging import setup_logging
 logger = setup_logging("lotusbook_markets")
 
 SOURCE = "lotusbook"
-MARKET_TYPES = ("bookmaker", "session", "other")
+MARKET_TYPES = ("match_odds", "bookmaker", "session", "other")
 STATUSES = ("open", "suspended", "ball_running")
+
+_RUNNER_LIST_SUFFIX = " runners and odds"
+# "Winner (incl. super over)", "Match Odds"
+_MATCH_ODDS_RE = re.compile(r"^\s*(winner\b|match\s*odds\b)", re.IGNORECASE)
 
 # "6 over runs IND", "20 overs runs", "10 over runs"
 _OVER_RE = re.compile(r"^\s*(\d{1,2})\s*overs?\s*runs?\b\s*(.*)$", re.IGNORECASE)
@@ -276,7 +280,79 @@ def parse_market_html(html: str, match_id: str, observed_at: datetime) -> list[M
                     status=_status_of(row, default=block_status),
                 )
             )
+    records.extend(_parse_runner_lists(root, match_id, observed_at))
     logger.debug("market_blocks_parsed", match_id=match_id, records=len(records))
+    return records
+
+
+def _classify_list_market(raw: str) -> tuple[str, str]:
+    market_type, market_name = normalise_market_name(raw)
+    if market_type == "other" and _MATCH_ODDS_RE.match(market_name):
+        return "match_odds", "match_odds"
+    return market_type, market_name
+
+
+def _cell_price(button: Optional[_Node]) -> Optional[float]:
+    """Price from a cell's ``data-price`` (``0`` is an empty "-" cell); falls back to its text."""
+    if button is None:
+        return None
+    raw = button.attrs.get("data-price")
+    if raw is not None:
+        try:
+            value = float(raw)
+        except ValueError:
+            return None
+        return value if value > 1.0 else None
+    return _price(_text(button))
+
+
+def _best_cells(row: _Node) -> tuple[Optional[_Node], Optional[_Node]]:
+    """Best back and best lay cell of a runner row: the mobile view holds exactly those two;
+    the desktop ladder labels them "Back odds 1" / "Lay odds 1"."""
+    for n in _walk(row):
+        if n.attrs.get("aria-label", "").lower().endswith("odds - mobile view"):
+            return _find_odd(n, "back"), _find_odd(n, "lay")
+    back = lay = None
+    for n in _walk(row):
+        label = n.attrs.get("aria-label", "").lower()
+        if label == "back odds 1":
+            back = _find_odd(n, "back")
+        elif label == "lay odds 1":
+            lay = _find_odd(n, "lay")
+    return back, lay
+
+
+def _parse_runner_lists(root: _Node, match_id: str, observed_at: datetime) -> list[MarketRecord]:
+    """Markets rendered as ``role="list"`` blocks labelled "<market> runners and odds".
+
+    VERIFIED on a live match page (2026-11-03, fixture ``winner_market_live_20261103.html``):
+    the Winner (match odds) market. On the listing page the same match showed no lay prices.
+    """
+    records: list[MarketRecord] = []
+    for block in _walk(root):
+        label = block.attrs.get("aria-label", "")
+        if block.attrs.get("role") != "list" or not label.lower().endswith(_RUNNER_LIST_SUFFIX):
+            continue
+        market_type, market_name = _classify_list_market(label[: -len(_RUNNER_LIST_SUFFIX)])
+        for row in (n for n in _walk(block) if n.attrs.get("role") == "listitem"):
+            name = _runner_name(row)
+            back_cell, lay_cell = _best_cells(row)
+            back, lay = _cell_price(back_cell), _cell_price(lay_cell)
+            status = _status_of(row)
+            if not name or (back is None and lay is None and status == "open"):
+                continue
+            records.append(
+                MarketRecord(
+                    time=observed_at,
+                    match_id=match_id,
+                    market_type=market_type,
+                    market_name=market_name,
+                    selection=name,
+                    back=back,
+                    lay=lay,
+                    status=status,
+                )
+            )
     return records
 
 
