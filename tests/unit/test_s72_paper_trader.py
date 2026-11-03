@@ -13,6 +13,7 @@ from strategy.probability import Estimate
 from training.market import band_prob_home
 from virtual_trading import paper_trader as pt
 from virtual_trading.memory_session import MemorySession
+from virtual_trading.paper_review import is_placebo
 
 T0 = datetime(2026, 11, 3, 12, 0, 0, tzinfo=timezone.utc)
 START = T0 + timedelta(hours=2)
@@ -149,19 +150,24 @@ async def test_cycle_places_fills_and_settles():
     assert all(r.decided_at == T0 and r.match_id == MID for r in placed)
     # The first-cycle orders are the ones checked below: BACK home at the takeable price 2.2. The control trades
     # only on the market's own edge, which this book does not offer (the market sits at the band midpoint).
-    first = {r.variant: r for r in placed}
+    # S85: the placebo controls are placed too, at the reference's decision time; the model checks below use the
+    # strategy rows only.
+    first = {r.variant: r for r in placed if not is_placebo(r.variant)}
     assert set(first) == {v.name for v in variants if not v.market_only}
     assert all(r.side == "BACK" and r.selection == "home" and r.price_limit <= 2.2 for r in first.values())
+    assert {r.variant for r in placed if is_placebo(r.variant)} == {"placebo_random", "placebo_favourite"}
 
     # One minute later the book still offers 2.2, so the decided orders fill at decided + 60 s.
     feed.prices.append(_price(T0 + timedelta(seconds=30)))
     feed.last = {MID: T0 + timedelta(seconds=60)}
     report = await pt.run_cycle(session, feed, prob, variants, now=T0 + timedelta(seconds=61))
-    assert report["fills"] == {"filled": len(first), "unfilled": 0}
+    assert report["fills"] == {"filled": len(placed), "unfilled": 0}
     for row in first.values():
         assert row.status == "filled"
         assert row.price_filled == 2.2
         assert row.filled_at == T0 + timedelta(seconds=60)
+    for row in placed:
+        assert row.status == "filled" and row.filled_at == T0 + timedelta(seconds=60)
 
     # The match finishes with home winning: the filled orders settle at their gross P&L.
     feed.result_map = {MID: {"winner": "Alpha", "result_type": "win", "team_home": "Alpha", "team_away": "Beta"}}
@@ -278,7 +284,7 @@ async def test_pending_bet_blocks_a_new_decision():
     feed.last = {MID: T0 + timedelta(seconds=15)}
     report = await pt.run_cycle(session, feed, prob, variants, now=T0 + timedelta(seconds=15))
     assert len(session.rows) == count_after_first
-    assert report["skipped_pending"] == len({r.variant for r in session.rows})  # variants with a pending bet
+    assert report["skipped_pending"] == len({r.variant for r in session.rows if not is_placebo(r.variant)})
     assert report["intents"] == 0
 
 
@@ -358,10 +364,12 @@ def test_build_variants_grid_and_control():
     names = [v.name for v in variants]
     assert names == [
         "w03_e03", "w03_e06", "w05_e03", "w05_e06", "w07_e03", "w07_e06", "market_only",
+        "placebo_random", "placebo_favourite",  # S85
     ]
     assert all(v.max_match_loss == 100_000.0 for v in variants)
-    control = variants[-1]
+    control = next(v for v in variants if v.name == "market_only")
     assert control.market_only is True and control.min_edge == 0.03
+    assert [v.placebo for v in variants if v.placebo] == ["random", "favourite"]
 
 
 def test_report_and_log_line_are_json(tmp_path):

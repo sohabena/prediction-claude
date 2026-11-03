@@ -18,7 +18,6 @@ from dataclasses import dataclass, fields
 from datetime import datetime, timedelta
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
-from backtesting.report import bootstrap_ci
 from rl.graduation import GraduationEvaluator
 from scraper.match_filter import is_simulated_name
 from shared.constants import (
@@ -30,7 +29,7 @@ from shared.constants import (
     TRUST_STATE_PATH,
 )
 from shared.logging import setup_logging
-from shared.metrics import clv_prob, max_drawdown, per_match_pnl, portfolio_clv, selection_of, side_of
+from shared.metrics import cluster_bootstrap, clv_prob, max_drawdown, per_match_pnl, selection_of, side_of
 from strategy.signals import Signal, SignalBus
 
 logger = setup_logging("strategy_trust")
@@ -203,13 +202,22 @@ def trust_metrics(
     real = [b for b in annotated if include_simulated or b.get("is_real", True)]
     settled = [b for b in real if b.get("settled_at") is not None and b.get("profit_loss") is not None]
 
+    # S84: every interval resamples matches (a match's bets move together), not bets.
     clv_rows = [b for b in settled if b.get("reference_clv") is not None]
-    clv = portfolio_clv(clv_rows, field="reference_clv", n_bootstrap=n_bootstrap)
+    clv = cluster_bootstrap(
+        [float(b["reference_clv"]) for b in clv_rows],
+        [str(b["match_id"]) for b in clv_rows],
+        n_boot=n_bootstrap,
+    )
+    clv_ci_lower: Optional[float] = None
+    if len(clv_rows) >= _MIN_BOOTSTRAP_N:
+        clv_ci_lower = _nan_to_none(clv["ci_lower"])
 
-    pnl_values = list(per_match_pnl(settled).values())
+    pnl_by_match = per_match_pnl(settled)
     pnl_ci_upper: Optional[float] = None
-    if len(pnl_values) >= _MIN_BOOTSTRAP_N:
-        pnl_ci_upper = float(bootstrap_ci(pnl_values, n_bootstrap=n_bootstrap)["ci_upper"])
+    if len(pnl_by_match) >= _MIN_BOOTSTRAP_N:
+        per_match = cluster_bootstrap(list(pnl_by_match.values()), list(pnl_by_match.keys()), n_boot=n_bootstrap)
+        pnl_ci_upper = _nan_to_none(per_match["ci_upper"])
 
     drawdown: Optional[float] = None
     if allocated_bankroll > 0:
@@ -229,12 +237,12 @@ def trust_metrics(
     return {
         "bet_volume": float(len(settled)),
         "min_matches": float(len({b["match_id"] for b in settled})),
-        "clv_ci_lower": _nan_to_none(clv["ci95_lower"]),
+        "clv_ci_lower": clv_ci_lower,
         "pnl_per_match_ci_upper": pnl_ci_upper,
         "max_drawdown": drawdown,
         "missed_rate": missed_rate,
         "reference_clv_n": float(len(clv_rows)),
-        "reference_clv_mean": _nan_to_none(clv["mean_clv"]),
+        "reference_clv_mean": _nan_to_none(clv["estimate"]),
         "lotusbook_clv_mean": (sum(clv_lotus) / len(clv_lotus)) if clv_lotus else None,
     }
 

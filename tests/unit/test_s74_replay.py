@@ -102,12 +102,14 @@ def _history(extra_future=False):
 
 
 class TimedProbability:
-    """Stands in for ProbabilityService: the model flips between a strong home and a strong away view every 5 min."""
+    """Stands in for ProbabilityService: the model flips between a strong home and a strong away view every 5 min.
+
+    Reported as the in-play source, so in-play decisions are allowed new risk (S83)."""
 
     def estimate(self, match, book, state=None, *, as_of):
         slot = int((as_of - T0).total_seconds()) // 300
         p_model = 0.7 if slot % 2 == 0 else 0.3
-        return Estimate(p_model=p_model, p_market=band_prob_home(book), source="prematch", has_model=True,
+        return Estimate(p_model=p_model, p_market=band_prob_home(book), source="inplay", has_model=True,
                         features={}, reason="")
 
 
@@ -346,6 +348,10 @@ class NaiveFeed:
             if r["match_id"] in match_ids and r["completed_at"] <= self.now:
                 out[r["match_id"]] = dict(r)
         return out
+
+    async def size_rows(self, match_ids, since, now):
+        # S87: this history has no match-page sizes, so both sides see none (no size known: the unknown-size cap)
+        return []
 
 
 @pytest.mark.asyncio

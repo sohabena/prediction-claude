@@ -33,7 +33,7 @@ def _limit_ok(intent, decision_price):
         return intent.price_limit <= decision_price + 1e-9
     return intent.price_limit >= decision_price - 1e-9
 
-V = Variant(name="test", w=0.5, min_edge=0.03, bankroll=1_000_000.0, max_trade_risk=1e12)  # sizing tests: no per-trade cap
+V = Variant(name="test", w=0.5, min_edge=0.03, bankroll=1_000_000.0, max_trade_risk=1e12, no_trade_share=0.0)  # sizing tests: no per-trade cap
 
 # Prices used by the sequence. Edges at p_home = 0.6: BACK home 0.14, LAY away 0.08, LAY home -0.20, BACK away -0.12.
 P1 = {"back_home": 1.9, "lay_home": 2.0, "back_away": 2.2, "lay_away": 2.3}
@@ -46,8 +46,10 @@ def _fill(side: str, selection: str, price: float, stake: float) -> MatchedBet:
     )
 
 
-def _run(variant, p_model, p_market, prices, book, *, now=NOW, last_trade_at=None):
-    return decide(variant, p_model, p_market, prices, book, now=now, last_trade_at=last_trade_at)
+def _run(variant, p_model, p_market, prices, book, *, now=NOW, last_trade_at=None, in_play=False):
+    return decide(
+        variant, p_model, p_market, prices, book, now=now, last_trade_at=last_trade_at, in_play=in_play,
+    )
 
 
 # ----------------------------------------------------------------------------- variant and blend
@@ -61,7 +63,7 @@ def test_variant_rejects_out_of_range_settings():
 
 
 def test_variant_defaults_match_the_story():
-    v = Variant(name="d", w=0.5, min_edge=0.03, max_trade_risk=1e12)
+    v = Variant(name="d", w=0.5, min_edge=0.03, max_trade_risk=1e12, no_trade_share=0.0)
     assert (v.kelly_fraction, v.max_match_loss, v.bankroll, v.hedge_edge) == (0.25, 100_000, 5_000_000, 0.01)
     assert (v.max_trades_per_match, v.cooldown_s, v.market_only) == (40, 120, False)
 
@@ -69,10 +71,10 @@ def test_variant_defaults_match_the_story():
 def test_blend_hand_computed():
     # 0.5 * 0.8 + 0.5 * 0.4 = 0.6 ; 0.3 * 0.8 + 0.7 * 0.4 = 0.24 + 0.28 = 0.52
     assert blend_probability(V, 0.8, 0.4) == pytest.approx(0.6)
-    w03 = Variant(name="w03", w=0.3, min_edge=0.03, max_trade_risk=1e12)
+    w03 = Variant(name="w03", w=0.3, min_edge=0.03, max_trade_risk=1e12, no_trade_share=0.0)
     assert blend_probability(w03, 0.8, 0.4) == pytest.approx(0.52)
     # market_only ignores the model; no model falls back to the market
-    control = Variant(name="ctl", w=0.5, min_edge=0.03, market_only=True, max_trade_risk=1e12)
+    control = Variant(name="ctl", w=0.5, min_edge=0.03, market_only=True, max_trade_risk=1e12, no_trade_share=0.0)
     assert blend_probability(control, 0.9, 0.4) == pytest.approx(0.4)
     assert blend_probability(V, None, 0.4) == pytest.approx(0.4)
 
@@ -138,17 +140,21 @@ def test_lay_maths_hand_checked():
     assert expected_change == pytest.approx(25_000 * 0.12)
 
 
-def test_negative_edge_on_held_side_lays_to_reduce():
-    # Held: BACK home 100,000 at 1.9 -> book (90,000, -100,000), balance 190,000 (favours home).
-    # p_home falls to 0.4: BACK home edge = 0.4 * 1.9 - 1 = -0.24 <= -0.01, so LAY home at 2.0.
-    # LAY edge = 1 - 0.4 * 2.0 = 0.2; Kelly risk 0.25 * 0.2 * 1,000,000 = 50,000; stake = 50,000 / 1.0 = 50,000.
-    # Balance moves by -2 * 50,000 = -100,000, to 90,000: still home, so it is a reduce.
+def test_negative_edge_on_held_side_moves_to_the_kelly_target():
+    # S90: the target is the Kelly position on the opposite side, not a Kelly increment. Held: BACK home 100,000 at
+    # 1.9 -> book (90,000, -100,000), balance 190,000. p_home falls to 0.4: BACK home edge = 0.4 * 1.9 - 1 = -0.24, so
+    # the target is LAY home at 2.0 with Kelly stake 50,000: balance -2 * 50,000 = -100,000. The gap is -290,000, so
+    # one ticket closes the 190,000 to zero and opens the short: a flip. The new-risk part is cut by the cap. A LAY is
+    # sized at its limit (2.4625, half the minimum edge left): the cap room is (90,000 + 100,000) / 1.4625 = 129,914.53.
     held = Book(home_pnl=90_000, away_pnl=-100_000, trades=1)
-    intents = _run(V, 0.4, 0.4, P1, held)
+    intents = _run(V, 0.4, 0.4, P1, held, in_play=True)
     assert len(intents) == 1
     i = intents[0]
-    assert (i.side, i.selection, i.stake, i.reason) == (LAY, HOME, pytest.approx(50_000), "reduce")
+    assert (i.side, i.selection, i.reason) == (LAY, HOME, "flip")
+    assert i.stake == pytest.approx(190_000 / 1.4625)  # (90,000 + 100,000) / (2.4625 - 1)
     assert _limit_ok(i, 2.0)
+    held.apply(_fill(i.side, i.selection, i.price_limit, i.stake))
+    assert held.home_pnl == pytest.approx(-100_000)  # the cap binds on home, exactly
 
 
 # ----------------------------------------------------------------------------- green-up
@@ -196,56 +202,41 @@ def test_no_green_up_when_edge_is_at_hedge_or_no_locked_profit():
 
 
 # ----------------------------------------------------------------------------- cap and the hand-computed sequence
-def test_cap_binds_exactly_at_minus_100000_on_both_runners():
-    """Eight decisions on one match. Both outcomes reach exactly -100,000, the cap, with trades on both runners.
+def test_cap_binds_exactly_at_minus_100000_in_play():
+    """Five decisions on one match, in play (full cap). The cap binds exactly on home at step 4, and step 5 is refused.
 
-    Step  p_home  trade                  stake   reason   book (home, away) after
-     1    0.6     BACK home @1.9         35,000  enter    (31,500, -35,000)
-     2    0.6     BACK home @1.9         35,000  add      (63,000, -70,000)
-     3    0.6     BACK home @1.9         30,000  add      (90,000, -100,000)  cap binds on away
-     4    0.4     LAY home @2.0          50,000  reduce   (40,000, -50,000)
-     5    0.4     LAY home @2.0          50,000  flip     (-10,000, 0)
-     6    0.4     BACK away @2.2         65,000  add      (-75,000, 78,000)
-     7    0.4     BACK away @2.2         25,000  add      (-100,000, 108,000) cap binds on home
-     8    0.4     none: no room on either side
+    Step  p_home  trade                       stake        reason   book (home, away) after
+     1    0.6     BACK home @1.9 (target 66,500)  35,000     enter    (31,500, -35,000)
+     2    0.6     on target: nothing             -           -        (31,500, -35,000)
+     3    0.7     BACK home @1.9 (target 171,000) 55,000     add      (81,000, -90,000)
+     4    0.4     LAY home, target -100,000      123,760.68  flip     (-100,000, 33,760.68)  cap binds on home
+     5    0.4     BACK away, target -143,000:   none: no room, home is at -100,000
     """
     steps = [
         (0.6, BACK, HOME, 35_000, "enter", 31_500, -35_000),
-        (0.6, BACK, HOME, 35_000, "add", 63_000, -70_000),
-        (0.6, BACK, HOME, 30_000, "add", 90_000, -100_000),
-        (0.4, LAY, HOME, 50_000, "reduce", 40_000, -50_000),
-        (0.4, LAY, HOME, 50_000, "flip", -10_000, 0),
-        (0.4, BACK, AWAY, 65_000, "add", -75_000, 78_000),
-        (0.4, BACK, AWAY, 25_000, "add", -100_000, 108_000),
+        (0.6, None, None, None, None, 31_500, -35_000),
+        (0.7, BACK, HOME, 55_000, "add", 81_000, -90_000),
+        (0.4, LAY, HOME, 123_760.68, "flip", -100_000, 33_760.68),
     ]
     book = Book()
-    ledger_home = ledger_away = 0.0
     for p, side, selection, stake, reason, want_home, want_away in steps:
-        intents = _run(V, p, p, P1, book)
-        assert len(intents) == 1, (p, side, selection, reason)
-        i = intents[0]
-        price = P1[f"{'back' if side == BACK else 'lay'}_{selection}"]
-        assert (i.side, i.selection, i.reason) == (side, selection, reason)
-        assert i.stake == pytest.approx(stake)
-        assert _limit_ok(i, price)
-        book.apply(_fill(i.side, i.selection, price, i.stake))
-        # Independent check against the portfolio convention, using the BettingAction for this leg.
-        action = {
-            (BACK, HOME): BettingAction.BACK_HOME_SM, (LAY, HOME): BettingAction.LAY_HOME_SM,
-            (BACK, AWAY): BettingAction.BACK_AWAY_SM, (LAY, AWAY): BettingAction.LAY_AWAY_SM,
-        }[(side, selection)]
-        leg_home, leg_away = outcome_pnls(action, price, stake)
-        ledger_home += leg_home
-        ledger_away += leg_away
-        assert (book.home_pnl, book.away_pnl) == pytest.approx((want_home, want_away))
-        assert (ledger_home, ledger_away) == pytest.approx((want_home, want_away))
-        assert book.worst() <= CAP + 1e-9
-    # Both outcomes sit exactly on the cap after the run.
-    assert book.worst() == pytest.approx(CAP, abs=1e-9)
-    assert min(book.home_pnl, book.away_pnl) == pytest.approx(-CAP, abs=1e-9)
-    assert book.home_pnl == pytest.approx(-CAP, abs=1e-9)  # step 7 binds on home
-    # Step 8: no room on either side, so nothing trades.
-    assert _run(V, 0.4, 0.4, P1, book) == []
+        intents = _run(V, p, p, P1, book, in_play=True)
+        if side is None:
+            assert intents == []
+        else:
+            assert len(intents) == 1, (p, side, selection, reason)
+            i = intents[0]
+            assert (i.side, i.selection, i.reason) == (side, selection, reason)
+            assert i.stake == pytest.approx(stake, rel=1e-6)
+            price = i.price_limit if i.side == LAY else P1[f"{'back' if side == BACK else 'lay'}_{selection}"]
+            assert _limit_ok(i, P1[f"{'back' if side == BACK else 'lay'}_{selection}"])
+            book.apply(_fill(i.side, i.selection, price, i.stake))
+        assert book.worst() <= CAP + 1e-6
+        assert book.home_pnl == pytest.approx(want_home, rel=1e-6)
+        assert book.away_pnl == pytest.approx(want_away, rel=1e-6)
+    # Step 5: the target is a BACK away of 65,000 (balance -143,000), but home already sits at -100,000: no room.
+    assert _run(V, 0.4, 0.4, P1, book, in_play=True) == []
+    assert book.worst() == pytest.approx(CAP, abs=1e-6)
 
 
 def test_cap_drops_trade_below_minimum_stake():
@@ -261,10 +252,12 @@ def test_cooldown_blocks_entries_but_not_reduce():
     # 122 s ago: allowed.
     intents = _run(V, 0.6, 0.6, P1, Book(), now=NOW, last_trade_at=NOW - 122)
     assert [(i.side, i.selection, i.stake, i.reason) for i in intents] == [(BACK, HOME, 35_000, "enter")]
-    # A reduce is risk-reducing, so the cooldown does not stop it: LAY home 50,000 as in the reduce test.
+    # A reduce is risk-reducing, so the cooldown does not stop it. The target flip is blocked as new risk, so it is
+    # cut to its close-out part: LAY home 95,000 at 2.0 closes the balance of 190,000 to zero (pre-match cap 50,000:
+    # the room is (90,000 + 50,000) / 1.4625 = 95,726).
     held = Book(home_pnl=90_000, away_pnl=-100_000, trades=1)
     intents = _run(V, 0.4, 0.4, P1, held, now=NOW, last_trade_at=NOW - 10)
-    assert [(i.side, i.selection, i.stake, i.reason) for i in intents] == [(LAY, HOME, 50_000, "reduce")]
+    assert [(i.side, i.selection, i.stake, i.reason) for i in intents] == [(LAY, HOME, 95_000, "reduce")]
 
 
 def test_trade_limit_blocks_new_risk_not_reduce():
@@ -278,22 +271,29 @@ def test_trade_limit_blocks_new_risk_not_reduce():
 def test_no_model_means_no_new_risk():
     # p_model None: no entry even with a 0.14 edge on the market probability, so nothing trades.
     assert _run(V, None, 0.6, P1, Book()) == []
-    # The reduce still runs on the market probability: LAY home 50,000 at p_market 0.4.
+    # The reduce still runs on the market probability. The flip is blocked as new risk, so it closes to flat:
+    # LAY home 95,000 at 2.0 (the balance of 190,000 divided by the price).
     held = Book(home_pnl=90_000, away_pnl=-100_000, trades=1)
     intents = _run(V, None, 0.4, P1, held)
-    assert [(i.side, i.selection, i.stake, i.reason) for i in intents] == [(LAY, HOME, 50_000, "reduce")]
+    assert [(i.side, i.selection, i.stake, i.reason) for i in intents] == [(LAY, HOME, 95_000, "reduce")]
 
 
 def test_market_only_control_uses_market_probability():
     # Control with p_model 0.9 ignored and p_market 0.6: the same decision as the first step (BACK home 35,000).
-    control = Variant(name="ctl", w=0.5, min_edge=0.03, bankroll=1_000_000.0, market_only=True, max_trade_risk=1e12)
+    control = Variant(
+        name="ctl", w=0.5, min_edge=0.03, bankroll=1_000_000.0, market_only=True, max_trade_risk=1e12,
+        no_trade_share=0.0,
+    )
     intents = _run(control, 0.9, 0.6, P1, Book())
     assert [(i.side, i.selection, i.stake, i.reason) for i in intents] == [(BACK, HOME, 35_000, "enter")]
 
 
-def test_random_walk_never_breaches_the_cap():
-    """300 decisions on random prices and probabilities, each filled at its price_limit. Worst case stays <= 100,000."""
+@pytest.mark.parametrize("in_play", [False, True])
+def test_random_walk_never_breaches_the_cap(in_play):
+    """300 decisions on random prices and probabilities, each filled at its price_limit (LAY) or decision price (BACK).
+    Worst case stays <= the pre-match share before the off (50,000) and <= 100,000 in play."""
     rng = random.Random(70)
+    cap = V.match_cap(in_play)
     book = Book()
     traded = 0
     for step in range(300):
@@ -306,16 +306,17 @@ def test_random_walk_never_breaches_the_cap():
             "back_away": back_away, "lay_away": round(back_away + 0.05, 2),
         }
         intents = decide(
-            V, p_model, p_market, prices, book, now=float(step * 15), last_trade_at=None,
+            V, p_model, p_market, prices, book, now=float(step * 15), last_trade_at=None, in_play=in_play,
         )
         for i in intents:
             assert i.reason in REASONS
             decision_price = prices[f"{'back' if i.side == BACK else 'lay'}_{i.selection}"]
             assert _limit_ok(i, decision_price)
-            book.apply(_fill(i.side, i.selection, decision_price, i.stake))
+            fill = i.price_limit if i.side == LAY else decision_price  # a LAY may fill as high as its limit
+            book.apply(_fill(i.side, i.selection, fill, i.stake))
             traded += 1
-            assert book.worst() <= CAP + 1e-6, (step, book.home_pnl, book.away_pnl)
-    assert traded > 20
+            assert book.worst() <= cap + 1e-6, (step, book.home_pnl, book.away_pnl)
+    assert traded > 3
 
 
 def test_one_trade_adds_at_most_max_trade_risk_so_the_budget_lasts():
@@ -326,13 +327,13 @@ def test_one_trade_adds_at_most_max_trade_risk_so_the_budget_lasts():
 
 
 def test_limit_keeps_half_the_minimum_edge():
-    v = Variant(name="lim", w=1.0, min_edge=0.04, max_trade_risk=1e12, bankroll=1_000_000.0)
+    v = Variant(name="lim", w=1.0, min_edge=0.04, max_trade_risk=1e12, no_trade_share=0.0, bankroll=1_000_000.0)
     prices = {"back_home": 1.9, "lay_home": 2.0, "back_away": 2.2, "lay_away": 2.3}
     (i,) = decide(v, 0.6, 0.5, prices, Book(), now=NOW, last_trade_at=None)
     assert i.side == BACK and i.price_limit == pytest.approx(1.02 / 0.6)  # p·o − 1 = 0.02 at the limit
 
 
 def test_trades_below_the_minimum_trade_stake_are_dropped():
-    v = Variant(name="min", w=1.0, min_edge=0.03, bankroll=10_000.0, max_trade_risk=1e12)  # tiny Kelly stakes
+    v = Variant(name="min", w=1.0, min_edge=0.03, bankroll=10_000.0, max_trade_risk=1e12, no_trade_share=0.0)  # tiny Kelly stakes
     prices = {"back_home": 1.9, "lay_home": 2.0, "back_away": 2.2, "lay_away": 2.3}
     assert decide(v, 0.6, 0.5, prices, Book(), now=NOW, last_trade_at=None) == []

@@ -284,6 +284,8 @@ def _fake_steps(ds: dict, *, blend_predictions: str = "oracle", fail_step: str |
             (out / "latest.json").write_text(json.dumps({"usable_rows": len(ds["snapshots"]),
                                                          "rows_with_model": len(ds["snapshots"])}),
                                              encoding="utf-8")
+        elif script == "evaluate_inplay.py":
+            return 0  # S89, non-fatal step; its own tests cover the module
         elif script == "evaluate_models.py":
             dataset = ev.load_dataset(Path(arg("--dataset")))
             preds = [json.loads(line) for line in Path(arg("--predictions")).read_text(encoding="utf-8").splitlines()]
@@ -314,7 +316,8 @@ def test_full_run_promotes_a_blend_that_beats_the_market_and_links_prematch(tmp_
     assert registry.champion_version("prematch_t20") == rec["registered"]["prematch_t20"]
     assert registry.champion_version("prematch_odi") == rec["registered"]["prematch_odi"]
     assert "prematch/all" in registry.manifest("blend", "v0001")["gate_status"]["r1_pass"]
-    assert [s["step"] for s in rec["steps"]] == ["prematch_t20", "prematch_odi", "dataset", "blend", "gate", "register"]
+    assert [s["step"] for s in rec["steps"]] == ["prematch_t20", "prematch_odi", "dataset", "blend", "gate", "register",
+                                                 "inplay_eval"]
     saved = json.loads((tmp_path / "runs" / rec["run_id"] / "run.json").read_text(encoding="utf-8"))
     assert saved["status"] == "promoted"
 

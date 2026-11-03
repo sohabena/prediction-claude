@@ -27,7 +27,7 @@ from typing import Any, Iterable, Mapping, Optional, Sequence
 
 import numpy as np
 
-from shared.metrics import clv_prob
+from shared.metrics import MIN_CLUSTERS_FOR_CI, cluster_bootstrap, clv_prob
 from strategy.staking import select, stake
 from training import segments as seg
 from training.market import DEFAULT_DEVIG, market_prob_home
@@ -149,31 +149,21 @@ def calibration(p: np.ndarray, y: np.ndarray, n_bins: int = ECE_BINS) -> dict[st
 def _bootstrap(values: np.ndarray, group: np.ndarray, n_groups: int, mode: str) -> tuple[Optional[float], Optional[float], Optional[float]]:
     """Paired bootstrap resampling whole groups (matches) with replacement; 95% percentile interval.
 
-    ``mode="mean"`` returns the ratio of sums to counts (mean per row); ``mode="sum"`` returns the total.
-    Groups with no rows still take part in the resampling, so the interval reflects every held-out match.
+    ``mode="mean"`` returns the ratio of sums to counts (mean per row); ``mode="sum"`` returns the total. Delegates to
+    ``shared.metrics.cluster_bootstrap`` (S84). Groups with no rows still take part in the resampling, so the interval
+    reflects every held-out match. None where the statistic or its interval cannot be formed.
     """
     if n_groups == 0:
         return None, None, None
-    sums = np.bincount(group, weights=values, minlength=n_groups) if values.size else np.zeros(n_groups)
-    counts = np.bincount(group, minlength=n_groups).astype(float) if values.size else np.zeros(n_groups)
-    total_sum, total_count = float(sums.sum()), float(counts.sum())
-    if mode == "sum":
-        point = total_sum
-    else:
-        point = total_sum / total_count if total_count > 0 else None
-    rng = np.random.default_rng(BOOT_SEED)
-    draws = rng.integers(0, n_groups, size=(N_BOOT, n_groups))
-    s = sums[draws].sum(axis=1)
-    if mode == "sum":
-        stats = s
-    else:
-        c = counts[draws].sum(axis=1)
-        with np.errstate(invalid="ignore", divide="ignore"):
-            stats = np.where(c > 0, s / np.where(c > 0, c, 1.0), np.nan)
-    if np.all(np.isnan(stats)):
-        return point, None, None
-    lo, hi = np.nanpercentile(stats, [2.5, 97.5])
-    return point, float(lo), float(hi)
+    statistic = "sum_per_cluster" if mode == "sum" else "mean"
+    res = cluster_bootstrap(
+        values, group, statistic=statistic, n_boot=N_BOOT, seed=BOOT_SEED, population=range(n_groups),
+    )
+
+    def _opt(x: Any) -> Optional[float]:
+        return None if x is None or math.isnan(float(x)) else float(x)
+
+    return _opt(res["estimate"]), _opt(res["ci_lower"]), _opt(res["ci_upper"])
 
 
 # --------------------------------------------------------------------------- evaluation rows
@@ -526,15 +516,16 @@ def render_markdown(report: Mapping[str, Any]) -> str:
             f"Rows {cov['rows']}, matches {cov['matches']}, bets {cov['bets']}. "
             f"Binding close: {BINDING_CLOSE[arena]}.",
             "",
-            "| segment | matches | rows | source-market log loss diff [95% CI] | R1 | bets | CLV per bet [95% CI] "
-            "| simulated P&L [95% CI] | R2 |",
+            "| segment | matches | rows | source-market log loss diff [95% CI] | R1 | bets | CLV per bet, match-clustered [95% CI] "
+            "| simulated P&L, match-clustered [95% CI] | R2 |",
             "|---|---|---|---|---|---|---|---|---|",
         ]
         for gate in [g for g in report["results"] if g["arena"] == arena]:
+            too_few = " (too few matches)" if gate["matches"] < MIN_CLUSTERS_FOR_CI else ""
             lines.append(
                 f"| {gate['segment']} | {gate['matches']} | {gate['rows']} | {_fmt_ci(gate['r1']['logloss_diff'])} "
-                f"| {_gate_text(gate['r1'])} | {gate['r2']['bets']} | {_fmt_ci(gate['r2']['clv_per_bet'])} "
-                f"| {_fmt_ci(gate['r2']['pnl_total'], 2)} | {_gate_text(gate['r2'])} |"
+                f"| {_gate_text(gate['r1'])} | {gate['r2']['bets']} | {_fmt_ci(gate['r2']['clv_per_bet'])}{too_few} "
+                f"| {_fmt_ci(gate['r2']['pnl_total'], 2)}{too_few} | {_gate_text(gate['r2'])} |"
             )
         lines.append("")
     lines += [

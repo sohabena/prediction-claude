@@ -61,6 +61,9 @@ COPY scripts/run_paper_trader.py /app/scripts/run_paper_trader.py
 COPY scripts/paper_report.py /app/scripts/paper_report.py
 COPY scripts/set_result.py /app/scripts/set_result.py
 COPY scripts/replay_paper.py /app/scripts/replay_paper.py
+COPY scripts/paper_dashboard.py /app/scripts/paper_dashboard.py
+COPY scripts/evaluate_inplay.py /app/scripts/evaluate_inplay.py
+COPY scripts/backfill_actual_start.py /app/scripts/backfill_actual_start.py
 
 # Create non-root user; logs/ is bind-mounted from the host so heartbeats are visible there
 RUN useradd --create-home phoenix && mkdir -p /app/logs && chown -R phoenix /app/logs

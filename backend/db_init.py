@@ -145,6 +145,15 @@ MIGRATION_STATEMENTS = [
        ADD COLUMN IF NOT EXISTS toss_winner TEXT,
        ADD COLUMN IF NOT EXISTS toss_decision TEXT,
        ADD COLUMN IF NOT EXISTS score_pipeline TEXT""",
+    # S86: when the match actually started (set once, first signal wins) and the signal that set it (nullable).
+    """ALTER TABLE match_training_status
+       ADD COLUMN IF NOT EXISTS actual_start_time TIMESTAMPTZ,
+       ADD COLUMN IF NOT EXISTS actual_start_source TEXT""",
+    # S87: a fill cut to the size shown keeps the asked stake here (stake holds the filled stake), and fill_note says
+    # why it was cut or capped (size_capped, size_unknown, size_zero). Nullable: rows before S87 have neither.
+    """ALTER TABLE paper_bets
+       ADD COLUMN IF NOT EXISTS stake_asked DOUBLE PRECISION,
+       ADD COLUMN IF NOT EXISTS fill_note TEXT""",
 ]
 
 INDEX_STATEMENTS = [
@@ -186,7 +195,10 @@ VIEW_STATEMENTS = [
                'match_page'::text AS source
         FROM market_ticks m
         JOIN registry r ON r.match_id = m.match_id
-        WHERE m.market_type = 'match_odds' AND m.source = 'lotusbook'
+        -- One canonical market: a real match also has a bookmaker match-odds market, stored as
+        -- 'match_odds#<id>'; mixing the two made the book flip between them row by row (2026-11-03).
+        -- The plain 'match_odds' market is the one the listing shows.
+        WHERE m.market_type = 'match_odds' AND m.market_name = 'match_odds' AND m.source = 'lotusbook'
         GROUP BY m.match_id, m.time, r.home_key, r.away_key
     ),
     all_rows AS (

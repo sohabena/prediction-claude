@@ -38,7 +38,9 @@ class PaperBet(Base):
 
     price_limit: Mapped[float | None] = mapped_column(Float, nullable=True)
     price_filled: Mapped[float | None] = mapped_column(Float, nullable=True)
-    stake: Mapped[float] = mapped_column(Float, nullable=False)
+    stake: Mapped[float] = mapped_column(Float, nullable=False)  # the filled stake (cut to the size shown, S87)
+    stake_asked: Mapped[float | None] = mapped_column(Float, nullable=True)  # S87: the stake asked at decision
+    fill_note: Mapped[str | None] = mapped_column(String, nullable=True)  # S87: size_capped | size_unknown | size_zero
     liability: Mapped[float | None] = mapped_column(Float, nullable=True)
     reason: Mapped[str] = mapped_column(String, nullable=False, default="")
 

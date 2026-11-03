@@ -166,15 +166,19 @@ Details: `docs/architecture/paper-trading.md`, stories S69–S73.
 Measures that decide money come first. Others are diagnostics, and row counts are not on the scorecard. Why, and the
 full ranking: `docs/architecture/value-focused-plan.md`.
 
-| Pillar | Measure | Now (2026-11-03) | Target |
+| Pillar | Measure | Now (2026-11-03, dry-run of the report) | Target |
 |---|---|---|---|
-| Refinement | Best variant's CLV in excess of a placebo, match-clustered 95% CI lower bound | not measured yet (S84, S85) | > 0, pre-match and in-play apart |
-| Data | Settled real matches with a tradable book | 8 | 30 for R3; 200 per segment for R1 |
+| Refinement | CLV excess over placebo_random, match-clustered 95% CI lower bound, pre-match and in-play apart | No excess interval yet: placebo_random has no settled CLV bets, so no segment has a CI (0 matches) | > 0 on at least 10 matches, per segment |
+| Data | Settled real matches with a tradable book | 8 (9 settled real matches in all; 8 settled in the last 7 days) | 30 for R3; 200 per segment for R1 |
 | Data | Real matches older than 12 h with a correct result | all but 1 | 100% |
-| Refinement | Fill realism: stake within the size shown | not measured yet (S87) | every fill |
-| Training | Log loss vs the market on matches with a pre-match price (R1) | insufficient (8 matches) | better, in at least one segment |
-| Training | In-play bets priced without a live score | 204 in replay | 0 (S83) |
-| Data | Diagnostic: real recorded matches with a strength-model view | 7 of 19 | > 70% |
+| Refinement | Fill realism: stake within the size shown | Live size cap OFF until the size unit is verified; stake fill rate 72% to 85% on the fills as made, so not yet a test | every fill, with the cap on |
+| Refinement | R3 progress, per variant (matches, then bets) | 1 of 30 matches; 6 to 17 of 300 settled bets | 30 matches and 300 bets, CLV CI lower bound > 0 |
+| Training | R1: log loss vs the market on matches with a pre-match price | 3 of 200 matches (a pre-match price and a decided win) | 200 per segment, then better than the market |
+| Training | R2: held-out matches on real prices (settled, tradable, after the model cut-off 2026-10-25) | 8 of 150 | 150 held-out matches, then CI above zero |
+| Training | In-play bets priced by the pre-match model | 29 live rows, all decided 10:24 to 11:00 UTC, none since (204 in the S74 replay) | 0 (S83) |
+| Refinement | Worst case per match against the 100,000 cap | 4 of 6 strategy variants have one match over the cap (largest 100,594) | never over the cap |
+| Refinement | Trades per match against the 30-ticket budget | one match over budget (w03_e06, 37 trades) | no match over budget |
+| Data | Diagnostic: rated-match share of the paper ledger | 2 of 3 matches (67%) | > 70% |
 | Goal | Real-money profit | not started | positive after R3 and the operator's go-ahead |
 
 ## Operator decisions on record

@@ -175,7 +175,12 @@ def test_market_as_source_has_exactly_zero_difference():
     for res in report["results"]:
         diff = res["r1"]["logloss_diff"]
         if res["matches"]:
-            assert diff == {"point": 0.0, "lo": 0.0, "hi": 0.0}
+            assert diff["point"] == 0.0
+            # S84: an interval needs at least two matches to resample; a one-match segment has none (not [0, 0]).
+            if res["matches"] >= 2:
+                assert (diff["lo"], diff["hi"]) == (0.0, 0.0)
+            else:
+                assert diff["lo"] is None and diff["hi"] is None
             assert res["source"]["logloss"] == res["market"]["logloss"]
 
 

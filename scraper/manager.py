@@ -19,6 +19,7 @@ from playwright.async_api import Browser, BrowserContext, Playwright, async_play
 from features.data_quality import TickValidator
 from features.extractors.category_features import MatchCategoryClassifier, MatchTier
 from scraper.live_match_tracker import LiveMatchTracker
+from scraper.actual_start import SOURCE_JSON_IN_PLAY, SOURCE_LISTING_LIVE, SOURCE_SCORE_FIRST_BALL, is_first_ball
 from scraper.match_filter import MatchClassifier, is_simulated_name
 from scraper.lotus_result_detector import LotusResultDetector
 from scraper.market_pages import (
@@ -158,6 +159,10 @@ class ScraperManager:
         self._score_pipeline_by_match: dict[str, str] = {}
         self._score_result_sent: set[str] = set()
         self._toss_written: set[str] = set()
+        # S86: matches whose actual start is settled in this process (a write was attempted), and True once the
+        # registry has no actual_start columns (migration not applied): then nothing more is attempted.
+        self._actual_start_done: set[str] = set()
+        self._actual_start_unavailable = False
 
     async def start(self) -> None:
         """Start the scraper manager: launch browser, begin scraping."""
@@ -417,6 +422,8 @@ class ScraperManager:
             current_batch_ids.add(event.match_id)
             if event.is_live:
                 live_batch_ids.add(event.match_id)
+                # S86: the listing's live badge is a start signal (first one wins; see scraper/actual_start.py)
+                await self._set_actual_start_once(event.match_id, SOURCE_LISTING_LIVE, now)
 
             # Result detection runs for every recorded match, SRL included; the detector never publishes
             # simulated results (S50).
@@ -922,6 +929,10 @@ class ScraperManager:
         ) -> None:
             await self._on_market_score(store["events"].get(match_id, event), state, pipeline, observed_at)
 
+        async def on_in_play(match_id: str, observed_at: datetime) -> None:
+            # S86: the market JSON's inPlay flag is the first start signal (first one wins)
+            await self._set_actual_start_once(match_id, SOURCE_JSON_IN_PLAY, observed_at)
+
         worker = MarketPageWorker(
             match_id=mid,
             page=page,
@@ -931,6 +942,7 @@ class ScraperManager:
             on_meta=on_meta,
             on_settled=self._on_market_settled,
             on_score=on_score,
+            on_in_play=on_in_play,
         )
         worker.seed(await self._last_market_state(mid))
         self._market_stops[mid] = stop
@@ -1090,6 +1102,10 @@ class ScraperManager:
         if state is None:
             return
 
+        # S86: the score feed's first ball of the first innings is a start signal (first one wins)
+        if is_first_ball(state.innings, state.balls):
+            await self._set_actual_start_once(match_id, SOURCE_SCORE_FIRST_BALL, observed_at)
+
         row = to_context_row(state, match_id, event.team_home, event.team_away, observed_at=observed_at)
         if row is not None:
             await self._store_score_row(row)
@@ -1161,6 +1177,49 @@ class ScraperManager:
             return False
         if written:
             logger.info("toss_recorded", match_id=match_id, winner=winner, decision=decision)
+        return written
+
+    async def _set_actual_start_once(self, match_id: str, source: str, when: datetime) -> bool:
+        """S86: write ``actual_start_time`` and ``actual_start_source`` once, while the column is still NULL.
+
+        The guard is in the UPDATE, so the first signal wins across restarts as well. A database without the S86
+        migration is logged once and nothing more is attempted (the recording itself does not depend on it). Any
+        other error is logged and retried on the next signal. True when this call wrote the row.
+        """
+        # State is read through __dict__ so a manager built without __init__ (test doubles) still works.
+        done: set[str] = self.__dict__.setdefault("_actual_start_done", set())
+        if match_id in done or self.__dict__.get("_actual_start_unavailable", False):
+            return False
+        from sqlalchemy import text
+
+        try:
+            async with get_session() as session:
+                result = await session.execute(
+                    text(
+                        """
+                        UPDATE match_training_status
+                           SET actual_start_time = :when, actual_start_source = :source
+                         WHERE match_id = :mid AND actual_start_time IS NULL
+                        """
+                    ),
+                    {"when": when, "source": source, "mid": match_id},
+                )
+                written = (getattr(result, "rowcount", 0) or 0) > 0
+        except Exception as e:
+            message = str(e)
+            if "actual_start" in message and "does not exist" in message:
+                self.__dict__["_actual_start_unavailable"] = True
+                logger.warning(
+                    "actual_start_columns_missing",
+                    error=message[:200],
+                    detail="S86 migration not applied: actual start is not recorded",
+                )
+            else:
+                logger.error("actual_start_db_error", match_id=match_id, source=source, error=message[:200])
+            return False
+        done.add(match_id)
+        if written:
+            logger.info("actual_start_recorded", match_id=match_id, source=source, when=when.isoformat())
         return written
 
     async def _store_market_records(self, match_id: str, records: list[MarketRecord]) -> None:

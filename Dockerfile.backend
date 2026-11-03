@@ -30,8 +30,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy installed packages from builder
 COPY --from=builder /install /usr/local
 
-# Copy application code
+# Copy application code (features/ is imported at start-up by backend/services)
 COPY shared/ /app/shared/
+COPY features/ /app/features/
 COPY backend/ /app/backend/
 
 # Create non-root user

@@ -51,6 +51,16 @@ REGISTRY_SQL = (
     "SELECT match_id, team_home, team_away, competition, training_status, match_start_time, is_simulated "
     "FROM match_training_status"
 )
+# S86: the registry adds actual_start_time when the column exists (migration applied); otherwise the old query runs
+# and every match falls back to match_start_time.
+REGISTRY_ACTUAL_START_SQL = (
+    "SELECT match_id, team_home, team_away, competition, training_status, match_start_time, is_simulated, "
+    "actual_start_time FROM match_training_status"
+)
+ACTUAL_START_COLUMN_SQL = (
+    "SELECT EXISTS (SELECT 1 FROM information_schema.columns "
+    "WHERE table_name = 'match_training_status' AND column_name = 'actual_start_time')"
+)
 PRICES_SQL = (
     "SELECT match_id, time, back_home, lay_home, back_away, lay_away, source "
     "FROM v_match_odds ORDER BY match_id, time"
@@ -100,7 +110,9 @@ async def _read_database() -> tuple[list[dict], list[dict], list[dict], Optional
     try:
         async with get_session() as session:
             await session.execute(text("SET TRANSACTION READ ONLY"))
-            registry = [dict(r._mapping) for r in (await session.execute(text(REGISTRY_SQL))).fetchall()]
+            has_actual = bool((await session.execute(text(ACTUAL_START_COLUMN_SQL))).scalar())
+            registry_sql = REGISTRY_ACTUAL_START_SQL if has_actual else REGISTRY_SQL
+            registry = [dict(r._mapping) for r in (await session.execute(text(registry_sql))).fetchall()]
             prices = [dict(r._mapping) for r in (await session.execute(text(PRICES_SQL))).fetchall()]
             results = [dict(r._mapping) for r in (await session.execute(text(RESULTS_SQL))).fetchall()]
     finally:

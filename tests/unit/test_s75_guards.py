@@ -171,9 +171,10 @@ def test_guard_config_rejects_negative_settings():
 def test_lay_stake_keeps_the_worst_case_within_the_cap_at_its_limit_price():
     # A LAY bet's liability grows with its fill price, and the fill may be as high as its limit. Sized at the decision
     # price alone (2.10) the stake would put the worst case at about 133,000 if the fill came at the limit (2.4625).
-    variant = Variant("cap", w=0.0, min_edge=0.03, max_trade_risk=1e12, market_only=True)
+    # S90: no no-trade band here (it is 40% of max_trade_risk), and in play, so the full 100,000 cap applies.
+    variant = Variant("cap", w=0.0, min_edge=0.03, max_trade_risk=1e12, no_trade_share=0.0, market_only=True)
     prices = {"back_home": 2.0, "lay_home": 2.1, "back_away": 1.9, "lay_away": 2.0}
-    intents = decide(variant, None, 0.4, prices, Book(), now=NOW_TS, last_trade_at=None)
+    intents = decide(variant, None, 0.4, prices, Book(), now=NOW_TS, last_trade_at=None, in_play=True)
     assert len(intents) == 1
     intent = intents[0]
     assert (intent.side, intent.selection, intent.reason) == ("LAY", "home", "enter")
@@ -182,11 +183,19 @@ def test_lay_stake_keeps_the_worst_case_within_the_cap_at_its_limit_price():
 
 
 # ----------------------------------------------------------------------------- run_cycle: guards in the trader
-def _trader_feed(price_kwargs, start=T0 + timedelta(hours=2), price_time=T0 - s72.MIN):
+def _live_state(t):
+    """A fresh live score row, so an in-play decision is priced by the in-play path (S83)."""
+    return {"match_id": MID, "time": t, "is_live": True, "score": 80, "wickets": 2, "overs": 10.0, "innings": 1,
+            "balls_remaining": 60, "batting_team": "Alpha", "bowling_team": "Beta", "run_rate": 8.0,
+            "req_run_rate": None, "match_format": "T20", "status": "live"}
+
+
+def _trader_feed(price_kwargs, start=T0 + timedelta(hours=2), price_time=T0 - s72.MIN, context=()):
     return s72.FakeFeed(
         registry=[s72._registry(start=start)],
         prices=[s72._price(price_time, **price_kwargs)],
         last={MID: T0},
+        context=context,
     )
 
 
@@ -214,13 +223,14 @@ async def test_cycle_with_a_contradictory_book_has_no_market_probability_and_pla
 async def test_in_play_stale_book_refuses_new_risk_and_a_fresh_book_does_not():
     variants = pt.build_variants()
     in_play_start = T0 - timedelta(minutes=30)
-    stale = _trader_feed(s72._book_for(0.5), start=in_play_start, price_time=T0 - timedelta(seconds=90))
+    live = [_live_state(T0 - timedelta(seconds=20))]
+    stale = _trader_feed(s72._book_for(0.5), start=in_play_start, price_time=T0 - timedelta(seconds=90), context=live)
     report = await pt.run_cycle(s72.FakeSession(), stale, s72.FakeProbability(p_model=0.9), variants, now=T0)
     assert report["intents"] == 0
     assert report["guard_refusals"].get("stale_book", 0) >= 1
     assert report["matches"][0]["in_play"] is True
 
-    fresh = _trader_feed(s72._book_for(0.5), start=in_play_start, price_time=T0 - timedelta(seconds=10))
+    fresh = _trader_feed(s72._book_for(0.5), start=in_play_start, price_time=T0 - timedelta(seconds=10), context=live)
     report = await pt.run_cycle(s72.FakeSession(), fresh, s72.FakeProbability(p_model=0.9), variants, now=T0)
     assert report["intents"] > 0
     assert "stale_book" not in report["guard_refusals"]
@@ -315,7 +325,7 @@ def _sanity(rows):
 
 def test_paper_sanity_is_ok_on_a_quiet_day_and_runs_last():
     assert _sanity(s55.healthy_rows())["status"] == "ok"
-    assert dqm.CHECKS[-1] is dqm.check_paper_sanity
+    assert dqm.CHECKS[-2] is dqm.check_paper_sanity  # S86 appended start_time_consistency after it
 
 
 def test_control_placing_more_than_two_trades_in_a_day_fails():
@@ -353,13 +363,15 @@ def test_edge_of_exactly_twenty_percent_is_not_implausible():
     assert _sanity(rows)["status"] == "ok"
 
 
-def test_more_than_fifteen_trades_by_one_variant_on_one_match_fails():
+def test_more_than_the_per_match_limit_of_trades_by_one_variant_fails():
+    """Limit 35: a 30-ticket budget (operator, 2026-11-03) plus reduces, which the budget never blocks."""
+    limit = dqm.PAPER_SANITY_MATCH_TRADES_MAX
     rows = s55.healthy_rows()
-    rows["paper_sanity_trades"] = [{"variant": "w07_e06", "match_id": "m9", "trades": 16}]
+    rows["paper_sanity_trades"] = [{"variant": "w07_e06", "match_id": "m9", "trades": limit + 1}]
     check = _sanity(rows)
     assert check["status"] == "fail"
-    assert "w07_e06 m9 (16)" in check["detail"]
-    rows["paper_sanity_trades"] = [{"variant": "w07_e06", "match_id": "m9", "trades": 15}]
+    assert f"w07_e06 m9 ({limit + 1})" in check["detail"]
+    rows["paper_sanity_trades"] = [{"variant": "w07_e06", "match_id": "m9", "trades": limit}]
     assert _sanity(rows)["status"] == "ok"
 
 

@@ -236,6 +236,7 @@ only, 1 at least one failure (or the database could not be read).
 | `registry` | a recorded match has no registry row, or competition is empty | team-name variants for one match id |
 | `results` | a match's last tick is over 6 h old with no result, or a result has an empty winner | |
 | `results_missing` (S76) | | a real match's last tick is over 3 h old with no win, tie, no_result or abandoned result |
+| `start_time_consistency` (S86) | | a real match's listing-derived and JSON-derived starts differ by over 15 min, or its `actual_start_time` is over 60 min after `match_start_time` |
 | `gaps` | | a gap over 5 min inside one live match |
 | `srl` | never | never (count only) |
 
@@ -307,3 +308,16 @@ python scripts\set_result.py --match lb_<match id> --tie        # or --no-result
   every cycle). Tie and no_result void the bets.
 - The detector can still write a row for the same match later (it merges on `match_id`). Check
   `scripts\results_reconciliation.py` after a manual write.
+
+## 11. True off time (S86)
+
+`match_training_status.actual_start_time` and `actual_start_source` record when a match actually started. They are set
+once, by the first of: the match JSON's `inPlay` flag, the listing's live badge, the score feed's first ball
+(`scraper/actual_start.py`). Migration: `backend/db_init.py` (`ADD COLUMN IF NOT EXISTS`, nullable); the scraper does
+not apply it. Backfill of recorded matches (dry run by default; the operator runs `--apply`):
+
+```powershell
+python scriptsackfill_actual_start.py          # dry run: table and summary, writes nothing
+python scriptsackfill_actual_start.py --apply  # writes the two columns where actual_start_time is NULL
+```
+

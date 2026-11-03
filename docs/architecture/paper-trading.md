@@ -61,15 +61,50 @@ the operator still pass the trust gate (`strategy/trust.py`).
   contradictory band, market probability outside the band. On new risk only (enter, add, flip): a book field older
   than 60 s in play or 15 min pre-match, spread over 15% of the price, more than 3 trades per match per variant in
   10 minutes, a flip within 5 minutes of the last flip.
-- **Cap.** LAY stakes are sized at their limit price, so a fill above the decision price cannot breach the 100,000
+- **Cap.** Decisions are sized to the 100,000 budget; the operator allows 20% tolerance (2026-11-03), so no fill may
+  take a variant's worst outcome on a match beyond 120,000 (`HARD_MATCH_LOSS`; refused fills are `over_loss_limit`).
+  LAY stakes are sized at their limit price, so a fill above the decision price cannot breach the 100,000
   worst case (a replay found one at 101,994 before this).
 - **Monitor `paper_sanity` (FAIL).** The control places more than 2 trades in 24 h, a filled bet records an edge over
-  20%, or a variant trades one match more than 15 times. Counts bets decided from 2026-11-03 11:25 UTC (guards live).
+  20%, or a variant trades one match more than 35 times (budget 30). Counts bets decided from 2026-11-03 12:36 UTC (S90 live).
 - **Settlement.** Every cycle; `draw`, `tie`, `no_result` and `abandoned` void; matches with any decided result are
   no longer candidates. Missing results are listed daily (`scripts/results_reconciliation.py`) and entered by hand
   with `scripts/set_result.py` from a public scorecard; the result detector never overwrites a hand-entered result.
 - **Known open issue.** Churn: 31 to 48 fills per model variant on one T20 match in replay, half of them reduces.
   Addressed by S83 (no pre-match model in play) and S90 (target position with a ticket budget).
+
+## In play without a live score (S83)
+
+In play (`Candidate.in_play`, start <= now), a model variant may use the model probability only from the in-play model
+with a fresh live score (`source` = `inplay`). Without one, the probability service's pre-match fallback is not traded
+in play: the variant gets no model probability, so it may reduce or green up on the market alone and never enter, add
+or flip. Each such variant-match in a cycle is counted as `guard_refusals["inplay_without_state"]`. The rows it writes
+record `source` = `market_only` and `p_model` = null. Pre-match decisions are unchanged, and the switch happens at the
+start time. The market-only control is unaffected in its decisions; its in-play rows are labelled `market_only` too.
+
+## In-play model gate (S89)
+
+`scripts/evaluate_inplay.py` (weekly, step 7 of `retrain_weekly.py`) scores the in-play model against the LotusBook
+in-play price on our own `livescore-v2` recordings, match-clustered, and writes `models/registry/inplay_gate.json`
+per format. A format opens only with at least 15 decided matches, the model's log loss no worse than the market's and
+the CI's lower bound below zero. Decision (2026-11-03): the gate does **not** restrict paper trading, which is how
+in-play evidence accumulates and costs nothing; it applies to in-play signals to the operator, alongside R3. On
+2026-11-03 every format is closed (1 decided match).
+
+## Placebo controls (S85)
+
+Two controls show how much CLV the fill rule, the delay and price drift produce on their own. They trade at the decision
+times of the reference variant (the primary in `models/paper/primary.json`, else `w05_e03`) with its stake, and they use
+the market probability only (source `market_only`):
+
+- `placebo_random`: a seeded-random side and selection (two bits of a SHA-256 over match, decision time and name).
+- `placebo_favourite`: backs the market favourite (the lower back price).
+
+Each placebo ticket is priced at the takeable price with the same limit rule, capped per ticket and per match, and
+checked by the S75 new-risk guards (`model_edge.placebo_ticket`). A placebo is never primary, never ranked and never a
+signal. Every strategy variant's CLV is reported as an excess over `placebo_random`: per match, mean CLV minus the
+control's mean CLV on that match, with a match-clustered CI over matches. A CI from fewer than 10 matches counts as
+"too few matches", and the daily review states in one sentence when no variant's excess CI lies above zero.
 
 ## Measures of success
 

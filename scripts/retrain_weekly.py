@@ -15,6 +15,8 @@ One run, in order. Every training step is a subprocess; a failed step stops the 
   5. register  ``prematch_t20``, ``prematch_odi`` and ``blend`` versions in models/registry/ (status candidate)
   6. promote   ``blend`` only if ``training.registry.promotion_decision`` accepts the S63 evidence on the same
                held-out window as the champion; then the prematch versions fitted for it.
+  7. inplay    S89 ``evaluate_inplay.py`` (read-only database) -> reports/inplay_eval/<YYYYMMDD>/ and the in-play gate
+               models/registry/inplay_gate.json. Non-fatal: a failure is recorded and the run status is unchanged.
 
 Exit code: 0 when the run finished (promoted or not), 1 when a step failed.
 """
@@ -333,6 +335,13 @@ def run_retrain(
         logger.error("register_failed", error=str(exc))
         return finish("failed")
     record["steps"].append({"step": "register", "status": "ok"})
+    # S89: the in-play gate (reads the database read-only). Non-fatal: a failure is logged and recorded, and it never
+    # changes the blend promotion or the run's status.
+    try:
+        step("inplay_eval", [py, "scripts/evaluate_inplay.py", "--date", stamp])
+    except Exception as exc:
+        record["steps"].append({"step": "inplay_eval", "status": "failed", "detail": f"{type(exc).__name__}: {exc}"})
+        logger.error("inplay_eval_failed", error=f"{type(exc).__name__}: {exc}")
     promoted = record["promotion"]["blend"]["promoted"]
     return finish("promoted" if promoted else "not_promoted")
 

@@ -1,0 +1,370 @@
+{
+  "dataset": "s89_inplay_eval",
+  "generated_at_utc": "2026-11-03T12:14:16.479321+00:00",
+  "git_sha": "e885ad52a1956cf46f88e3d82befdb6d6e498328",
+  "database": "localhost:5432/phoenix_betting",
+  "pipeline": "livescore-v2",
+  "soft_horizon_s": 600,
+  "devig": "band",
+  "counts": {
+    "registry": 2,
+    "not_decided": 1,
+    "decided": 1,
+    "matches_evaluated": 1,
+    "states_evaluated": 257
+  },
+  "skips": {
+    "no_market": 8,
+    "no_later_price": 14
+  },
+  "rule": "inplay_model_allowed = matches >= 15 and logloss_diff <= 0 and ci_lower < 0 (logloss_diff = model minus market, final-result log loss, match-clustered 95% bootstrap CI)",
+  "formats": {
+    "t20": {
+      "final": {
+        "matches": 1,
+        "states": 257,
+        "too_few_matches": true,
+        "logloss": {
+          "model": {
+            "point": 0.3785236744168275,
+            "lo": null,
+            "hi": null,
+            "se": null,
+            "matches": 1
+          },
+          "market": {
+            "point": 0.39431274778127784,
+            "lo": null,
+            "hi": null,
+            "se": null,
+            "matches": 1
+          },
+          "diff": {
+            "point": -0.015789073364449416,
+            "lo": null,
+            "hi": null,
+            "se": null,
+            "matches": 1
+          }
+        },
+        "brier": {
+          "model": {
+            "point": 0.10562510523454034,
+            "lo": null,
+            "hi": null,
+            "se": null,
+            "matches": 1
+          },
+          "market": {
+            "point": 0.11139225452314838,
+            "lo": null,
+            "hi": null,
+            "se": null,
+            "matches": 1
+          },
+          "diff": {
+            "point": -0.005767149288608039,
+            "lo": null,
+            "hi": null,
+            "se": null,
+            "matches": 1
+          }
+        }
+      },
+      "soft": {
+        "matches": 1,
+        "states": 243,
+        "too_few_matches": true,
+        "logloss": {
+          "model": {
+            "point": 0.6262400991637921,
+            "lo": null,
+            "hi": null,
+            "se": null,
+            "matches": 1
+          },
+          "market": {
+            "point": 0.6129942681092013,
+            "lo": null,
+            "hi": null,
+            "se": null,
+            "matches": 1
+          },
+          "diff": {
+            "point": 0.013245831054590247,
+            "lo": null,
+            "hi": null,
+            "se": null,
+            "matches": 1
+          }
+        },
+        "brier": {
+          "model": {
+            "point": 0.011575427179509094,
+            "lo": null,
+            "hi": null,
+            "se": null,
+            "matches": 1
+          },
+          "market": {
+            "point": 0.007400662515031156,
+            "lo": null,
+            "hi": null,
+            "se": null,
+            "matches": 1
+          },
+          "diff": {
+            "point": 0.004174764664477933,
+            "lo": null,
+            "hi": null,
+            "se": null,
+            "matches": 1
+          }
+        }
+      }
+    },
+    "odi": {
+      "final": {
+        "matches": 0,
+        "states": 0,
+        "too_few_matches": true,
+        "logloss": {
+          "model": {
+            "point": null,
+            "lo": null,
+            "hi": null,
+            "se": null,
+            "matches": 0
+          },
+          "market": {
+            "point": null,
+            "lo": null,
+            "hi": null,
+            "se": null,
+            "matches": 0
+          },
+          "diff": {
+            "point": null,
+            "lo": null,
+            "hi": null,
+            "se": null,
+            "matches": 0
+          }
+        },
+        "brier": {
+          "model": {
+            "point": null,
+            "lo": null,
+            "hi": null,
+            "se": null,
+            "matches": 0
+          },
+          "market": {
+            "point": null,
+            "lo": null,
+            "hi": null,
+            "se": null,
+            "matches": 0
+          },
+          "diff": {
+            "point": null,
+            "lo": null,
+            "hi": null,
+            "se": null,
+            "matches": 0
+          }
+        }
+      },
+      "soft": {
+        "matches": 0,
+        "states": 0,
+        "too_few_matches": true,
+        "logloss": {
+          "model": {
+            "point": null,
+            "lo": null,
+            "hi": null,
+            "se": null,
+            "matches": 0
+          },
+          "market": {
+            "point": null,
+            "lo": null,
+            "hi": null,
+            "se": null,
+            "matches": 0
+          },
+          "diff": {
+            "point": null,
+            "lo": null,
+            "hi": null,
+            "se": null,
+            "matches": 0
+          }
+        },
+        "brier": {
+          "model": {
+            "point": null,
+            "lo": null,
+            "hi": null,
+            "se": null,
+            "matches": 0
+          },
+          "market": {
+            "point": null,
+            "lo": null,
+            "hi": null,
+            "se": null,
+            "matches": 0
+          },
+          "diff": {
+            "point": null,
+            "lo": null,
+            "hi": null,
+            "se": null,
+            "matches": 0
+          }
+        }
+      }
+    },
+    "multiday": {
+      "final": {
+        "matches": 0,
+        "states": 0,
+        "too_few_matches": true,
+        "logloss": {
+          "model": {
+            "point": null,
+            "lo": null,
+            "hi": null,
+            "se": null,
+            "matches": 0
+          },
+          "market": {
+            "point": null,
+            "lo": null,
+            "hi": null,
+            "se": null,
+            "matches": 0
+          },
+          "diff": {
+            "point": null,
+            "lo": null,
+            "hi": null,
+            "se": null,
+            "matches": 0
+          }
+        },
+        "brier": {
+          "model": {
+            "point": null,
+            "lo": null,
+            "hi": null,
+            "se": null,
+            "matches": 0
+          },
+          "market": {
+            "point": null,
+            "lo": null,
+            "hi": null,
+            "se": null,
+            "matches": 0
+          },
+          "diff": {
+            "point": null,
+            "lo": null,
+            "hi": null,
+            "se": null,
+            "matches": 0
+          }
+        }
+      },
+      "soft": {
+        "matches": 0,
+        "states": 0,
+        "too_few_matches": true,
+        "logloss": {
+          "model": {
+            "point": null,
+            "lo": null,
+            "hi": null,
+            "se": null,
+            "matches": 0
+          },
+          "market": {
+            "point": null,
+            "lo": null,
+            "hi": null,
+            "se": null,
+            "matches": 0
+          },
+          "diff": {
+            "point": null,
+            "lo": null,
+            "hi": null,
+            "se": null,
+            "matches": 0
+          }
+        },
+        "brier": {
+          "model": {
+            "point": null,
+            "lo": null,
+            "hi": null,
+            "se": null,
+            "matches": 0
+          },
+          "market": {
+            "point": null,
+            "lo": null,
+            "hi": null,
+            "se": null,
+            "matches": 0
+          },
+          "diff": {
+            "point": null,
+            "lo": null,
+            "hi": null,
+            "se": null,
+            "matches": 0
+          }
+        }
+      }
+    }
+  },
+  "gate": {
+    "t20": {
+      "inplay_model_allowed": false,
+      "matches": 1,
+      "logloss_diff": -0.015789073364449416,
+      "ci": [
+        null,
+        null
+      ],
+      "evaluated_at": "2026-11-03T12:14:16.479321+00:00"
+    },
+    "odi": {
+      "inplay_model_allowed": false,
+      "matches": 0,
+      "logloss_diff": null,
+      "ci": [
+        null,
+        null
+      ],
+      "evaluated_at": "2026-11-03T12:14:16.479321+00:00"
+    },
+    "multiday": {
+      "inplay_model_allowed": false,
+      "matches": 0,
+      "logloss_diff": null,
+      "ci": [
+        null,
+        null
+      ],
+      "evaluated_at": "2026-11-03T12:14:16.479321+00:00"
+    }
+  },
+  "evaluated_at": "2026-11-03T12:14:16.479321+00:00",
+  "n_boot": 2000,
+  "seed": 20261103
+}

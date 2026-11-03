@@ -203,3 +203,117 @@ def portfolio_clv(
         "ci95_excludes_zero": bool(ci["significant"]),
     })
     return out
+
+
+# ----------------------------------------------------------------------------- match-clustered bootstrap (S84)
+MIN_CLUSTERS_FOR_CI = 10  # a CI from fewer clusters (matches) is reported, but labelled "too few matches"
+CLUSTER_SEED = 20261103  # the same seed as the rest of the evidence code, so one ledger gives one set of numbers
+CLUSTER_STATISTICS = ("mean", "sum_per_cluster")
+_CLUSTER_CHUNK_CELLS = 2_000_000  # bootstrap draws are generated in blocks of about this many indices
+
+
+def _ordered_labels(labels: Iterable[Any]) -> list[Any]:
+    """Cluster labels in their natural order (integers numerically, strings alphabetically), else by type and repr."""
+    items = list(labels)
+    try:
+        return sorted(items)
+    except TypeError:
+        return sorted(items, key=lambda x: (type(x).__name__, repr(x)))
+
+
+def cluster_bootstrap(
+    values: Iterable[Any],
+    clusters: Iterable[Any],
+    *,
+    weights: Optional[Iterable[Any]] = None,
+    statistic: str = "mean",
+    n_boot: int = 2000,
+    seed: int = CLUSTER_SEED,
+    population: Optional[Iterable[Any]] = None,
+) -> dict[str, Any]:
+    """Point estimate and seeded percentile 95% CI with the cluster (match) as the resampling unit.
+
+    Bets on one match move together, so resampling bets understates the uncertainty. Here each draw picks
+    ``K`` clusters with replacement and every item of a chosen cluster comes with it.
+
+    - ``statistic="mean"``: the mean of the items, ``sum(w * v) / sum(w)`` over the drawn clusters. With no
+      ``weights`` it is the unweighted mean per item; with ``weights`` (e.g. stake) it is the stake-weighted mean.
+    - ``statistic="sum_per_cluster"``: the total of the values (e.g. P&L). ``weights`` is not allowed here.
+
+    ``values`` and ``clusters`` are parallel sequences. Items whose value (or weight) is None or not finite are
+    dropped. ``population`` lists clusters that count as units even when they have no kept item (for example a
+    match with fills but no settled P&L); they take part in the resampling as zero contributions.
+
+    Returns a dict: ``estimate``, ``ci_lower``, ``ci_upper``, ``se`` (bootstrap standard error), ``n_clusters``
+    (units, including the population), ``n_items``, ``too_few_clusters`` (True below ``MIN_CLUSTERS_FOR_CI``),
+    ``statistic``, ``weighted``, ``n_boot``, ``seed``. Estimates and bounds are NaN when they cannot be formed
+    (no items, or fewer than two clusters for the interval). Deterministic for a given seed and input.
+    """
+    if statistic not in CLUSTER_STATISTICS:
+        raise ValueError(f"statistic must be one of {CLUSTER_STATISTICS}, got {statistic!r}")
+    vals = np.asarray(list(values), dtype=float)
+    labels = list(clusters)
+    if vals.shape[0] != len(labels):
+        raise ValueError(f"values ({vals.shape[0]}) and clusters ({len(labels)}) differ in length")
+    weighted = weights is not None
+    if weighted and statistic != "mean":
+        raise ValueError("weights apply to statistic='mean' only")
+    w = None
+    if weighted:
+        w = np.asarray(list(weights), dtype=float)
+        if w.shape != vals.shape:
+            raise ValueError("weights must have one entry per value")
+    keep = np.isfinite(vals)
+    if w is not None:
+        keep &= np.isfinite(w)
+        if np.any(w[keep] < 0.0):
+            raise ValueError("weights must be >= 0")
+    kept_labels = [lab for lab, k in zip(labels, keep) if k]
+    vals = vals[keep]
+    w = w[keep] if w is not None else np.ones(vals.shape[0], dtype=float)
+
+    # Units: every cluster seen in the items or the population, in their natural order, so the result does not
+    # depend on the order the caller listed them.
+    units: dict[Any, int] = {}
+    for lab in _ordered_labels(set(kept_labels) | set(population or ())):
+        units[lab] = len(units)
+    k_units = len(units)
+    n_items = int(vals.shape[0])
+    nan = math.nan
+    out: dict[str, Any] = {
+        "estimate": nan, "ci_lower": nan, "ci_upper": nan, "se": nan,
+        "n_clusters": k_units, "n_items": n_items, "too_few_clusters": k_units < MIN_CLUSTERS_FOR_CI,
+        "statistic": statistic, "weighted": weighted, "n_boot": int(n_boot), "seed": int(seed),
+    }
+    if n_items == 0:
+        return out
+
+    index = np.array([units[lab] for lab in kept_labels], dtype=int)
+    num = np.bincount(index, weights=w * vals if statistic == "mean" else vals, minlength=k_units)
+    den = np.bincount(index, weights=w, minlength=k_units)
+    if statistic == "sum_per_cluster":
+        out["estimate"] = float(num.sum())
+    else:
+        total_den = float(den.sum())
+        out["estimate"] = float(num.sum()) / total_den if total_den > 0.0 else nan
+    if k_units < 2 or n_boot <= 0:
+        return out
+
+    rng = np.random.default_rng(seed)
+    stats = np.empty(int(n_boot), dtype=float)
+    block = max(1, _CLUSTER_CHUNK_CELLS // k_units)
+    for start in range(0, int(n_boot), block):
+        size = min(block, int(n_boot) - start)
+        draws = rng.integers(0, k_units, size=(size, k_units))
+        total = num[draws].sum(axis=1)
+        if statistic == "mean":
+            count = den[draws].sum(axis=1)
+            with np.errstate(invalid="ignore", divide="ignore"):
+                total = np.where(count > 0.0, total / np.where(count > 0.0, count, 1.0), nan)
+        stats[start:start + size] = total
+    finite = stats[np.isfinite(stats)]
+    if finite.size >= 2:
+        lo, hi = np.percentile(finite, [2.5, 97.5])
+        out["ci_lower"], out["ci_upper"] = float(lo), float(hi)
+        out["se"] = float(np.std(finite, ddof=1))
+    return out

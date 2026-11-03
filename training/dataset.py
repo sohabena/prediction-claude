@@ -212,7 +212,7 @@ def match_record(
     away = str(match_row.get("team_away") or "")
     competition = str(match_row.get("competition") or "")
     name = match_row.get("name")
-    start = _to_dt(match_row.get("match_start_time"))
+    start, start_basis = effective_start(match_row)
     result = dict(result_row) if result_row else {}
     result_type = result.get("result_type") or None
     winner = result.get("winner") or None
@@ -242,7 +242,9 @@ def match_record(
         "team_home": home,
         "team_away": away,
         "competition": competition,
-        "match_start_time": start.isoformat() if start else None,
+        "match_start_time": _iso(match_row.get("match_start_time")),
+        "actual_start_time": _iso(match_row.get("actual_start_time")),
+        "start_basis": start_basis if start else None,
         "family": match_family(competition, name, match_type),
         "is_simulated": bool(match_row.get("is_simulated"))
         or is_simulated_name(home, away, competition),
@@ -262,6 +264,19 @@ def match_record(
 def _iso(value: Any) -> Optional[str]:
     dt = _to_dt(value)
     return dt.isoformat() if dt else None
+
+
+def effective_start(match_row: Mapping[str, Any]) -> tuple[Optional[datetime], str]:
+    """The start every snapshot is measured from: ``actual_start_time`` (S86) when known, else ``match_start_time``.
+
+    Returns ``(start, basis)`` with basis ``"actual_start_time"`` or ``"match_start_time"``; ``(None, ...)`` when
+    neither is set. A registry row without the S86 column (old database) simply has no ``actual_start_time`` key
+    and falls back to the scheduled start.
+    """
+    actual = _to_dt(match_row.get("actual_start_time"))
+    if actual is not None:
+        return actual, "actual_start_time"
+    return _to_dt(match_row.get("match_start_time")), "match_start_time"
 
 
 # --------------------------------------------------------------------------- as-of books
@@ -346,11 +361,13 @@ def build_snapshots(
 ) -> list[dict[str, Any]]:
     """Price snapshots for one match: pre-match offsets, then every ``inplay_every_s`` from the start.
 
-    In-play snapshots run from ``match_start_time`` up to the last recorded price. A pre-match offset of 0 is
+    The start is ``actual_start_time`` when known, else ``match_start_time`` (see :func:`effective_start`); the
+    pre-match / in-play split (``in_play``) is taken from that start.
+    In-play snapshots run from that start up to the last recorded price. A pre-match offset of 0 is
     taken as the last instant before the start. Each snapshot keeps its as-of book; a field older than
     ``STALE_LIMIT_S`` is None. No row later than the snapshot time feeds ``book``.
     """
-    start = _to_dt(match_row.get("match_start_time"))
+    start, _basis = effective_start(match_row)
     match_id = str(match_row["match_id"])
     if start is None or not price_rows:
         return []
@@ -404,7 +421,7 @@ def build_dataset(
         if not prices:
             stats["matches_without_prices"] += 1
             continue
-        if _to_dt(row.get("match_start_time")) is None:
+        if effective_start(row)[0] is None:
             stats["matches_without_start"] += 1
         link = cricsheet_index.link_detail(row) if cricsheet_index else None
         if link is not None and cricsheet_index is not None:

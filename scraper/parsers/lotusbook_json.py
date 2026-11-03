@@ -188,6 +188,17 @@ def event_records(payload: Any, match_id: str, observed_at: datetime) -> list[Ma
     return records
 
 
+def in_play_of(payload: Any) -> bool:
+    """True when any market of the event JSON carries ``"inPlay": true`` (S86: the match has started).
+
+    The flag is per market (fixture ``sma_event_real_76321652_20261103.json``: 92 of 92 markets ``"inPlay": true``
+    on a match captured about four hours after its ``openDate``; fixture ``sma_event_srl_76108412_20261103.json``:
+    40 true, one closed market false). The real fixture has no Winner market, so every market is checked. No
+    pre-start body is stored as a fixture yet, so the flag being false before the off is not verified.
+    """
+    return any(market.get("inPlay") is True for market in _markets(payload))
+
+
 def settlement_of(payload: Any) -> Optional[Settlement]:
     """The Winner (match odds) market when it is CLOSED, else None.
 

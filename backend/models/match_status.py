@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, Float, Integer, String, func, text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, deferred, mapped_column
 
 from backend.models.base import Base
 
@@ -49,6 +49,15 @@ class MatchTrainingStatus(Base):
     toss_winner: Mapped[str | None] = mapped_column(String, nullable=True)
     toss_decision: Mapped[str | None] = mapped_column(String, nullable=True)
     score_pipeline: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    # S86: when the match actually started (the off), and which signal said so. Set once, by the first of: the
+    # match JSON's market turning in-play, the listing's live badge, the score feed's first ball. Nullable; NULL
+    # until a signal arrives. Deferred: a plain SELECT of this model does not read them, so a database without the
+    # S86 migration still works (the scraper writes them with its own guarded UPDATE).
+    actual_start_time: Mapped[datetime | None] = deferred(mapped_column(
+        DateTime(timezone=True), nullable=True,
+    ))
+    actual_start_source: Mapped[str | None] = deferred(mapped_column(String, nullable=True))
 
     # Total recorded odds/microstructure ticks for this match
     tick_count: Mapped[int] = mapped_column(Integer, default=0)

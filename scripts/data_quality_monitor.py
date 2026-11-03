@@ -67,18 +67,22 @@ DRIFT_WINDOW_DAYS = 7  # S65: settled matches used for the champion's calibratio
 PAPER_LOG_PATH = ROOT / "logs" / "paper_trader.log"  # S73: one JSON line per paper trader cycle
 PAPER_FRESH_FAIL_S = 5 * 60  # trader log older than this while matches are live: fail
 PAPER_SETTLE_FAIL_S = 12 * 3600  # filled bets still open this long after their result: fail
-# Per match, per variant: mirrors MAX_MATCH_LOSS in virtual_trading/paper_trader.py (the cap on the worst outcome)
-PAPER_MATCH_LOSS = 100_000.0
+# Per match, per variant: mirrors HARD_MATCH_LOSS in virtual_trading/paper_trader.py (the hard limit on the worst outcome)
+# Operator, 2026-11-03: the 100,000 budget has 20% tolerance; a worst case beyond 120,000 (the trader's HARD_MATCH_LOSS)
+# is a failure.
+PAPER_MATCH_LOSS = 120_000.0
 PAPER_SANITY_CONTROL = "market_only"  # S75: the control variant, which should place (almost) nothing
 PAPER_SANITY_CONTROL_MAX = 2  # trades by the control in 24 h
 PAPER_SANITY_EDGE_MAX = 0.20  # a filled bet whose recorded edge at its decision price is above this is implausible
-PAPER_SANITY_MATCH_TRADES_MAX = 15  # trades by one variant on one match in 24 h
-# Bets decided before the S75 guards went live (2026-11-03 11:25 UTC, written into the two SQL queries) are not counted:
-# they were placed by the code the guards replaced.
+PAPER_SANITY_MATCH_TRADES_MAX = 35  # trades by one variant on one match in 24 h (budget 30 tickets, plus reduces)
+# Bets decided before the S90 strategy went live (2026-11-03 12:36 UTC, written into the two SQL queries) are not
+# counted: they were placed by code that S75 and S90 replaced (S90 limits a variant to 10 tickets per match).
 # S77: pre-match match pages. Matches that started on or after PREMATCH_PAGES_SINCE are scored. The operator sets
 # this to the time the S77 scraper was deployed (placeholder below) before the first run that should count.
 PREMATCH_PAGES_SINCE = datetime(2026, 11, 3, 11, 1, tzinfo=timezone.utc)  # S77 scraper deploy
 PREMATCH_PAGE_WARN = 0.90  # share of scored real matches with a match-page row before their start
+START_GAP_WARN_S = 15 * 60  # S86: listing and JSON starts further apart than this disagree
+ACTUAL_LATE_WARN_S = 60 * 60  # S86: actual start later than match_start_time by more than this is reported
 # Lead before the start, in minutes: same variable and default as the scraper (PREMATCH_PAGE_LEAD_MIN, 75).
 PREMATCH_PAGE_LEAD_MIN = float(os.environ.get("PREMATCH_PAGE_LEAD_MIN") or 75)
 
@@ -340,7 +344,7 @@ SQL: dict[str, str] = {
     "paper_sanity_trades": """
         SELECT variant, match_id, COUNT(*) AS trades
         FROM paper_bets
-        WHERE decided_at >= GREATEST(CAST(:now AS timestamptz) - INTERVAL '24 hours', TIMESTAMPTZ '2026-11-03 11:25:00+00')
+        WHERE decided_at >= GREATEST(CAST(:now AS timestamptz) - INTERVAL '24 hours', TIMESTAMPTZ '2026-11-03 12:36:00+00')
         GROUP BY variant, match_id
     """,
     "paper_sanity_edges": """
@@ -348,7 +352,21 @@ SQL: dict[str, str] = {
         FROM paper_bets
         WHERE status IN ('filled', 'settled', 'void')
           AND price_filled IS NOT NULL
-          AND decided_at >= GREATEST(CAST(:now AS timestamptz) - INTERVAL '24 hours', TIMESTAMPTZ '2026-11-03 11:25:00+00')
+          AND decided_at >= GREATEST(CAST(:now AS timestamptz) - INTERVAL '24 hours', TIMESTAMPTZ '2026-11-03 12:36:00+00')
+    """,
+    "actual_start_columns": """
+        SELECT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'match_training_status' AND column_name = 'actual_start_time'
+        ) AS present
+    """,
+    "start_times": """
+        SELECT s.match_id, s.team_home, s.team_away, s.competition, s.match_start_time,
+               s.actual_start_time, s.actual_start_source,
+               (SELECT MIN(o.time) FROM odds_ticks o
+                 WHERE o.match_id = s.match_id AND o.is_live AND o.source = 'lotusbook') AS first_live_tick
+        FROM match_training_status s
+        WHERE s.match_id IN (SELECT match_id FROM odds_ticks WHERE time >= :since)
     """,
     "results": RESULTS_SQL,  # S76: shared with scripts/results_reconciliation.py
 }
@@ -803,6 +821,46 @@ async def check_paper_sanity(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]:
     return _check("paper_sanity", OK, busiest, detail)
 
 
+async def check_start_time_consistency(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]:
+    """S86: real matches (SRL excluded) whose listing-derived start and JSON-derived start differ by more than 15 min,
+    or whose actual_start_time is more than 60 min after match_start_time. A warning only.
+
+    The listing start is not stored: match_start_time is overwritten by the market JSON's openDate once the JSON has
+    arrived. The first live listing tick therefore stands in for the listing start, so a match whose listing goes live
+    well after its scheduled time is reported too (that is the late start the check is for). Matches recorded before
+    the S86 columns existed have no actual_start_time; they are counted, not scored.
+    """
+    if not bool((await fetch("actual_start_columns", p))[0]["present"]):
+        return _check("start_time_consistency", OK, None,
+                      "actual_start_time column not present (S86 migration not applied); not scored")
+    real, _ = _split_live(await fetch("start_times", p))
+    listing_gap: list[dict[str, Any]] = []
+    late: list[dict[str, Any]] = []
+    unset = 0
+    for r in real:
+        start, actual, first_live = r.get("match_start_time"), r.get("actual_start_time"), r.get("first_live_tick")
+        # Once the actual off is recorded, a listing that went live late is explained (a delayed start, e.g. rain);
+        # only an unexplained gap is a warning. A start more than an hour late is still reported below.
+        if (actual is None and start is not None and first_live is not None
+                and abs((first_live - start).total_seconds()) > START_GAP_WARN_S):
+            listing_gap.append(r)
+        if start is not None and actual is not None and (actual - start).total_seconds() > ACTUAL_LATE_WARN_S:
+            late.append(r)
+        if actual is None:
+            unset += 1
+    detail = (
+        f"{len(listing_gap)} real match(es) with listing and JSON starts over {START_GAP_WARN_S // 60} min apart "
+        f"(first live tick vs match_start_time); {len(late)} with actual_start_time over "
+        f"{ACTUAL_LATE_WARN_S // 60} min after match_start_time; {unset} real match(es) with no actual_start_time yet"
+    )
+    if listing_gap:
+        detail += "; listing gap: " + ", ".join(_match_label(r) for r in listing_gap[:3])
+    if late:
+        detail += "; late start: " + ", ".join(_match_label(r) for r in late[:3])
+    value = len(listing_gap) + len(late)
+    return _check("start_time_consistency", WARN if value else OK, value, detail)
+
+
 CHECKS: list[Callable[[Fetch, dict[str, Any]], Awaitable[dict[str, Any]]]] = [
     check_freshness,
     check_price_sanity,
@@ -820,6 +878,7 @@ CHECKS: list[Callable[[Fetch, dict[str, Any]], Awaitable[dict[str, Any]]]] = [
     check_prematch_pages,  # S77, appended last
     check_results_missing,  # S76, appended last (its logic sits next to check_results)
     check_paper_sanity,  # S75, appended last
+    check_start_time_consistency,  # S86, appended last
 ]
 
 

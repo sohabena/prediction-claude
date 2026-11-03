@@ -4,7 +4,7 @@ import { Sidebar } from "@/components/Sidebar";
 
 export const metadata: Metadata = {
   title: "PHOENIX Dashboard",
-  description: "Cricket Betting RL System Dashboard",
+  description: "PHOENIX paper trading and data",
 };
 
 export default function RootLayout({

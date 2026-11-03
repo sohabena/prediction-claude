@@ -52,6 +52,8 @@ def healthy_rows() -> dict[str, list[dict[str, Any]]]:
         "paper_stale_settlement": [],
         "paper_sanity_trades": [],  # S75: no paper orders in the last 24 h
         "paper_sanity_edges": [],
+        "actual_start_columns": [{"present": True}],  # S86: the columns exist and no real match started in the window
+        "start_times": [],
     }
 
 
@@ -142,6 +144,7 @@ def test_healthy_day_is_ok_with_exit_zero():
         "prematch_pages",  # S77, appended last
         "results_missing",  # S76, appended last
         "paper_sanity",  # S75, appended last
+        "start_time_consistency",  # S86, appended last
     ]
 
 
@@ -655,13 +658,16 @@ def test_paper_trading_ignores_a_stale_trader_when_nothing_is_live(tmp_path, mon
     assert by_name(run(rows))["paper_trading"]["status"] == "ok"
 
 
-def test_paper_trading_fails_when_one_match_is_beyond_the_hundred_thousand_cap():
+def test_paper_trading_fails_when_one_match_is_beyond_the_hard_limit():
+    """Budget 100,000 with 20% tolerance (operator, 2026-11-03): beyond 120,000 fails, 110,000 does not."""
     rows = healthy_rows()
     rows["paper_open_fills"] = [_fill(price=2.0, stake=150_000.0)]  # BACK home: away side loses 150,000
     check = by_name(run(rows))["paper_trading"]
     assert check["status"] == "fail"
-    assert "worst-case beyond 100,000" in check["detail"]
+    assert "worst-case beyond 120,000" in check["detail"]
     assert check["value"] == pytest.approx(150_000.0)
+    rows["paper_open_fills"] = [_fill(price=2.0, stake=110_000.0)]
+    assert by_name(run(rows))["paper_trading"]["status"] == "ok"
 
 
 def test_paper_trading_cap_is_per_variant_and_per_match():

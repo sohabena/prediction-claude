@@ -5,12 +5,9 @@ import { usePathname } from "next/navigation";
 import { useApi } from "@/hooks/useApi";
 
 const navItems = [
-  { href: "/", label: "Dashboard", icon: "📊" },
-  { href: "/training", label: "Training", icon: "🧠" },
-  { href: "/trading", label: "Virtual Trading", icon: "💰" },
-  { href: "/graduation", label: "Graduation", icon: "🎓" },
-  { href: "/matches", label: "Live Matches", icon: "🏏" },
-  { href: "/advisor", label: "Advisor", icon: "🎯" },
+  { href: "/", label: "Today", icon: "📊" },
+  { href: "/evidence", label: "Evidence", icon: "🔬" },
+  { href: "/data", label: "Data", icon: "🗄️" },
 ];
 
 interface HealthResponse {
@@ -32,7 +29,7 @@ export function Sidebar() {
       <div className="p-6 border-b border-zinc-800/50 relative overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-br from-phoenix-500/10 to-transparent pointer-events-none" />
         <h1 className="text-2xl font-black bg-clip-text text-transparent bg-gradient-to-r from-phoenix-400 to-phoenix-600 tracking-tight drop-shadow-sm">PHOENIX</h1>
-        <p className="text-xs text-zinc-400 mt-1 font-medium tracking-wide">Cricket Betting RL</p>
+        <p className="text-xs text-zinc-400 mt-1 font-medium tracking-wide">Paper trading and data</p>
       </div>
 
       {/* Navigation */}

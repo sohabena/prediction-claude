@@ -30,6 +30,7 @@ from virtual_trading import paper_trader as pt  # noqa: E402
 logger = setup_logging("paper_trader")
 
 CYCLE_SECONDS = 15
+DASHBOARD_EVERY_SECONDS = 60  # S88: reports/paper/dashboard.html
 
 
 def _error_record(exc: BaseException) -> dict:
@@ -41,9 +42,11 @@ def _error_record(exc: BaseException) -> dict:
 
 
 async def _loop(probability, variants, include_simulated: bool, log_path: Path) -> None:
+    from scripts import paper_dashboard  # S88: the static dashboard, once a minute
     from scripts import paper_report  # S73: the daily review and report
 
     last_reviewed: Optional[date] = paper_review.last_review_day(paper_review.load_state())
+    last_dashboard: Optional[datetime] = None
     while True:
         started = asyncio.get_running_loop().time()
         try:
@@ -57,6 +60,13 @@ async def _loop(probability, variants, include_simulated: bool, log_path: Path) 
             last_reviewed = await paper_report.run_due_review(datetime.now(timezone.utc), last_reviewed)
         except Exception as exc:  # a failed review is retried next cycle; trading continues
             logger.error("paper_review_failed", error=type(exc).__name__, message=str(exc)[:200])
+        try:  # S88: the dashboard is read-only and rewritten once a minute; a failure only logs, trading continues
+            now = datetime.now(timezone.utc)
+            if last_dashboard is None or (now - last_dashboard).total_seconds() >= DASHBOARD_EVERY_SECONDS:
+                last_dashboard = now
+                await paper_dashboard.write_dashboard(now)
+        except Exception as exc:
+            logger.error("paper_dashboard_failed", error=type(exc).__name__, message=str(exc)[:200])
         elapsed = asyncio.get_running_loop().time() - started
         await asyncio.sleep(max(0.0, CYCLE_SECONDS - elapsed))
 

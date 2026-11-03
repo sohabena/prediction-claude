@@ -25,7 +25,14 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Mapping, Optional
 from urllib.parse import urljoin
 
-from scraper.parsers.lotusbook_json import EventMeta, event_id_from_url, event_meta, event_records, settlement_of
+from scraper.parsers.lotusbook_json import (
+    EventMeta,
+    event_id_from_url,
+    event_meta,
+    event_records,
+    in_play_of,
+    settlement_of,
+)
 from scraper.parsers.lotusbook_markets import MarketRecord, parse_market_html
 from scraper.parsers.lotusbook_score import (
     PIPELINE_LEGACY,
@@ -67,6 +74,8 @@ MetaFn = Callable[[str, EventMeta], Awaitable[None]]
 SettledFn = Callable[[str, str, datetime], Awaitable[None]]
 # S68: (match_id, changed score state or None when only the pipeline is new, pipeline or None, observed_at)
 ScoreFeedFn = Callable[[str, Optional[ScoreState], Optional[str], datetime], Awaitable[None]]
+# S86: (match_id, observed_at) the first time the market JSON carries "inPlay": true for the match
+InPlayFn = Callable[[str, datetime], Awaitable[None]]
 MarketKey = tuple[str, str, str]  # (market_type, market_name, selection)
 
 
@@ -296,6 +305,7 @@ class MarketPageWorker:
         on_meta: Optional[MetaFn] = None,
         on_settled: Optional[SettledFn] = None,
         on_score: Optional[ScoreFeedFn] = None,
+        on_in_play: Optional[InPlayFn] = None,
     ) -> None:
         self.match_id = match_id
         self.page = page
@@ -308,6 +318,8 @@ class MarketPageWorker:
         self._on_meta = on_meta
         self._on_settled = on_settled
         self._on_score = on_score
+        self._on_in_play = on_in_play
+        self._in_play_sent = False  # S86: one hand-over per worker; the manager keeps the first write
         # S68 score feed state: last handed state, pipeline last handed, and one-time flags
         self._score_last: Optional[ScoreState] = None
         self._score_pipeline_sent: Optional[str] = None
@@ -477,6 +489,9 @@ class MarketPageWorker:
 
         if meta is not None:
             await self._send_meta(meta)
+        if not self._in_play_sent and in_play_of(payload):
+            self._in_play_sent = True
+            await self._send_in_play(now)
         if settlement is not None:
             await self._send_settlement(settlement, now)
 
@@ -500,6 +515,14 @@ class MarketPageWorker:
             await self._on_meta(self.match_id, meta)
         except Exception as exc:  # the registry update must never stop the recording
             logger.warning("market_meta_callback_error", match_id=self.match_id, error=str(exc))
+
+    async def _send_in_play(self, observed_at: datetime) -> None:
+        if self._on_in_play is None:
+            return
+        try:
+            await self._on_in_play(self.match_id, observed_at)
+        except Exception as exc:  # the registry must never stop the recording
+            logger.warning("market_in_play_callback_error", match_id=self.match_id, error=str(exc))
 
     async def _send_settlement(self, settlement: Any, observed_at: datetime) -> None:
         if not self._closed_logged:
