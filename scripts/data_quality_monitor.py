@@ -630,8 +630,12 @@ async def check_results(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]:
              and _num(r["age_s"]) > RESULT_STALE_S and not r["has_result"] and r.get("went_live") is not False]
     # An 'unresolved' row for a match that is still being recorded is provisional (it left the listing for a while,
     # e.g. an innings break); it only counts once the match has been quiet for RESULT_PROVISIONAL_S.
-    # A tie, no result or abandonment has no winner by definition (S76: entered from public scorecards).
-    empty = [r for r in real if r["has_result"] and not (r["winner"] or "").strip()
+    # A tie, no result or abandonment has no winner by definition (S76: entered from public scorecards). A simulated
+    # (SRL) match has no public scorecard, so an unresolved one is final: reported, not failed.
+    from scripts.results_reconciliation import is_real as _is_real_match
+    srl_unresolved = [r for r in real if r["has_result"] and r.get("result_type") == "unresolved"
+                      and not _is_real_match(r)]
+    empty = [r for r in real if r["has_result"] and not (r["winner"] or "").strip() and _is_real_match(r)
              and r.get("result_type") not in ("tie", "no_result", "draw", "abandoned")
              and not (r.get("result_type") == "unresolved" and _num(r["age_s"]) is not None
                       and _num(r["age_s"]) < RESULT_PROVISIONAL_S)]
@@ -643,6 +647,8 @@ async def check_results(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]:
         detail += "; e.g. " + ", ".join(_match_label(r) for r in stale[:3])
     if empty:
         detail += "; empty winner: " + ", ".join(_match_label(r) for r in empty[:3])
+    if srl_unresolved:
+        detail += f"; {len(srl_unresolved)} SRL match(es) unresolved from prices (final: no public scorecard)"
     status = FAIL if (stale or empty) else OK
     return _check("results", status, len(stale) + len(empty), detail)
 

@@ -107,8 +107,9 @@ user `phoenix`.
 - A match that vanishes waits 45 min before it is called `unresolved` (innings breaks drop matches off the listing).
 - Missing results are listed daily; enter them from a public scorecard with `scripts/set_result.py` or the UI Data
   page. Hand-entered results (`public_scorecard`, `manual_fix`) are never overwritten by the detector. The detector
-  tracks vanished matches in memory, so a scraper restart can lose one (lb_76227866, 2026-11-03): the missing-results
-  list is the safety net. Public sources that worked: ESPNcricinfo, league sites (nclcricket.com), and CricHeroes for
+  tracks vanished matches in memory; since 2026-11-03 it is re-seeded from the database at startup (matches live in
+  the last 12 h with no result), after two restarts had lost matches. The missing-results list stays the safety net.
+  An SRL match has no public scorecard: `unresolved` from prices is its final answer. Public sources that worked: ESPNcricinfo, league sites (nclcricket.com), and CricHeroes for
   Sri Lankan MCA and other domestic leagues (rain and DLS results included). Never invent a result.
 - Markets are classified in `scraper/parsers/lotusbook_markets.py`: `match_odds`, `bookmaker` ("Bookmaker ..."),
   `over_runs` (session lines), `other`.

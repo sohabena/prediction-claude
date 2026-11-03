@@ -390,6 +390,15 @@ def test_results_ok_for_no_result_and_tie_without_winner():
     assert one_check(dqm.check_results, rows)["status"] == "ok"
 
 
+def test_an_unresolved_srl_result_is_final_and_reported_not_failed():
+    """SRL has no public scorecard: unresolved from prices is its final answer (2026-11-03, lb_76111644)."""
+    rows = healthy_rows()
+    rows["results"] = [_match("srl", "Chennai Super Kings SRL", "Rajasthan Royals SRL", "IPL SRL", is_simulated=True,
+                              age_s=90000.0, has_result=True, winner="", result_type="unresolved")]
+    c = one_check(dqm.check_results, rows)
+    assert c["status"] == "ok" and "SRL match(es) unresolved from prices" in c["detail"]
+
+
 def test_results_count_simulated_matches_too():
     # SRL results are recorded since S50, so a missing SRL result is a gap like any other
     rows = healthy_rows()
