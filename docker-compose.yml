@@ -153,6 +153,36 @@ services:
     networks:
       - phoenix-data
 
+  # S65: weekly retraining (Mondays 03:00 UTC): Cricsheet sync, S60 prematch, S58 dataset, S61 blend, S63 gate,
+  # registry promotion only on evidence. Built from the scraper's Dockerfile. Models and reports are written to the
+  # host through the bind mounts; nothing is promoted into models/ outside models/registry/.
+  trainer:
+    build:
+      context: .
+      dockerfile: Dockerfile.scraper
+    container_name: phoenix-trainer
+    command: ["python", "scripts/retrain_weekly.py", "--loop"]
+    environment:
+      - POSTGRES_HOST=timescaledb
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-phoenix}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-phoenix_secure_2026}
+      - POSTGRES_DB=${POSTGRES_DB:-phoenix_betting}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_FORMAT=json
+    volumes:
+      - ./logs:/app/logs
+      - ./models:/app/models
+      - ./data:/app/data
+      - ./reports:/app/reports
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles: ["recording"]
+    networks:
+      - phoenix-data
+
   rl-trainer:
     build:
       context: .

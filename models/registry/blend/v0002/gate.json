@@ -1,0 +1,2248 @@
+{
+  "report": "s63_gate_report",
+  "generated_at_utc": "2026-11-03T06:55:18.811675+00:00",
+  "source": {
+    "name": "blend_20261103T065411Z",
+    "kind": "predictions",
+    "predictions_file": "C:\\Users\\sohai\\Downloads\\prediction-claude\\data\\retrain\\20261103T065411Z\\blend\\predictions.jsonl",
+    "predictions_rows": 0
+  },
+  "dataset": {
+    "dir": "C:\\Users\\sohai\\Downloads\\prediction-claude\\data\\retrain\\20261103T065411Z\\dataset",
+    "dataset": "s58_training_dataset",
+    "generated_at_utc": "2026-11-03T06:54:50.336706+00:00",
+    "git_sha": "307a18052d043dce1891f592cdfe52c618d4532e",
+    "matches": 27,
+    "settled_matches": 9,
+    "snapshots": 1063
+  },
+  "eval_version": "1.0.0",
+  "segments_version": "2026.11.03-2",
+  "settings": {
+    "n_boot": 2000,
+    "seed": 20261103,
+    "bankroll": 1000.0,
+    "devig": "power",
+    "latency_s": 60,
+    "policy_min_edge": 0.02,
+    "policy_segment": "all",
+    "r1_min_matches": 200,
+    "r2_min_matches": 150,
+    "binding_close": {
+      "prematch": "last price before the off (T-0)",
+      "inplay": "same side 10 min after (book_10m)"
+    },
+    "commission": "none modelled; the takeable price already carries the spread"
+  },
+  "coverage": {
+    "prematch": {
+      "rows": 0,
+      "matches": 0,
+      "bets": 0
+    },
+    "inplay": {
+      "rows": 0,
+      "matches": 0,
+      "bets": 0
+    }
+  },
+  "gates": [
+    {
+      "arena": "prematch",
+      "segment": "all",
+      "matches": 0,
+      "rows": 0,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": null,
+      "market_logloss": null,
+      "source_ece": null,
+      "market_ece": null
+    },
+    {
+      "arena": "prematch",
+      "segment": "family_t20",
+      "matches": 0,
+      "rows": 0,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": null,
+      "market_logloss": null,
+      "source_ece": null,
+      "market_ece": null
+    },
+    {
+      "arena": "prematch",
+      "segment": "family_odi",
+      "matches": 0,
+      "rows": 0,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": null,
+      "market_logloss": null,
+      "source_ece": null,
+      "market_ece": null
+    },
+    {
+      "arena": "prematch",
+      "segment": "family_test",
+      "matches": 0,
+      "rows": 0,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": null,
+      "market_logloss": null,
+      "source_ece": null,
+      "market_ece": null
+    },
+    {
+      "arena": "prematch",
+      "segment": "gender_men",
+      "matches": 0,
+      "rows": 0,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": null,
+      "market_logloss": null,
+      "source_ece": null,
+      "market_ece": null
+    },
+    {
+      "arena": "prematch",
+      "segment": "gender_women",
+      "matches": 0,
+      "rows": 0,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": null,
+      "market_logloss": null,
+      "source_ece": null,
+      "market_ece": null
+    },
+    {
+      "arena": "prematch",
+      "segment": "tier_1",
+      "matches": 0,
+      "rows": 0,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": null,
+      "market_logloss": null,
+      "source_ece": null,
+      "market_ece": null
+    },
+    {
+      "arena": "prematch",
+      "segment": "tier_2",
+      "matches": 0,
+      "rows": 0,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": null,
+      "market_logloss": null,
+      "source_ece": null,
+      "market_ece": null
+    },
+    {
+      "arena": "prematch",
+      "segment": "market_favourite",
+      "matches": 0,
+      "rows": 0,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": null,
+      "market_logloss": null,
+      "source_ece": null,
+      "market_ece": null
+    },
+    {
+      "arena": "prematch",
+      "segment": "market_mid",
+      "matches": 0,
+      "rows": 0,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": null,
+      "market_logloss": null,
+      "source_ece": null,
+      "market_ece": null
+    },
+    {
+      "arena": "prematch",
+      "segment": "market_longshot",
+      "matches": 0,
+      "rows": 0,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": null,
+      "market_logloss": null,
+      "source_ece": null,
+      "market_ece": null
+    },
+    {
+      "arena": "prematch",
+      "segment": "real",
+      "matches": 0,
+      "rows": 0,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": null,
+      "market_logloss": null,
+      "source_ece": null,
+      "market_ece": null
+    },
+    {
+      "arena": "prematch",
+      "segment": "simulated",
+      "matches": 0,
+      "rows": 0,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": null,
+      "market_logloss": null,
+      "source_ece": null,
+      "market_ece": null
+    },
+    {
+      "arena": "inplay",
+      "segment": "all",
+      "matches": 0,
+      "rows": 0,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": null,
+      "market_logloss": null,
+      "source_ece": null,
+      "market_ece": null
+    },
+    {
+      "arena": "inplay",
+      "segment": "family_t20",
+      "matches": 0,
+      "rows": 0,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": null,
+      "market_logloss": null,
+      "source_ece": null,
+      "market_ece": null
+    },
+    {
+      "arena": "inplay",
+      "segment": "family_odi",
+      "matches": 0,
+      "rows": 0,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": null,
+      "market_logloss": null,
+      "source_ece": null,
+      "market_ece": null
+    },
+    {
+      "arena": "inplay",
+      "segment": "family_test",
+      "matches": 0,
+      "rows": 0,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": null,
+      "market_logloss": null,
+      "source_ece": null,
+      "market_ece": null
+    },
+    {
+      "arena": "inplay",
+      "segment": "gender_men",
+      "matches": 0,
+      "rows": 0,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": null,
+      "market_logloss": null,
+      "source_ece": null,
+      "market_ece": null
+    },
+    {
+      "arena": "inplay",
+      "segment": "gender_women",
+      "matches": 0,
+      "rows": 0,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": null,
+      "market_logloss": null,
+      "source_ece": null,
+      "market_ece": null
+    },
+    {
+      "arena": "inplay",
+      "segment": "tier_1",
+      "matches": 0,
+      "rows": 0,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": null,
+      "market_logloss": null,
+      "source_ece": null,
+      "market_ece": null
+    },
+    {
+      "arena": "inplay",
+      "segment": "tier_2",
+      "matches": 0,
+      "rows": 0,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": null,
+      "market_logloss": null,
+      "source_ece": null,
+      "market_ece": null
+    },
+    {
+      "arena": "inplay",
+      "segment": "market_favourite",
+      "matches": 0,
+      "rows": 0,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": null,
+      "market_logloss": null,
+      "source_ece": null,
+      "market_ece": null
+    },
+    {
+      "arena": "inplay",
+      "segment": "market_mid",
+      "matches": 0,
+      "rows": 0,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": null,
+      "market_logloss": null,
+      "source_ece": null,
+      "market_ece": null
+    },
+    {
+      "arena": "inplay",
+      "segment": "market_longshot",
+      "matches": 0,
+      "rows": 0,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": null,
+      "market_logloss": null,
+      "source_ece": null,
+      "market_ece": null
+    },
+    {
+      "arena": "inplay",
+      "segment": "real",
+      "matches": 0,
+      "rows": 0,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": null,
+      "market_logloss": null,
+      "source_ece": null,
+      "market_ece": null
+    },
+    {
+      "arena": "inplay",
+      "segment": "simulated",
+      "matches": 0,
+      "rows": 0,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": null,
+      "market_logloss": null,
+      "source_ece": null,
+      "market_ece": null
+    }
+  ],
+  "results": [
+    {
+      "arena": "prematch",
+      "segment": "all",
+      "matches": 0,
+      "rows": 0,
+      "source": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "market": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "prematch",
+      "segment": "family_t20",
+      "matches": 0,
+      "rows": 0,
+      "source": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "market": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "prematch",
+      "segment": "family_odi",
+      "matches": 0,
+      "rows": 0,
+      "source": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "market": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "prematch",
+      "segment": "family_test",
+      "matches": 0,
+      "rows": 0,
+      "source": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "market": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "prematch",
+      "segment": "gender_men",
+      "matches": 0,
+      "rows": 0,
+      "source": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "market": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "prematch",
+      "segment": "gender_women",
+      "matches": 0,
+      "rows": 0,
+      "source": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "market": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "prematch",
+      "segment": "tier_1",
+      "matches": 0,
+      "rows": 0,
+      "source": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "market": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "prematch",
+      "segment": "tier_2",
+      "matches": 0,
+      "rows": 0,
+      "source": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "market": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "prematch",
+      "segment": "market_favourite",
+      "matches": 0,
+      "rows": 0,
+      "source": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "market": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "prematch",
+      "segment": "market_mid",
+      "matches": 0,
+      "rows": 0,
+      "source": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "market": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "prematch",
+      "segment": "market_longshot",
+      "matches": 0,
+      "rows": 0,
+      "source": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "market": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "prematch",
+      "segment": "real",
+      "matches": 0,
+      "rows": 0,
+      "source": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "market": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "prematch",
+      "segment": "simulated",
+      "matches": 0,
+      "rows": 0,
+      "source": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "market": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "inplay",
+      "segment": "all",
+      "matches": 0,
+      "rows": 0,
+      "source": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "market": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "inplay",
+      "segment": "family_t20",
+      "matches": 0,
+      "rows": 0,
+      "source": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "market": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "inplay",
+      "segment": "family_odi",
+      "matches": 0,
+      "rows": 0,
+      "source": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "market": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "inplay",
+      "segment": "family_test",
+      "matches": 0,
+      "rows": 0,
+      "source": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "market": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "inplay",
+      "segment": "gender_men",
+      "matches": 0,
+      "rows": 0,
+      "source": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "market": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "inplay",
+      "segment": "gender_women",
+      "matches": 0,
+      "rows": 0,
+      "source": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "market": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "inplay",
+      "segment": "tier_1",
+      "matches": 0,
+      "rows": 0,
+      "source": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "market": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "inplay",
+      "segment": "tier_2",
+      "matches": 0,
+      "rows": 0,
+      "source": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "market": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "inplay",
+      "segment": "market_favourite",
+      "matches": 0,
+      "rows": 0,
+      "source": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "market": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "inplay",
+      "segment": "market_mid",
+      "matches": 0,
+      "rows": 0,
+      "source": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "market": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "inplay",
+      "segment": "market_longshot",
+      "matches": 0,
+      "rows": 0,
+      "source": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "market": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "inplay",
+      "segment": "real",
+      "matches": 0,
+      "rows": 0,
+      "source": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "market": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "inplay",
+      "segment": "simulated",
+      "matches": 0,
+      "rows": 0,
+      "source": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "market": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    }
+  ],
+  "summary": {
+    "r1_counts": {
+      "insufficient": 26
+    },
+    "r2_counts": {
+      "insufficient": 26
+    },
+    "r1_pass": [],
+    "r2_pass": [],
+    "signals_allowed": false
+  }
+}

@@ -19,7 +19,7 @@ from scripts import recording_health as health
 
 UTC = timezone.utc
 NOW = datetime(2026, 11, 3, 12, 0, tzinfo=UTC)
-PARAM_NAMES = {"now", "since", "min_odds", "max_odds", "tie_seconds"}
+PARAM_NAMES = {"now", "since", "min_odds", "max_odds", "tie_seconds", "heartbeat_since"}
 
 
 def _match(match_id="m1", home="India", away="Australia", competition="ICC T20", **extra) -> dict[str, Any]:
@@ -42,6 +42,8 @@ def healthy_rows() -> dict[str, list[dict[str, Any]]]:
         "odds_totals": [{"rows": 100, "empty_competition": 0}],
         "match_names": [_match(odds_rows=50, name_variants=1)],
         "is_simulated_column": [{"present": False}],
+        "score_pipeline_column": [{"present": True}],
+        "score_pipelines": [{"match_id": "m1", "score_pipeline": "livescore-v2"}],
         "results": [_match("m0", age_s=7200.0, has_result=True, winner="India", result_type="win")],
         "misattribution_ticks": [],
     }
@@ -55,8 +57,11 @@ def fake_fetch(rows: dict[str, list[dict[str, Any]]]):
     return fetch
 
 
+NO_REGISTRY = Path("no-registry-here")  # S65: model_drift reads nothing unless a champion exists
+
+
 def run(rows: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
-    return asyncio.run(dqm.run_checks(fake_fetch(rows), now=NOW, window_hours=24))
+    return asyncio.run(dqm.run_checks(fake_fetch(rows), now=NOW, window_hours=24, registry_root=NO_REGISTRY))
 
 
 def by_name(report: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -114,6 +119,7 @@ def test_healthy_day_is_ok_with_exit_zero():
     assert [c["name"] for c in report["checks"]] == [
         "freshness", "price_sanity", "duplicates", "match_page_coverage", "lay_completeness",
         "score_coverage", "registry", "results", "gaps", "srl", "misattribution",
+        "model_drift",
     ]
 
 
@@ -251,34 +257,49 @@ def test_lay_completeness_ok_when_every_lay_less_tick_is_covered_by_the_match_pa
 
 
 # --------------------------------------------------------------------------- score coverage
-def test_score_coverage_warns_when_a_small_share_has_no_score_state():
+def _score_rows(*matches):
+    """Live matches with match-page rows; each tuple is (match_id, pipeline or None, has_context)."""
     rows = healthy_rows()
-    rows["live_matches"] = [_match(f"m{i}", has_market=True, has_context=True) for i in range(19)]
-    rows["live_matches"].append(_match("gap", has_market=True, has_context=False))
+    rows["live_matches"] = [_match(mid, has_market=True, has_context=ctx) for mid, _pipe, ctx in matches]
+    rows["score_pipelines"] = [{"match_id": mid, "score_pipeline": pipe} for mid, pipe, _ctx in matches if pipe]
+    return rows
+
+
+def test_score_coverage_fails_when_a_livescore_match_has_no_score_state():
+    # S68: a match on the livescore-v2 feed with match-page rows but no score rows is a recording fault
+    rows = _score_rows(*[(f"m{i}", "livescore-v2", True) for i in range(19)], ("gap", "livescore-v2", False))
     c = one_check(dqm.check_score_coverage, rows)
-    assert c["status"] == "warn"
+    assert c["status"] == "fail"
     assert c["value"] == pytest.approx(0.05)
+    assert "gap" in c["detail"]
 
 
-def test_score_coverage_only_warns_when_half_the_match_pages_have_no_score_state():
-    # Known source limit (S51): the scoreboard does not render headless, so this never fails
-    rows = healthy_rows()
-    rows["live_matches"] = [_match("a", has_market=True, has_context=True),
-                            _match("b", has_market=True, has_context=False)]
-    c = one_check(dqm.check_score_coverage, rows)
-    assert c["status"] == "warn" and c["value"] == pytest.approx(0.5)
-
-
-def test_score_coverage_only_warns_when_most_match_pages_have_no_score_state():
-    rows = healthy_rows()
-    rows["live_matches"] = [_match(f"m{i}", has_market=True, has_context=False) for i in range(5)]
-    rows["live_matches"].append(_match("ok", has_market=True, has_context=True))
-    c = one_check(dqm.check_score_coverage, rows)
-    assert c["status"] == "warn"
-
-
-def test_score_coverage_ok_when_every_match_page_has_context():
+def test_score_coverage_ok_when_every_livescore_match_has_context():
     assert one_check(dqm.check_score_coverage, healthy_rows())["status"] == "ok"
+
+
+def test_legacy_matches_without_score_state_never_fail_and_are_reported_apart():
+    rows = _score_rows(("v2", "livescore-v2", True), ("old", "legacy", False), ("old2", "legacy", False))
+    c = one_check(dqm.check_score_coverage, rows)
+    assert c["status"] == "ok"
+    assert c["value"] == pytest.approx(0.0)
+    assert "2 on the legacy pipeline" in c["detail"]
+
+
+def test_matches_without_a_recorded_pipeline_are_not_scored():
+    rows = _score_rows(("unread", None, False))
+    c = one_check(dqm.check_score_coverage, rows)
+    assert c["status"] == "ok"
+    assert "1 with no pipeline recorded yet" in c["detail"]
+
+
+def test_score_coverage_is_not_scored_until_the_pipeline_column_exists():
+    rows = _score_rows(("m1", "livescore-v2", False))
+    rows["score_pipeline_column"] = [{"present": False}]
+    rows.pop("score_pipelines")
+    c = one_check(dqm.check_score_coverage, rows)
+    assert c["status"] == "ok"
+    assert "migration 007 not applied" in c["detail"]
 
 
 # --------------------------------------------------------------------------- registry
@@ -337,11 +358,12 @@ def test_results_fail_on_empty_winner():
     assert c["status"] == "fail" and "empty winner" in c["detail"]
 
 
-def test_results_ignore_simulated_matches():
+def test_results_count_simulated_matches_too():
+    # SRL results are recorded since S50, so a missing SRL result is a gap like any other
     rows = healthy_rows()
     rows["results"] = [_match("srl", "Hobart Hurricanes SRL", "Perth Scorchers", "",
                               age_s=90000.0, has_result=False, winner=None, result_type=None)]
-    assert one_check(dqm.check_results, rows)["status"] == "ok"
+    assert one_check(dqm.check_results, rows)["status"] == "fail"
 
 
 # --------------------------------------------------------------------------- gaps
@@ -361,11 +383,20 @@ def test_gaps_detail_names_the_match_with_the_longest_gap():
     assert "None" not in c["detail"]
 
 
-def test_gaps_ok_with_short_gaps_and_ignore_simulated_matches():
+def test_gaps_count_srl_matches_too():
+    # SRL is recorded from its match page like any match (S50), so its gaps count
     rows = healthy_rows()
+    rows["live_matches"] = rows["live_matches"] + [_match("srl", "Hobart Hurricanes SRL", "Perth Scorchers SRL", "")]
     rows["gaps"] = [{"match_id": "m1", "max_gap_s": 120.0},
                     {"match_id": "srl", "max_gap_s": 3600.0}]
-    assert one_check(dqm.check_gaps, rows)["status"] == "ok"
+    assert one_check(dqm.check_gaps, rows)["status"] == "warn"
+
+
+def test_gaps_before_the_live_heartbeat_are_reported_but_not_scored():
+    rows = healthy_rows()
+    rows["gaps"] = [{"match_id": "m1", "max_gap_s": 120.0, "max_gap_before_heartbeat_s": 9291.0}]
+    c = one_check(dqm.check_gaps, rows)
+    assert c["status"] == "ok" and "before the live heartbeat (not scored)" in c["detail"]
 
 
 # --------------------------------------------------------------------------- SRL
@@ -460,3 +491,97 @@ def test_lay_completeness_does_not_score_ticks_from_before_match_pages_existed()
     rows["lay_completeness"] = [{"live_ticks": 100, "null_lay_ticks": 90, "recoverable": 40, "before_match_pages": 50}]
     c = one_check(dqm.check_lay_completeness, rows)
     assert c["status"] == "ok" and "50 recorded before match-page recording began" in c["detail"]
+
+
+# --------------------------------------------------------------------------- S65 model_drift
+def _drift_registry(tmp_path: Path, predictions: list[dict[str, Any]], baseline_values: list[float]) -> Path:
+    from training.registry import Registry, distribution
+
+    root = tmp_path / "registry"
+    registry = Registry(root)
+    pred_file = tmp_path / "predictions.jsonl"
+    pred_file.write_text("".join(json.dumps(p) + "\n" for p in predictions), encoding="utf-8")
+    latest = tmp_path / "latest.json"
+    latest.write_text("{}", encoding="utf-8")
+    baseline = {"p_market": distribution(baseline_values), "p_model": distribution(baseline_values)}
+    version = registry.register("blend", {"latest.json": latest, "predictions.jsonl": pred_file},
+                                {"baseline": baseline, "gate_source": "blend_x"})
+    registry.set_champion("blend", version, reason="test")
+    return root
+
+
+def _settled(n: int, *, home_won: int = 1, team_home: str = "India", team_away: str = "Australia") -> list[dict]:
+    winner = team_home if home_won else team_away
+    return [{"match_id": f"d{i}", "winner": winner, "team_home": team_home, "team_away": team_away}
+            for i in range(n)]
+
+
+def _preds(n: int, p: float) -> list[dict[str, Any]]:
+    return [{"match_id": f"d{i}", "snapshot": f"d{i}:T-10m", "p_home": p, "p_market": p, "p_model": p,
+             "date": "2026-11-01"} for i in range(n)]
+
+
+def _drift(tmp_path: Path, root: Path | None, rows: list[dict]) -> dict[str, Any]:
+    async def go():
+        params = {"now": NOW, "since": NOW - timedelta(hours=24), "registry_root": root or tmp_path / "none"}
+        return await dqm.check_model_drift(fake_fetch({"settled_recent": rows}), params)
+
+    return asyncio.run(go())
+
+
+def test_model_drift_is_ok_with_no_champion(tmp_path: Path):
+    check = _drift(tmp_path, None, _settled(80))
+    assert check["status"] == "ok" and "no champion" in check["detail"]
+
+
+def test_model_drift_ok_when_calibrated_and_on_baseline(tmp_path: Path):
+    root = _drift_registry(tmp_path, _preds(60, 0.5), [0.5] * 60)
+    rows = [_settled(1, home_won=i % 2)[0] for i in range(60)]  # 30 home wins, 30 losses: mean p 0.5 is calibrated
+    check = _drift(tmp_path, root, rows)
+    assert check["status"] == "ok"
+    assert check["value"] == pytest.approx(0.0)
+    assert "60 settled match(es)" in check["detail"]
+
+
+def test_model_drift_warns_but_never_fails_below_fifty_settled(tmp_path: Path):
+    root = _drift_registry(tmp_path, _preds(20, 0.9), [0.9] * 20)
+    check = _drift(tmp_path, root, _settled(20, home_won=0))  # 20 losses at p 0.9: a large calibration gap
+    assert check["status"] == "warn"
+    assert "enforced from 50" in check["detail"]
+
+
+def test_model_drift_fails_on_a_large_gap_once_enforced(tmp_path: Path):
+    root = _drift_registry(tmp_path, _preds(60, 0.9), [0.9] * 60)
+    check = _drift(tmp_path, root, _settled(60, home_won=0))
+    assert check["status"] == "fail"
+    assert check["value"] == pytest.approx(0.9)
+
+
+def test_model_drift_counts_unmatched_names_and_skips_unpredicted_matches(tmp_path: Path):
+    root = _drift_registry(tmp_path, _preds(5, 0.5), [0.5] * 5)
+    rows = _settled(5, home_won=1)
+    rows.append({"match_id": "d0", "winner": "Somebody Else", "team_home": "India", "team_away": "Australia"})
+    rows.append({"match_id": "unpredicted", "winner": "India", "team_home": "India", "team_away": "Australia"})
+    check = _drift(tmp_path, root, rows)
+    assert "1 result(s) with unmatched team names" in check["detail"]
+    assert "5 settled match(es)" in check["detail"]
+
+
+def test_model_drift_warns_when_the_champion_has_no_predictions_file(tmp_path: Path):
+    from training.registry import Registry
+
+    registry = Registry(tmp_path / "registry")
+    latest = tmp_path / "latest.json"
+    latest.write_text("{}", encoding="utf-8")
+    version = registry.register("blend", {"latest.json": latest}, {"baseline": {}})
+    registry.set_champion("blend", version, reason="test")
+    check = _drift(tmp_path, tmp_path / "registry", _settled(3))
+    assert check["status"] == "warn" and "no predictions artefact" in check["detail"]
+
+
+def test_results_unresolved_row_of_a_match_still_being_recorded_is_provisional():
+    rows = healthy_rows()
+    rows["results"] = [_match("live", age_s=120.0, has_result=True, winner="", result_type="unresolved")]
+    assert one_check(dqm.check_results, rows)["status"] == "ok"
+    rows["results"] = [_match("gone", age_s=3 * 3600.0, has_result=True, winner="", result_type="unresolved")]
+    assert one_check(dqm.check_results, rows)["status"] == "fail"

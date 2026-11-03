@@ -36,7 +36,7 @@ async def test_prematch_prices_are_recorded_only_on_change(monkeypatch, manager_
     assert len(_ticks(manager_env.session)) == 1
     assert manager_env.redis.published == []  # pre-match ticks never reach live consumers
 
-    # Same price again, immediately and 60 s later: nothing new (heartbeat is 15 min)
+    # Same price again, immediately and 60 s later: nothing new (heartbeat is 10 min)
     await mgr._on_events([_upcoming()])
     mgr._prematch_last["up1"] = (mgr._prematch_last["up1"][0], mgr._prematch_last["up1"][1] - timedelta(seconds=60))
     await mgr._on_events([_upcoming()])

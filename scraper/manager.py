@@ -23,6 +23,8 @@ from scraper.lotus_result_detector import LotusResultDetector
 from scraper.market_pages import MarketPageWorker, build_match_url, eligibility, open_match_page, resolve_match_href
 from scraper.parsers.lotusbook_json import EventMeta, is_menu_url, menu_competitions
 from scraper.parsers.lotusbook_markets import MarketRecord
+from scraper.parsers.lotusbook_score import ScoreState, to_context_row
+from scraper.parsers.lotusbook_scoreboard import parse_result_comment
 from scraper.worker import ScraperWorker
 from scripts.quarantine_ticks import GAP_S, batch_copy_match_ids, is_decisive
 from shared.config import get_settings
@@ -40,7 +42,9 @@ FEED_STATE_PATH = ROOT_DIR / "logs" / "scraper_feed.json"
 MARKET_WORKER_CAP_DEFAULT = 12
 MARKET_RESTART_DELAY_S = 60.0    # a worker that ended while its match is live is restarted after this
 MARKET_MAX_RESTARTS = 5          # per match, for the process lifetime
-MARKET_ABSENT_STOP_S = 600.0     # a worker stops when its match has not been seen live for this long
+MARKET_ABSENT_STOP_S = 2700.0    # a worker stops when its match has shown no live activity for this long: not on the
+                                 # listing and no change on its own match page (innings breaks drop matches off the
+                                 # listing while the page keeps updating)
 MARKET_SWEEP_S = 30.0            # how often the janitor checks completion and absence
 
 
@@ -136,6 +140,11 @@ class ScraperManager:
         self._competition_by_event: dict[str, tuple[str, str]] = {}
         self._registry_without_competition: set[str] = set()
         self._menu_tasks: set[asyncio.Task] = set()
+        # S68: score feed. Pipeline last written per match, matches whose result was handed on, and matches whose
+        # toss is in the registry (written once, when the registry row exists).
+        self._score_pipeline_by_match: dict[str, str] = {}
+        self._score_result_sent: set[str] = set()
+        self._toss_written: set[str] = set()
 
     async def start(self) -> None:
         """Start the scraper manager: launch browser, begin scraping."""
@@ -622,7 +631,8 @@ class ScraperManager:
         )
 
     PREMATCH_MIN_INTERVAL_S = 30.0     # at most one stored pre-match tick per match per 30 s
-    PREMATCH_HEARTBEAT_S = 900.0       # store an unchanged pre-match price at least every 15 min
+    PREMATCH_HEARTBEAT_S = 600.0       # store an unchanged pre-match price at least every 10 min (under the
+                                       # 15-min staleness limit of the training snapshots, S58)
     LIVE_HEARTBEAT_S = 300.0           # store an unchanged live price at least every 5 min
 
     def _prematch_due(self, event: OddsEvent, now: datetime) -> bool:
@@ -765,6 +775,12 @@ class ScraperManager:
         async def on_meta(match_id: str, meta: EventMeta, _event: OddsEvent = event) -> None:
             await self._apply_market_meta(_event, meta)
 
+        async def on_score(
+            match_id: str, state: ScoreState | None, pipeline: str | None, observed_at: datetime,
+            _event: OddsEvent = event,
+        ) -> None:
+            await self._on_market_score(_event, state, pipeline, observed_at)
+
         worker = MarketPageWorker(
             match_id=mid,
             page=page,
@@ -773,6 +789,7 @@ class ScraperManager:
             on_scoreboard=self._on_market_scoreboard,
             on_meta=on_meta,
             on_settled=self._on_market_settled,
+            on_score=on_score,
         )
         worker.seed(await self._last_market_state(mid))
         self._market_stops[mid] = stop
@@ -911,8 +928,102 @@ class ScraperManager:
             self._completed_match_ids.add(match_id)
             logger.info("match_result_settled_json", match_id=match_id, winner=result.get("winner", ""))
 
+    async def _on_market_score(
+        self, event: OddsEvent, state: ScoreState | None, pipeline: str | None, observed_at: datetime,
+    ) -> None:
+        """Score feed step of a market poll (S68), passive: the page's own response, read by the worker.
+
+        ``state`` is None when only the pipeline changed (a legacy body, for example). A match_context row is
+        stored per changed state, never a placeholder. The toss is written to the registry once. A finished
+        result text goes to the result detector once per match, and the raw text is logged so the wording
+        can be checked against the parser.
+        """
+        match_id = event.match_id
+        if pipeline is not None and self._score_pipeline_by_match.get(match_id) != pipeline:
+            self._score_pipeline_by_match[match_id] = pipeline
+            await self._record_score_pipeline(match_id, pipeline)
+            logger.info("score_pipeline_recorded", match_id=match_id, pipeline=pipeline)
+        if state is None:
+            return
+
+        row = to_context_row(state, match_id, event.team_home, event.team_away, observed_at=observed_at)
+        if row is not None:
+            await self._store_score_row(row)
+            logger.info(
+                "score_context_stored",
+                match_id=match_id,
+                source="lotusbook_score_v3",
+                score=row["score"],
+                wickets=row["wickets"],
+                overs=row["overs"],
+                innings=row["innings"],
+                status=row["status"],
+            )
+
+        if state.toss_winner and match_id not in self._toss_written:
+            if await self._record_toss(match_id, state.toss_winner, state.toss_decision or ""):
+                self._toss_written.add(match_id)
+
+        text = state.result_text
+        if text and parse_result_comment(text) is None:
+            logger.info("score_result_text", match_id=match_id, text=text, parsed=False)
+        if text and parse_result_comment(text) is not None and match_id not in self._score_result_sent:
+            logger.info("score_result_text", match_id=match_id, text=text, parsed=True)
+            self._score_result_sent.add(match_id)
+            await self._result_detector.update_scoreboard(match_id, text, finished=True)
+
+    async def _store_score_row(self, row: dict[str, Any]) -> None:
+        """Store one match_context row built by ``to_context_row``. A DB error is logged, never raised."""
+        from backend.models.match import MatchContextRecord
+
+        try:
+            async with get_session() as session:
+                session.add(MatchContextRecord(**row))
+        except Exception as e:
+            logger.error("score_db_store_error", match_id=row["match_id"], error=str(e))
+
+    async def _record_score_pipeline(self, match_id: str, pipeline: str) -> None:
+        """Write the score feed pipeline of a match to its registry row (only when the row exists)."""
+        from sqlalchemy import text
+
+        try:
+            async with get_session() as session:
+                await session.execute(
+                    text("UPDATE match_training_status SET score_pipeline = :pipeline WHERE match_id = :mid"),
+                    {"pipeline": pipeline, "mid": match_id},
+                )
+        except Exception as e:
+            logger.error("score_pipeline_db_error", match_id=match_id, error=str(e))
+
+    async def _record_toss(self, match_id: str, winner: str, decision: str) -> bool:
+        """Write the toss to the registry once (only while it is still empty). True when a row was written."""
+        from sqlalchemy import text
+
+        try:
+            async with get_session() as session:
+                result = await session.execute(
+                    text(
+                        """
+                        UPDATE match_training_status
+                           SET toss_winner = :winner, toss_decision = :decision
+                         WHERE match_id = :mid AND toss_winner IS NULL
+                        """
+                    ),
+                    {"winner": winner, "decision": decision, "mid": match_id},
+                )
+                written = (getattr(result, "rowcount", 0) or 0) > 0
+        except Exception as e:
+            logger.error("toss_db_error", match_id=match_id, error=str(e))
+            return False
+        if written:
+            logger.info("toss_recorded", match_id=match_id, winner=winner, decision=decision)
+        return written
+
     async def _store_market_records(self, match_id: str, records: list[MarketRecord]) -> None:
         """Write changed market records to market_ticks (storage call only)."""
+        # A changing match page is live activity even while the match is missing from the listing
+        if any(r.status != "closed" for r in records):
+            self._market_live_seen[match_id] = self._market_now()
         from backend.models.market_ticks import MarketTick
 
         try:

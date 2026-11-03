@@ -10,6 +10,9 @@ that disappears from the page is written once with ``status='closed'``.
 S56: the page's own market JSON (``sma-event`` responses, read passively through ``page.on("response")``) is
 the primary source. The DOM parse runs only when no JSON has arrived for ``JSON_FRESH_S`` seconds. The JSON
 also gives the competition and start time (``on_meta``) and the Winner settlement (``on_settled``).
+
+S68: the page's own score feed (``match-center/score/v3`` responses, read the same passive way) gives the live
+score, toss and result. Changed states are handed to ``on_score``; unchanged or out-of-order ones are dropped.
 """
 
 from __future__ import annotations
@@ -23,6 +26,13 @@ from urllib.parse import urljoin
 
 from scraper.parsers.lotusbook_json import EventMeta, event_id_from_url, event_meta, event_records, settlement_of
 from scraper.parsers.lotusbook_markets import MarketRecord, parse_market_html
+from scraper.parsers.lotusbook_score import (
+    PIPELINE_LEGACY,
+    ScoreState,
+    parse_score_v3,
+    score_event_id_from_url,
+    score_pipeline_of,
+)
 from scraper.parsers.lotusbook_scoreboard import ScoreboardState, parse_scoreboard_html
 from shared.logging import setup_logging
 
@@ -43,6 +53,8 @@ ScoreboardFn = Callable[[str, Optional[ScoreboardState], datetime], Awaitable[No
 MetaFn = Callable[[str, EventMeta], Awaitable[None]]
 # (match_id, winner runner name, observed_at) for a CLOSED Winner market with exactly one winner
 SettledFn = Callable[[str, str, datetime], Awaitable[None]]
+# S68: (match_id, changed score state or None when only the pipeline is new, pipeline or None, observed_at)
+ScoreFeedFn = Callable[[str, Optional[ScoreState], Optional[str], datetime], Awaitable[None]]
 MarketKey = tuple[str, str, str]  # (market_type, market_name, selection)
 
 
@@ -124,6 +136,7 @@ class MarketPageWorker:
         on_scoreboard: Optional[ScoreboardFn] = None,
         on_meta: Optional[MetaFn] = None,
         on_settled: Optional[SettledFn] = None,
+        on_score: Optional[ScoreFeedFn] = None,
     ) -> None:
         self.match_id = match_id
         self.page = page
@@ -135,6 +148,13 @@ class MarketPageWorker:
         self._on_scoreboard = on_scoreboard
         self._on_meta = on_meta
         self._on_settled = on_settled
+        self._on_score = on_score
+        # S68 score feed state: last handed state, pipeline last handed, and one-time flags
+        self._score_last: Optional[ScoreState] = None
+        self._score_pipeline_sent: Optional[str] = None
+        self._score_json_snapshots = 0
+        self._score_error_logged = False
+        self._score_legacy_logged = False
         # Last stored record per market key. A key absent from it is either new or was closed.
         self._last_by_key: dict[MarketKey, MarketRecord] = {}
         self.stored_snapshots = 0
@@ -168,15 +188,21 @@ class MarketPageWorker:
             page_on("response", self._on_response)
 
     def _on_response(self, response: Any) -> None:
-        """Synchronous listener: ignores every URL except this match's ``sma-event`` JSON."""
+        """Synchronous listener: ignores every URL except this match's ``sma-event`` and score feed JSON."""
         try:
             url = response.url
         except Exception:
             return
         event_id = event_id_from_url(url)
-        if event_id is None or not self._is_own_event(event_id):
+        if event_id is not None and self._is_own_event(event_id):
+            self._spawn(self.handle_response(response))
             return
-        task = asyncio.ensure_future(self.handle_response(response))
+        score_id = score_event_id_from_url(url)
+        if score_id is not None and self._is_own_event(score_id):
+            self._spawn(self.handle_score_response(response))
+
+    def _spawn(self, coro: Any) -> None:
+        task = asyncio.ensure_future(coro)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
@@ -195,6 +221,73 @@ class MarketPageWorker:
                 logger.warning("market_json_unreadable", match_id=self.match_id, error=str(exc))
             return
         await self.ingest_event_json(payload)
+
+    # ── S68: passive capture of the page's own score feed ──────────────────────────────
+
+    @property
+    def score_json_snapshots(self) -> int:
+        """Score feed bodies ingested for this match."""
+        return self._score_json_snapshots
+
+    async def handle_score_response(self, response: Any) -> None:
+        """Read one ``match-center/score/v3`` response body and ingest it. An unreadable body is logged once."""
+        try:
+            payload = await response.json()
+        except Exception as exc:
+            if not self._score_error_logged:
+                self._score_error_logged = True
+                logger.warning("score_json_unreadable", match_id=self.match_id, error=str(exc))
+            return
+        await self.ingest_score_json(payload)
+
+    def _score_is_new(self, state: ScoreState) -> bool:
+        """A state is new when it is not older than the last handed one and its score content differs."""
+        last = self._score_last
+        if last is None:
+            return True
+        if state.updated_at is not None and last.updated_at is not None and state.updated_at < last.updated_at:
+            return False  # out of order: the feed already moved past it
+        return state.content_key() != last.content_key()
+
+    async def ingest_score_json(self, payload: Any) -> bool:
+        """Hand a changed score state (or a newly seen pipeline) to ``on_score``. Returns True when a state was handed.
+
+        Bodies that cannot be parsed are logged once and skipped. A legacy body has no state; its pipeline is
+        still handed over once so the registry records it.
+        """
+        now = datetime.now(timezone.utc)
+        try:
+            pipeline = score_pipeline_of(payload)
+            state = parse_score_v3(payload)
+        except Exception as exc:
+            if not self._score_error_logged:
+                self._score_error_logged = True
+                logger.warning("score_json_parse_error", match_id=self.match_id, error=str(exc))
+            return False
+
+        self._score_json_snapshots += 1
+        if pipeline == PIPELINE_LEGACY and not self._score_legacy_logged:
+            self._score_legacy_logged = True
+            logger.info("score_pipeline_legacy", match_id=self.match_id)
+
+        pipeline_new = pipeline is not None and pipeline != self._score_pipeline_sent
+        fresh = state is not None and self._score_is_new(state)
+        if not fresh and not pipeline_new:
+            return False
+        if pipeline_new:
+            self._score_pipeline_sent = pipeline
+        if fresh:
+            self._score_last = state
+        await self._send_score(state if fresh else None, pipeline, now)
+        return fresh
+
+    async def _send_score(self, state: Optional[ScoreState], pipeline: Optional[str], observed_at: datetime) -> None:
+        if self._on_score is None:
+            return
+        try:
+            await self._on_score(self.match_id, state, pipeline, observed_at)
+        except Exception as exc:  # the registry or the score row must never stop the recording
+            logger.warning("score_callback_error", match_id=self.match_id, error=str(exc))
 
     def _json_is_fresh(self) -> bool:
         """True while the market JSON is the source: attached, and a body arrived within JSON_FRESH_S.

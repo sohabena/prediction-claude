@@ -61,8 +61,8 @@ def _tick(det, *, bh=None, ba=None, lh=None, la=None, live=True, home=HOME, away
     )
 
 
-def _absent(det, clock, seconds=600, mid=MID):
-    """Advance the clock past the absence threshold and run the batch check."""
+def _absent(det, clock, seconds=ld.UNRESOLVED_ABSENCE_SECONDS + 60, mid=MID):
+    """Advance the clock past the absence thresholds (incl. the 45-min unresolved wait) and run the batch check."""
     clock.advance(seconds)
     return asyncio.run(det.check_completed(set()))
 
@@ -379,3 +379,14 @@ def test_unresolved_match_that_reappears_is_judged_again(clock, stored):
     clock.advance(seconds=10_000)
     asyncio.run(det.check_completed(set()))
     assert stored[-1]["result_type"] == "win" and stored[-1]["winner"] == HOME
+
+
+def test_vanished_match_without_decisive_prices_waits_45_minutes(clock, stored):
+    det = LotusResultDetector()
+    _tick(det, bh=1.9, ba=2.0)
+    clock.advance(seconds=600)  # off the listing 10 min (an innings break)
+    asyncio.run(det.check_completed(set()))
+    assert stored == []
+    clock.advance(seconds=ld.UNRESOLVED_ABSENCE_SECONDS)
+    asyncio.run(det.check_completed(set()))
+    assert stored[-1]["result_type"] == "unresolved"

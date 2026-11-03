@@ -20,10 +20,11 @@ from typing import Any, Callable, Iterator, Mapping, Optional
 
 import joblib
 
-from scraper.match_filter import MatchClassifier
 from shared.logging import setup_logging
 from strategy.fair_value import family_of
 from strategy.ratings import CricketRatings
+from training.segments import gender_of as segment_gender_of
+from training.segments import is_womens_team, strip_womens_team
 
 logger = setup_logging("live_context")
 
@@ -37,16 +38,23 @@ _FIELD_CACHES: "weakref.WeakKeyDictionary[Any, dict[tuple, dict[str, float]]]" =
 
 # ---------------------------------------------------------------- gender
 def is_womens_name(name: Optional[str]) -> bool:
-    """True for a women's side name (``... W``, ``... (W)``, ``... Women``), using the scraper's suffix rule."""
-    normalized = str(name or "").lower().strip()
-    return bool(normalized) and MatchClassifier._strip_womens_suffix(normalized) != normalized
+    """True for a women's side name (``... W``, ``... (W)``, ``... Women``): the shared S67 rule."""
+    return is_womens_team(name)
 
 
 def gender_of(team_home: Optional[str], team_away: Optional[str], competition: Optional[str] = "") -> str:
-    """``"female"`` when either side or the competition is women's, else ``"male"`` (the ratings' gender keys)."""
-    if "women" in str(competition or "").lower() or is_womens_name(team_home) or is_womens_name(team_away):
-        return "female"
-    return "male"
+    """``"female"`` when a women's token or a women's side is present, else ``"male"`` (the ratings' gender keys).
+
+    Same rule as ``training.segments.gender_of`` (S67): women's tokens in the competition (women, WBBL, WPL, WODI,
+    WT20) or a team ending in ``W`` / ``(W)`` / ``Women``.
+    """
+    return "female" if segment_gender_of(competition, team_home, team_away) == "women" else "male"
+
+
+def ratings_team_name(name: Optional[str], gender: str) -> str:
+    """Name used for a rating lookup: for a women's match ``Sydney Thunder W`` becomes ``Sydney Thunder``."""
+    text = str(name or "").strip()
+    return strip_womens_team(text) if gender == "female" else text
 
 
 # ---------------------------------------------------------------- ratings: build, fingerprint, cache
@@ -160,6 +168,7 @@ def prematch_fields(
         return {}
     gender = gender_of(home, away, tick.get("competition", ""))
     key = (str(tick.get("match_id", "")), family, day, str(home), str(away))
+    rating_home, rating_away = ratings_team_name(home, gender), ratings_team_name(away, gender)
     try:
         cache = _FIELD_CACHES.setdefault(ratings, {})
     except TypeError:  # not weak-referenceable: no cache, still correct
@@ -167,7 +176,7 @@ def prematch_fields(
     if key not in cache:
         try:
             cache[key] = ratings.pre_match_live(
-                str(home), str(away), family, gender, day,
+                rating_home, rating_away, family, gender, day,
                 venue=tick.get("venue"),
                 toss_winner=tick.get("toss_winner"),
                 toss_decision=tick.get("toss_decision"),

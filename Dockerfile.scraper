@@ -41,6 +41,18 @@ COPY scripts/run_scraper_forever.py /app/scripts/run_scraper_forever.py
 COPY scripts/data_quality_monitor.py /app/scripts/data_quality_monitor.py
 COPY scripts/quarantine_ticks.py /app/scripts/quarantine_ticks.py
 
+# S65 trainer (profile recording): weekly prematch, dataset, blend and gate, plus the registry. Same image.
+COPY strategy/ /app/strategy/
+COPY training/ /app/training/
+COPY scripts/build_training_dataset.py /app/scripts/build_training_dataset.py
+COPY scripts/train_fair_value.py /app/scripts/train_fair_value.py
+COPY scripts/train_prematch_model.py /app/scripts/train_prematch_model.py
+COPY scripts/train_blend_model.py /app/scripts/train_blend_model.py
+COPY scripts/evaluate_models.py /app/scripts/evaluate_models.py
+COPY scripts/retrain_weekly.py /app/scripts/retrain_weekly.py
+COPY scripts/cricsheet_harmonizer.py /app/scripts/cricsheet_harmonizer.py
+COPY scripts/synthetic_market.py /app/scripts/synthetic_market.py
+
 # Create non-root user; logs/ is bind-mounted from the host so heartbeats are visible there
 RUN useradd --create-home phoenix && mkdir -p /app/logs && chown -R phoenix /app/logs
 USER phoenix

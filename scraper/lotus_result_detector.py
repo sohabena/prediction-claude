@@ -43,6 +43,9 @@ AMBIGUOUS_THRESHOLD_SECONDS = 3600  # 1 hour
 
 # Seconds a match must be absent from scrape results before we declare it completed
 ABSENCE_THRESHOLD_SECONDS = 300  # 5 minutes
+# Live matches drop off the listing for a while (innings break, suspension). Without decisive prices, wait this long
+# before calling a vanished match unresolved, so a match still being played is not given a provisional result.
+UNRESOLVED_ABSENCE_SECONDS = 2700  # 45 minutes
 
 # Decisive price rules (S54)
 DECISIVE_BACK = 1.05        # a side's back at or below this -> that side is winning
@@ -305,6 +308,8 @@ class LotusResultDetector:
                 continue
 
             result = self._infer_result(tracked, now)
+            if result["result_type"] != RESULT_WIN and absence < UNRESOLVED_ABSENCE_SECONDS:
+                continue  # probably an innings break or a suspension: judge again later
             tracked.written_source = SOURCE_ODDS
             if result["result_type"] == RESULT_WIN:
                 self._resolved_ids.add(match_id)

@@ -139,6 +139,11 @@ MIGRATION_STATEMENTS = [
        ADD COLUMN IF NOT EXISTS lay_size DOUBLE PRECISION,
        ADD COLUMN IF NOT EXISTS runner_status TEXT,
        ADD COLUMN IF NOT EXISTS source_updated_at TIMESTAMPTZ""",
+    # S68: toss and score feed pipeline on the match registry (all nullable).
+    """ALTER TABLE match_training_status
+       ADD COLUMN IF NOT EXISTS toss_winner TEXT,
+       ADD COLUMN IF NOT EXISTS toss_decision TEXT,
+       ADD COLUMN IF NOT EXISTS score_pipeline TEXT""",
 ]
 
 INDEX_STATEMENTS = [

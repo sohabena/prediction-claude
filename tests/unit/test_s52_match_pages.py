@@ -443,14 +443,14 @@ async def _open_ok(mgr, url):
 
 class TestAbsenceStop:
     @pytest.mark.asyncio
-    async def test_worker_stops_after_ten_minutes_without_a_live_event(self, monkeypatch):
+    async def test_worker_stops_after_the_absence_window_without_live_activity(self, monkeypatch):
         clock = Clock(NOW)
         FakeListWorker.mode = "hold"
         mgr = _manager(monkeypatch, clock)
         try:
             await mgr._ensure_market_worker(_live_event(MID))
             await _settle()
-            clock.advance(599)
+            clock.advance(manager_module.MARKET_ABSENT_STOP_S - 1)
             mgr._sweep_market_workers(clock())
             assert not mgr._market_stops[MID].is_set()
             clock.advance(2)
@@ -484,7 +484,7 @@ class TestAbsenceStop:
         try:
             await mgr._ensure_market_worker(_live_event(MID))
             await _settle()
-            clock.advance(601)
+            clock.advance(manager_module.MARKET_ABSENT_STOP_S + 1)
             mgr._sweep_market_workers(clock())
             await asyncio.wait(list(mgr._market_tasks.values()), timeout=2)
             await mgr._ensure_market_worker(_live_event(MID))
@@ -628,3 +628,21 @@ async def test_seeded_worker_does_not_rewrite_unchanged_markets_after_a_restart(
     restarted.seed(stored)  # what the manager reads back from market_ticks
     await restarted.poll_once()
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_match_page_activity_keeps_the_worker_alive_while_off_the_listing(monkeypatch):
+    # Innings breaks drop a live match off the listing while its page keeps changing
+    clock = Clock(NOW)
+    FakeListWorker.mode = "hold"
+    mgr = _manager(monkeypatch, clock)
+    try:
+        await mgr._ensure_market_worker(_live_event(MID))
+        await _settle()
+        clock.advance(manager_module.MARKET_ABSENT_STOP_S - 10)
+        mgr._market_live_seen[MID] = clock()  # what _store_market_records records for a changing page
+        clock.advance(20)
+        mgr._sweep_market_workers(clock())
+        assert not mgr._market_stops[MID].is_set()
+    finally:
+        await _shutdown(mgr)

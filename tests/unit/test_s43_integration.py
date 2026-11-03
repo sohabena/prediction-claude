@@ -274,7 +274,7 @@ def test_v2_value_walk_forward_ticks_carry_prematch_fields(monkeypatch: pytest.M
     assert all("pm_elo_home" in t for m in made for t in m.fit_ticks)
     # as of the match date, with the caller's gender rule (women's sides and competitions)
     assert ("India", "Australia", "t20", "male", "2023-06-01") in ratings.calls
-    assert ("Sydney Sixers W", "Perth Scorchers W", "t20", "female", "2024-06-02") in ratings.calls
+    assert ("Sydney Sixers", "Perth Scorchers", "t20", "female", "2024-06-02") in ratings.calls  # " W" stripped for rating lookups (S67)
 
 
 def test_v2_value_walk_forward_needs_ratings() -> None:

@@ -1,6 +1,6 @@
 """Read-only data quality monitor for the LotusBook recording run (S55).
 
-Runs eleven checks over the last N hours (default 24) of ``odds_ticks``, ``market_ticks``,
+Runs twelve checks over the last N hours (default 24) of ``odds_ticks``, ``market_ticks``,
 ``match_context``, ``match_results`` and ``match_training_status``. It prints a table, appends one
 JSON line to ``logs/data_quality.jsonl`` and exits:
 
@@ -35,6 +35,7 @@ if str(ROOT) not in sys.path:
 from scraper.match_filter import is_simulated_name  # noqa: E402
 from scripts.quarantine_ticks import RULES, classify  # noqa: E402
 from shared.logging import setup_logging  # noqa: E402
+from training.registry import DEFAULT_ROOT, DRIFT_MIN_SETTLED, Registry, drift_assessment, read_jsonl  # noqa: E402
 
 logger = setup_logging("data_quality_monitor")
 
@@ -46,7 +47,11 @@ EXIT_BY_STATUS = {OK: 0, FAIL: 1, WARN: 2}
 # Thresholds (seconds unless stated)
 LIVE_FRESH_FAIL_S = 15 * 60  # newest row older than this while a match is live: fail
 RESULT_STALE_S = 6 * 3600  # last tick older than this with no result row: fail
-GAP_WARN_S = 5 * 60  # gap inside one live match: warn
+GAP_WARN_S = 6 * 60  # gap inside one live match: warn (the live heartbeat stores at least every 5 min, plus scrape slack)
+RESULT_PROVISIONAL_S = 45 * 60  # matches seen within this long may still be in play (scraper UNRESOLVED_ABSENCE_SECONDS)
+# Live listing ticks are re-stored every 5 min when unchanged only since this deploy; before it, a gap cannot tell a
+# quiet market from a recorder outage, so such gaps are reported apart and not scored.
+LIVE_HEARTBEAT_SINCE = datetime(2026, 11, 3, 4, 5, tzinfo=timezone.utc)
 TIE_SECONDS = 10  # clock slack between a listing tick and the match-page rows before it
 MIN_ODDS = 1.01  # valid prices lie in [MIN_ODDS, MAX_ODDS]; 1.01 is the minimum quoted price
 MAX_ODDS = 1000.0
@@ -54,7 +59,9 @@ COVERAGE_WARN = 0.90  # share of live matches with match-page rows
 DUP_FAIL = 0.01  # share of identical consecutive market rows
 LAY_WARN = 0.01  # share of live listing ticks with null lays and no match-page match-odds coverage
 LAY_FAIL = 0.10
-SCORE_FAIL = 0.10  # share of match-page matches without score state
+PIPELINE_V2 = "livescore-v2"  # S68: score feed pipeline that carries the live score (see parsers/lotusbook_score.py)
+PIPELINE_LEGACY = "legacy"  # S68: score feed pipeline with no score in its body
+DRIFT_WINDOW_DAYS = 7  # S65: settled matches used for the champion's calibration and drift check
 
 Fetch = Callable[[str, dict[str, Any]], Awaitable[list[dict[str, Any]]]]
 
@@ -152,6 +159,18 @@ SQL: dict[str, str] = {
                        WHERE c.match_id = l.match_id AND c.time >= :since) AS has_context
         FROM live l
     """,
+    "score_pipeline_column": """
+        SELECT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'match_training_status' AND column_name = 'score_pipeline'
+        ) AS present
+    """,
+    "score_pipelines": """
+        SELECT s.match_id, s.score_pipeline
+        FROM match_training_status s
+        WHERE s.score_pipeline IS NOT NULL
+          AND s.match_id IN (SELECT match_id FROM odds_ticks WHERE time >= :since)
+    """,
     "lay_completeness": """
         WITH pages AS (SELECT MIN(time) AS start FROM market_ticks),
         t AS (
@@ -192,11 +211,13 @@ SQL: dict[str, str] = {
             WHERE m.time >= :since AND m.time BETWEEN s.t0 AND s.t1
         ),
         gaps AS (
-            SELECT match_id,
+            SELECT match_id, time,
                    EXTRACT(EPOCH FROM time - LAG(time) OVER (PARTITION BY match_id ORDER BY time)) AS gap_s
             FROM ticks
         )
-        SELECT match_id, MAX(gap_s) AS max_gap_s
+        SELECT match_id,
+               MAX(gap_s) FILTER (WHERE time >= :heartbeat_since) AS max_gap_s,
+               MAX(gap_s) FILTER (WHERE time < :heartbeat_since) AS max_gap_before_heartbeat_s
         FROM gaps
         GROUP BY match_id
     """,
@@ -254,6 +275,12 @@ SQL: dict[str, str] = {
         WHERE o.source = 'lotusbook'
           AND o.match_id IN (SELECT DISTINCT match_id FROM odds_ticks WHERE time >= :since)
         ORDER BY o.match_id, o.time, o.tick_seq
+    """,
+    "settled_recent": """
+        SELECT r.match_id, r.winner, r.team_home, r.team_away
+        FROM match_results r
+        WHERE r.completed_at >= CAST(:now AS timestamptz) - INTERVAL '7 days'
+          AND r.winner IS NOT NULL AND r.winner <> ''
     """,
     "results": """
         WITH ticks AS (
@@ -420,19 +447,35 @@ async def check_lay_completeness(fetch: Fetch, p: dict[str, Any]) -> dict[str, A
 
 
 async def check_score_coverage(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]:
+    """S68: only matches whose match page is served by the livescore-v2 score feed are scored. Each of them with
+    match-page rows must have match_context rows in the window; one without fails. Legacy matches (no score in
+    their feed) and matches whose pipeline is not recorded yet are reported apart and never fail.
+
+    The pipeline comes from match_training_status.score_pipeline. Until that column exists (migration 007 not
+    applied), no match has a pipeline and nothing is scored.
+    """
     real, _ = _split_live(await fetch("live_matches", p))
     with_market = [r for r in real if r["has_market"]]
-    if not with_market:
-        return _check("score_coverage", OK, None, "no live match with match-page rows")
-    no_context = [r for r in with_market if not r["has_context"]]
-    share = len(no_context) / len(with_market)
-    detail = f"{len(no_context)} of {len(with_market)} matches with match-page rows have no score state"
+    column = bool((await fetch("score_pipeline_column", p))[0]["present"])
+    pipelines = (
+        {str(r["match_id"]): r["score_pipeline"] for r in await fetch("score_pipelines", p)} if column else {}
+    )
+    v2 = [r for r in with_market if pipelines.get(str(r["match_id"])) == PIPELINE_V2]
+    legacy = [r for r in with_market if pipelines.get(str(r["match_id"])) == PIPELINE_LEGACY]
+    unread = len(with_market) - len(v2) - len(legacy)
+    apart = f"{len(legacy)} on the legacy pipeline (no score in its feed, reported apart)"
+    if unread:
+        apart += f"; {unread} with no pipeline recorded yet"
+    if not column:
+        apart += "; score_pipeline column not present (migration 007 not applied)"
+    if not v2:
+        return _check("score_coverage", OK, None, f"no live livescore-v2 match with match-page rows; {apart}")
+    no_context = [r for r in v2 if not r["has_context"]]
+    share = len(no_context) / len(v2)
+    detail = f"{len(no_context)} of {len(v2)} livescore-v2 matches with match-page rows have no score state; {apart}"
     if no_context:
         detail += "; e.g. " + ", ".join(_match_label(r) for r in no_context[:3])
-    # The match-page scoreboard does not render in headless Chromium (S51 report), so missing score state is a
-    # known source limit: warn, never fail, until a score source exists.
-    status = WARN if no_context else OK
-    return _check("score_coverage", status, share, detail)
+    return _check("score_coverage", FAIL if no_context else OK, share, detail)
 
 
 async def check_registry(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]:
@@ -460,10 +503,14 @@ async def check_registry(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]:
 
 
 async def check_results(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]:
-    real, _ = _split_live(await fetch("results", p))
+    real = await fetch("results", p)  # SRL included: its results are recorded too (S50)
     stale = [r for r in real if _num(r["age_s"]) is not None
              and _num(r["age_s"]) > RESULT_STALE_S and not r["has_result"]]
-    empty = [r for r in real if r["has_result"] and not (r["winner"] or "").strip()]
+    # An 'unresolved' row for a match that is still being recorded is provisional (it left the listing for a while,
+    # e.g. an innings break); it only counts once the match has been quiet for RESULT_PROVISIONAL_S.
+    empty = [r for r in real if r["has_result"] and not (r["winner"] or "").strip()
+             and not (r.get("result_type") == "unresolved" and _num(r["age_s"]) is not None
+                      and _num(r["age_s"]) < RESULT_PROVISIONAL_S)]
     detail = (
         f"{len(stale)} match(es) with last tick over {RESULT_STALE_S // 3600} h old and no result; "
         f"{len(empty)} result(s) with empty winner"
@@ -476,20 +523,83 @@ async def check_results(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]:
     return _check("results", status, len(stale) + len(empty), detail)
 
 
+async def check_model_drift(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]:
+    """S65: calibration of the champion blend on the last 7 days of settled matches it predicted, and PSI of its
+    p_market and p_model against the baseline stored in its manifest. Warn-only below DRIFT_MIN_SETTLED settled
+    matches; no champion means nothing to check."""
+    registry = Registry(Path(p.get("registry_root") or DEFAULT_ROOT))
+    version = registry.champion_version("blend")
+    if version is None:
+        return _check("model_drift", OK, None, "no champion blend promoted; nothing to check")
+    manifest = registry.manifest("blend", version)
+    predictions = read_jsonl(registry.version_dir("blend", version) / "predictions.jsonl")
+    if not predictions:
+        return _check("model_drift", WARN, None, f"champion blend {version} has no predictions artefact")
+    by_match: dict[str, dict[str, Any]] = {}
+    for pred in predictions:
+        by_match.setdefault(str(pred["match_id"]), pred)
+    rows: list[dict[str, Any]] = []
+    unmatched = 0
+    for settled in await fetch("settled_recent", p):
+        pred = by_match.get(str(settled["match_id"]))
+        if pred is None:
+            continue
+        winner = (settled.get("winner") or "").strip().lower()
+        if winner and winner == (settled.get("team_home") or "").strip().lower():
+            home_won = 1
+        elif winner and winner == (settled.get("team_away") or "").strip().lower():
+            home_won = 0
+        else:
+            unmatched += 1
+            continue
+        rows.append({"p_home": pred["p_home"], "p_market": pred.get("p_market"),
+                     "p_model": pred.get("p_model"), "home_won": home_won})
+    report = drift_assessment(manifest.get("baseline", {}), rows)
+    level = report["level"]
+    enforced = report["n"] >= DRIFT_MIN_SETTLED
+    if not enforced and level == "fail":
+        level = "warn"  # warn-only until there are enough settled matches to trust the statistics
+    status = {"ok": OK, "warn": WARN, "fail": FAIL}[level]
+    psi_txt = ", ".join(
+        f"PSI {k} {v['psi']:.3f} (n {v['n']})" if v else f"PSI {k} n/a"
+        for k, v in report["psi"].items()
+    )
+    detail = (
+        f"champion blend {version}: {report['n']} settled match(es) in the last {DRIFT_WINDOW_DAYS} days "
+        f"(enforced from {DRIFT_MIN_SETTLED}); "
+    )
+    if report["n"]:
+        detail += (f"mean p_home {report['mean_p_home']:.3f} vs observed {report['observed_rate']:.3f}; "
+                   f"{psi_txt}")
+    if unmatched:
+        detail += f"; {unmatched} result(s) with unmatched team names"
+    value = report["calibration_gap"]
+    return _check("model_drift", status, value, detail)
+
+
 async def check_gaps(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]:
-    real, _ = _split_live(await fetch("live_matches", p))
-    names = {r["match_id"]: r for r in real}
-    gaps = [r for r in await fetch("gaps", p)
-            if r["match_id"] in names and r["max_gap_s"] is not None]
-    if not gaps:
-        return _check("gaps", OK, None, "no live match with more than one row")
-    worst = max(gaps, key=lambda r: float(r["max_gap_s"]))
+    """Longest gap between rows inside each live match, SRL included. Only gaps that end after the live heartbeat
+    existed are scored; earlier ones are reported apart."""
+    rows = await fetch("live_matches", p)
+    names = {r["match_id"]: r for r in rows}
+    gaps = [r for r in await fetch("gaps", p) if r["match_id"] in names]
+    before = [r for r in gaps if r.get("max_gap_before_heartbeat_s") is not None
+              and float(r["max_gap_before_heartbeat_s"]) > GAP_WARN_S]
+    scored = [r for r in gaps if r.get("max_gap_s") is not None]
+    if not scored:
+        detail = "no live match with more than one row since the live heartbeat"
+        if before:
+            detail += f"; {len(before)} match(es) had longer gaps before it (not scored)"
+        return _check("gaps", OK, None, detail)
+    worst = max(scored, key=lambda r: float(r["max_gap_s"]))
     worst_s = float(worst["max_gap_s"])
-    long_gaps = [r for r in gaps if float(r["max_gap_s"]) > GAP_WARN_S]
+    long_gaps = [r for r in scored if float(r["max_gap_s"]) > GAP_WARN_S]
     detail = (
         f"longest gap inside a live match {worst_s:.0f}s ({_match_label(names[worst['match_id']])}); "
         f"{len(long_gaps)} live match(es) with a gap over {GAP_WARN_S // 60} min"
     )
+    if before:
+        detail += f"; {len(before)} match(es) had longer gaps before the live heartbeat (not scored)"
     return _check("gaps", WARN if long_gaps else OK, worst_s, detail)
 
 
@@ -530,6 +640,7 @@ CHECKS: list[Callable[[Fetch, dict[str, Any]], Awaitable[dict[str, Any]]]] = [
     check_gaps,
     check_srl,
     check_misattribution,
+    check_model_drift,  # S65, appended so the existing check order is unchanged
 ]
 
 
@@ -542,14 +653,18 @@ def overall_status(checks: list[dict[str, Any]]) -> str:
     return OK
 
 
-async def run_checks(fetch: Fetch, *, now: datetime, window_hours: float) -> dict[str, Any]:
-    """Run every check through ``fetch(name, params)``; returns the report record (no I/O)."""
+async def run_checks(fetch: Fetch, *, now: datetime, window_hours: float,
+                     registry_root: Optional[Path] = None) -> dict[str, Any]:
+    """Run every check through ``fetch(name, params)``; returns the report record (no I/O apart from the registry
+    artefacts read by the model_drift check)."""
     params = {
         "now": now,
         "since": now - timedelta(hours=window_hours),
         "min_odds": MIN_ODDS,
         "max_odds": MAX_ODDS,
         "tie_seconds": TIE_SECONDS,
+        "heartbeat_since": LIVE_HEARTBEAT_SINCE,
+        "registry_root": registry_root or DEFAULT_ROOT,
     }
     cached = _memo(fetch)
     checks = [await fn(cached, params) for fn in CHECKS]

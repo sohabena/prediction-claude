@@ -45,10 +45,12 @@ from strategy.ratings import CricketRatings, state_ticks  # noqa: E402
 DEFAULT_OUT = Path("models/fair_value")
 DEFAULT_DATA_ROOT = Path("data")
 MAX_OVERS = {"t20": 20, "odi": 50}
+# ``raw/all`` is Cricsheet's all_json.zip (every format and league). Files there are classified by info.match_type,
+# and a match id present in both ``raw/all`` and a per-format folder is read once (iter_cricsheet dedupes by stem).
 FAMILY_DIRS: Dict[str, Tuple[str, ...]] = {
-    "t20": ("raw/ipl", "raw/t20s", "incoming_cricsheet"),
-    "odi": ("raw/odis", "incoming_cricsheet"),
-    "multiday": ("raw/tests", "incoming_cricsheet"),
+    "t20": ("raw/all", "raw/ipl", "raw/t20s", "incoming_cricsheet"),
+    "odi": ("raw/all", "raw/odis", "incoming_cricsheet"),
+    "multiday": ("raw/all", "raw/tests", "incoming_cricsheet"),
 }
 CAVEATS = [
     "Cricsheet has no true home side: 'home' is a deterministic label (match-id parity); the home-ground term "

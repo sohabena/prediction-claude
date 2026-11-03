@@ -44,6 +44,12 @@ class MatchTrainingStatus(Base):
         Boolean, default=False, server_default=text("false"), nullable=False,
     )
 
+    # S68: toss from the live score feed (raw feed text), and the score feed pipeline that served the match
+    # ("livescore-v2" or "legacy"). All nullable; NULL until the feed has said so.
+    toss_winner: Mapped[str | None] = mapped_column(String, nullable=True)
+    toss_decision: Mapped[str | None] = mapped_column(String, nullable=True)
+    score_pipeline: Mapped[str | None] = mapped_column(String, nullable=True)
+
     # Total recorded odds/microstructure ticks for this match
     tick_count: Mapped[int] = mapped_column(Integer, default=0)
 

@@ -20,6 +20,7 @@ from shared.constants import (
 from shared.schemas import BettingAction as A
 from strategy.base import OrderIntent, Position, Strategy
 from strategy.fair_value import FairValueModel
+from strategy.staking import shrink_factor
 
 _BACKS = (A.BACK_HOME_SM, A.BACK_HOME_LG, A.BACK_AWAY_SM, A.BACK_AWAY_LG)
 _HOMES = (A.BACK_HOME_SM, A.BACK_HOME_LG, A.LAY_HOME_SM, A.LAY_HOME_LG)
@@ -177,7 +178,10 @@ class ValueStrategy(Strategy):
         kelly_fraction: float = KELLY_FRACTION,
         quiet_after_change_s: float = STRATEGY_QUIET_AFTER_CHANGE_SECONDS,
         no_signal_last_overs: float = STRATEGY_NO_SIGNAL_LAST_OVERS,
+        p_sd: Optional[float] = None,
     ) -> None:
+        if p_sd is not None and (not math.isfinite(p_sd) or p_sd < 0.0):
+            raise ValueError(f"p_sd must be None or finite and >= 0, got {p_sd!r}")
         self.fair = fair_model
         self.min_edge = min_edge
         self.commission = commission
@@ -186,6 +190,9 @@ class ValueStrategy(Strategy):
         self.kelly = kelly_fraction
         self.quiet_s = quiet_after_change_s
         self.no_signal_last_overs = no_signal_last_overs
+        # S62: posterior sd of the fair probability. None keeps the sizing above unchanged; a value shrinks each
+        # Kelly stake by strategy.staking.shrink_factor (uncertain edges get smaller stakes).
+        self.p_sd = p_sd
         self.version = str(getattr(fair_model, "version", "v1"))
         self.last_details: list[dict[str, Any]] = []
         self._reset_match()
@@ -220,7 +227,11 @@ class ValueStrategy(Strategy):
         ev = (1.0 - p) * (1.0 - c) - p * (quote + half_spread - 1.0)
         return ev, ev / (1.0 - c)
 
-    def _stake(self, side: str, quote: float, half_spread: float, fraction: float, bankroll: float) -> float:
+    def _stake(
+        self, side: str, quote: float, half_spread: float, fraction: float, bankroll: float, p: float = 0.0
+    ) -> float:
+        if self.p_sd is not None:
+            fraction *= shrink_factor(p, self.p_sd, quote, side)
         liability = min(self.kelly * fraction * bankroll, MAX_BET_LIABILITY_PCT * bankroll)
         if liability <= 0:
             return 0.0
@@ -249,7 +260,7 @@ class ValueStrategy(Strategy):
                     limit = _floor_tick(1.0 - h + ((1.0 - p) * (1.0 - self.commission) - self.min_edge) / p)
                     if quote > limit or limit <= 1.0:
                         continue
-                stake = self._stake(side, quote, h, fraction, bankroll)
+                stake = self._stake(side, quote, h, fraction, bankroll, p)
                 if stake <= 0:
                     continue
                 if best is None or ev > best[0]:
