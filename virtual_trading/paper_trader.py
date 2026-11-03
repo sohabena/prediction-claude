@@ -8,9 +8,11 @@ A cycle (every 15 s from ``scripts/run_paper_trader.py``) does, in this order:
    match-page sources together), read from ``v_match_odds``. A match with no fresh book gives no trade.
 3. Ledger: fill pending bets decided at least 60 s ago (S71, book at decided + 60 s), record CLV where it is due,
    settle filled bets against ``match_results``.
-4. Decide: ``ProbabilityService.estimate`` (S69) once per match, then ``model_edge.decide`` (S70) per variant with the
-   position rebuilt from the ledger. A (variant, match) pair with a pending bet is skipped.
-5. Record each intent as a pending row in ``paper_bets`` with its decision context (S71).
+4. Decide: ``ProbabilityService.estimate`` (S69) once per match, then the book guards (S75: band, crossed book), then
+   ``model_edge.decide`` (S70) per variant with the position rebuilt from the ledger. A (variant, match) pair with a
+   pending bet is skipped. Each intent then faces the new-risk guards (S75: staleness, spread, flip cooldown, rate).
+5. Record each intent that passes as a pending row in ``paper_bets`` with its decision context (S71). Every refusal
+   is counted by reason in the cycle report (``guard_refusals``).
 
 Nothing is kept in memory between cycles: positions, pending bets and the last trade time all come from the ledger,
 so a restart resumes exactly where the table says. Writes go only to ``paper_bets``. No real money, no site access.
@@ -28,9 +30,10 @@ from typing import Any, Iterable, Mapping, Optional, Sequence
 from sqlalchemy import select, text
 
 from backend.models.paper_bets import PaperBet
-from strategy import model_edge, staking
+from strategy import model_edge, staking, trade_guards
 from strategy.base import MatchedBet
 from strategy.model_edge import Book, Variant
+from strategy.trade_guards import GuardConfig
 from training.dataset import _book, _price_series, match_family  # _book/_price_series: the S58 rule itself
 from virtual_trading import paper_ledger as ledger
 from virtual_trading import paper_review
@@ -143,12 +146,27 @@ class PriceCache:
 
     def book_at(self, match_id: str, t: datetime) -> Optional[dict[str, Optional[float]]]:
         """Flat book at ``t`` (back_home, lay_home, back_away, lay_away); None when no field is fresh."""
+        found = self.book_and_ages_at(match_id, t)
+        return None if found is None else found[0]
+
+    def book_and_ages_at(
+        self, match_id: str, t: datetime
+    ) -> Optional[tuple[dict[str, Optional[float]], dict[str, Optional[float]]]]:
+        """The flat book at ``t`` and the age in whole seconds of each field (None where the field is missing).
+
+        Each field has its own as-of row (S58), so each field has its own age; the staleness guards (S75) read these.
+        """
         series = self._series.get(str(match_id))
         if series is None:
             return None
         nested = _book(series, t)
         flat = {f"{kind}_{side}": nested[side][kind] for side in ("home", "away") for kind in ("back", "lay")}
-        return flat if any(v is not None for v in flat.values()) else None
+        if not any(v is not None for v in flat.values()):
+            return None
+        ages = {
+            f"{kind}_{side}": nested[side][f"stale_s_{kind}"] for side in ("home", "away") for kind in ("back", "lay")
+        }
+        return flat, ages
 
 
 # ----------------------------------------------------------------------------- ledger state (from paper_bets)
@@ -186,6 +204,9 @@ async def _open_rows(session: Any) -> list[Any]:
 
 
 # ----------------------------------------------------------------------------- database feed
+_SETTLED_SQL = ", ".join(f"'{t}'" for t in sorted(ledger.SETTLED_RESULT_TYPES))  # constants only, never user input
+
+
 class DbFeed:
     """Read-only SELECTs for one cycle. Every write goes through ``virtual_trading.paper_ledger``."""
 
@@ -205,7 +226,8 @@ class DbFeed:
         stmt = text(
             "SELECT r.match_id, r.team_home, r.team_away, r.competition, r.match_start_time, r.is_simulated, "
             "r.toss_winner, r.toss_decision, "
-            "EXISTS (SELECT 1 FROM match_results m WHERE m.match_id = r.match_id AND m.result_type = 'win') AS settled "
+            f"EXISTS (SELECT 1 FROM match_results m WHERE m.match_id = r.match_id AND m.result_type IN ({_SETTLED_SQL})) "
+            "AS settled "
             "FROM match_training_status r WHERE r.match_id = ANY(:ids)"
         )
         rows = (await self.session.execute(stmt, {"ids": list(match_ids)})).mappings().all()
@@ -279,16 +301,18 @@ async def run_cycle(
     include_simulated: bool = False,
     suspended: Iterable[str] = (),
     primary: Optional[str] = None,
+    guards: GuardConfig = GuardConfig(),
 ) -> dict[str, Any]:
     """One decision cycle. Returns the report (JSON-serialisable) that the loop writes to the log.
 
     ``suspended`` names variants from the last S73 review: they keep reducing and green-up but open no new risk
-    (``max_trades_per_match = 0``). ``primary`` is a label for the log only.
+    (``max_trades_per_match = 0``). ``primary`` is a label for the log only. ``guards`` are the S75 settings.
     """
     now = now or datetime.now(timezone.utc)
     if now.tzinfo is None:
         raise ValueError("now must be timezone-aware")
     suspended_set = frozenset(suspended)
+    guard_refusals: Counter = Counter()
 
     # 1. Candidates and the ledger's open bets (their matches need prices too, for fills and CLV).
     last_prices = await feed.last_prices(now)
@@ -337,16 +361,25 @@ async def run_cycle(
     for row in ctx_rows:
         context.setdefault(str(row["match_id"]), []).append(row)
 
+    # S75 history: every decision of the last window (any status), per (variant, match), for the rate and flip guards.
+    history = await ledger.recent_decisions(
+        session, now - timedelta(seconds=guards.history_seconds), [v.name for v in variants]
+    )
+    recent_by_key: dict[tuple[str, str], list[tuple[float, str]]] = {}
+    for row in history:
+        recent_by_key.setdefault((row.variant, row.match_id), []).append((row.decided_at.timestamp(), row.reason or ""))
+
     matches_report: list[dict[str, Any]] = []
     intents_report: list[dict[str, Any]] = []
     by_variant: Counter = Counter()
     skip_match: Counter = Counter()
     pending_skips = 0
     for cand in candidates:
-        book = cache.book_at(cand.match_id, now)
-        if book is None:
+        found = cache.book_and_ages_at(cand.match_id, now)
+        if found is None:
             skip_match["no_book"] += 1
             continue
+        book, ages = found
         rows = context.get(cand.match_id, [])
         state = _state_rows(rows, now)
         fmt = rows[-1].get("match_format") if rows else None
@@ -373,6 +406,10 @@ async def run_cycle(
                 "p_market": est.p_market,
             }
         )
+        refusal = trade_guards.book_refusal(book, est.p_market)
+        if refusal is not None:
+            guard_refusals[refusal] += 1  # the book is not trusted: no variant trades this match this cycle
+            continue
         blend_inputs = (est.p_model, est.p_market)
         for variant in variants:
             key = (variant.name, cand.match_id)
@@ -391,6 +428,22 @@ async def run_cycle(
                 now=now.timestamp(),
                 last_trade_at=last.timestamp() if last is not None else None,
             )
+            kept = []
+            for intent in intents:
+                refusal = trade_guards.intent_refusal(
+                    intent,
+                    book=book,
+                    ages=ages,
+                    in_play=cand.in_play,
+                    recent=recent_by_key.get(key, ()),
+                    now=now.timestamp(),
+                    cfg=guards,
+                )
+                if refusal is None:
+                    kept.append(intent)
+                else:
+                    guard_refusals[refusal] += 1
+            intents = kept
             if not intents:
                 continue
             p_blend = model_edge.blend_probability(variant, est.p_model, est.p_market)
@@ -441,6 +494,7 @@ async def run_cycle(
         "intents": len(intents_report),
         "intents_by_variant": dict(by_variant),
         "intent_detail": intents_report,
+        "guard_refusals": dict(sorted(guard_refusals.items())),
         "fills": fills,
         "clv_recorded": clv_recorded,
         "settled": dict(settled_counts),

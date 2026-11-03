@@ -670,6 +670,33 @@ class TestRegistryRefresh:
         assert [r.competition for r in registry] == ["NCL GT20"]
 
 
+    @pytest.mark.asyncio
+    async def test_registry_competition_fills_an_empty_one_before_the_menu_arrives(self, monkeypatch, tmp_path):
+        """After a restart the first listing poll comes before the menu feed: the registry's competition is used."""
+        session = _Session(None)
+        _patch_session(monkeypatch, session)
+        redis = SimpleNamespace(
+            client=SimpleNamespace(get=AsyncMock(side_effect=lambda key: "false" if "international" in key else None)),
+            publish_event=AsyncMock(),
+            set_json=AsyncMock(),
+        )
+        monkeypatch.setattr(manager_module, "get_redis", AsyncMock(return_value=redis))
+        monkeypatch.setattr(manager_module, "FEED_STATE_PATH", tmp_path / "scraper_feed.json")
+        mgr = manager_module.ScraperManager()
+        mgr._result_detector = SimpleNamespace(
+            update_tick=lambda **kwargs: None,
+            check_completed=AsyncMock(return_value=[]),
+        )
+        mgr._load_scrape_approved = AsyncMock()
+        mgr._competition_by_event = {}
+        mgr._registry_competition = {REAL_MID: "NCL GT20"}
+        event = OddsEvent(
+            match_id=REAL_MID, timestamp=NOW, team_home="Toronto Kings", team_away="Montreal Warriors",
+            competition="", back_home=1.9, lay_home=1.92, back_away=2.0, lay_away=2.04, is_live=True, score_text="",
+        )
+        await mgr._on_events([event])
+        assert mgr._active_matches[REAL_MID]["competition"] == "NCL GT20"
+
 # ── 6. migration, model and static rules ─────────────────────────────────────────
 
 

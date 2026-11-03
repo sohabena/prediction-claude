@@ -163,15 +163,18 @@ Details: `docs/architecture/paper-trading.md`, stories S69–S73.
 
 ## Scorecard
 
+Measures that decide money come first. Others are diagnostics, and row counts are not on the scorecard. Why, and the
+full ranking: `docs/architecture/value-focused-plan.md`.
+
 | Pillar | Measure | Now (2026-11-03) | Target |
 |---|---|---|---|
-| Data | 24-hour monitor | no failures; 1 warning | no failures, no warnings |
-| Data | Live matches with a match page | 100% | 100% |
-| Data | `livescore-v2` matches with score rows | 100% | 100% |
-| Training | Real recorded matches with a strength-model view | 7 of 19 | > 70% |
-| Training | Gates passed (R1/R2) | none (insufficient data) | R1 in at least one segment |
-| Refinement | Settled paper bets | 0 | 300 per variant over 30 matches |
-| Refinement | Best variant CLV, 95% CI lower bound | n/a | > 0 |
+| Refinement | Best variant's CLV in excess of a placebo, match-clustered 95% CI lower bound | not measured yet (S84, S85) | > 0, pre-match and in-play apart |
+| Data | Settled real matches with a tradable book | 8 | 30 for R3; 200 per segment for R1 |
+| Data | Real matches older than 12 h with a correct result | all but 1 | 100% |
+| Refinement | Fill realism: stake within the size shown | not measured yet (S87) | every fill |
+| Training | Log loss vs the market on matches with a pre-match price (R1) | insufficient (8 matches) | better, in at least one segment |
+| Training | In-play bets priced without a live score | 204 in replay | 0 (S83) |
+| Data | Diagnostic: real recorded matches with a strength-model view | 7 of 19 | > 70% |
 | Goal | Real-money profit | not started | positive after R3 and the operator's go-ahead |
 
 ## Operator decisions on record
@@ -190,5 +193,6 @@ Details: `docs/architecture/paper-trading.md`, stories S69–S73.
 | `docs/architecture/training-strategy.md` | Pillar 2 design and results |
 | `docs/architecture/paper-trading.md` | Pillar 3 design |
 | `docs/architecture/next-phase-plan.md` | Next phase: focus on Pillars 3 and 1, stories S74–S82 |
+| `docs/architecture/value-focused-plan.md` | Assessment after the first replay: metrics ranked by value, stories S83–S90, re-prioritised S78–S82 |
 | `docs/runbooks/recording.md` | Running and checking the recorder, quality monitor, quarantine |
 | `docs/stories/S37`–`S73` | Implemented stories, one per change |

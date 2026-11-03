@@ -51,6 +51,26 @@ Every trade is checked against the cap: the worst outcome of the position after 
 **What it will not do.** No real money, no orders to any site, no automation of the operator's account. Signals to
 the operator still pass the trust gate (`strategy/trust.py`).
 
+## Sanity guards and replay (S74, S75, S76)
+
+- **Replay.** `python scripts/replay_paper.py --from 2026-11-01 --to <pinned time> --out reports/replay/<name>` runs
+  `run_cycle` over recorded history with an in-memory ledger (`virtual_trading/memory_session.py`) and an as-of feed
+  (`virtual_trading/replay_feed.py`) that never returns a row after the decision time. Read-only; about 30 s for all
+  recordings. Pin `--to` when comparing two runs.
+- **Guards** (`strategy/trade_guards.py`, counted per cycle as `guard_refusals`). On every trade: crossed book, no band,
+  contradictory band, market probability outside the band. On new risk only (enter, add, flip): a book field older
+  than 60 s in play or 15 min pre-match, spread over 15% of the price, more than 3 trades per match per variant in
+  10 minutes, a flip within 5 minutes of the last flip.
+- **Cap.** LAY stakes are sized at their limit price, so a fill above the decision price cannot breach the 100,000
+  worst case (a replay found one at 101,994 before this).
+- **Monitor `paper_sanity` (FAIL).** The control places more than 2 trades in 24 h, a filled bet records an edge over
+  20%, or a variant trades one match more than 15 times. Counts bets decided from 2026-11-03 11:25 UTC (guards live).
+- **Settlement.** Every cycle; `draw`, `tie`, `no_result` and `abandoned` void; matches with any decided result are
+  no longer candidates. Missing results are listed daily (`scripts/results_reconciliation.py`) and entered by hand
+  with `scripts/set_result.py` from a public scorecard; the result detector never overwrites a hand-entered result.
+- **Known open issue.** Churn: 31 to 48 fills per model variant on one T20 match in replay, half of them reduces.
+  Addressed by S83 (no pre-match model in play) and S90 (target position with a ticket budget).
+
 ## Measures of success
 
 Per variant, rolling: mean CLV per bet with CI (primary), realised P&L with CI, calibration of `p` vs results,

@@ -463,7 +463,7 @@ class TestAbsenceStop:
             await _shutdown(mgr)
 
     @pytest.mark.asyncio
-    async def test_completed_match_stops_at_once(self, monkeypatch):
+    async def test_completed_match_stops_after_the_settlement_linger(self, monkeypatch):
         clock = Clock(NOW)
         FakeListWorker.mode = "hold"
         mgr = _manager(monkeypatch, clock)
@@ -471,6 +471,9 @@ class TestAbsenceStop:
             await mgr._ensure_market_worker(_live_event(MID))
             await _settle()
             mgr._completed_match_ids.add(MID)
+            mgr._sweep_market_workers(clock())
+            assert not mgr._market_stops[MID].is_set()  # kept open to capture the settled market (S76)
+            clock.advance(seconds=manager_module.MARKET_COMPLETED_LINGER_S)
             mgr._sweep_market_workers(clock())
             assert mgr._market_stops[MID].is_set()
         finally:

@@ -2,6 +2,9 @@
 
 Status: plan, 2026-11-03. Goal and pillars: `docs/GOAL-AND-ARCHITECTURE.md`. Stories S74–S82.
 
+> **Re-prioritised later the same day** by `value-focused-plan.md` (S83–S89): S79 waits for S84 and S85, S80 moves to
+> P2, S82 is absorbed by S88.
+
 ## Where the bottleneck is
 
 The goal (profit) is gated by **evidence**: settled bets and settled matches with good prices, judged by CLV. Today:

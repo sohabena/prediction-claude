@@ -286,6 +286,10 @@ class _FakeSession:
     async def merge(self, record):
         self._merged.append(record)
 
+    async def get(self, model, key):
+        rows = [r for r in self._merged if r.match_id == key]
+        return rows[-1] if rows else None
+
 
 def test_store_upserts_and_skips_publish_for_unresolved(monkeypatch):
     merged: list = []
@@ -390,3 +394,37 @@ def test_vanished_match_without_decisive_prices_waits_45_minutes(clock, stored):
     clock.advance(seconds=ld.UNRESOLVED_ABSENCE_SECONDS)
     asyncio.run(det.check_completed(set()))
     assert stored[-1]["result_type"] == "unresolved"
+
+
+def test_manual_result_is_never_replaced_by_the_detector(monkeypatch):
+    """S76: a result entered from a public scorecard stays; a later detector write is skipped and not published."""
+    from backend.models.results import MatchResultRecord
+
+    merged: list = [MatchResultRecord(match_id=MID, completed_at=T0, winner=HOME, loser=AWAY, result_type="win",
+                                      margin="2 runs", team_home=HOME, team_away=AWAY, source="public_scorecard")]
+    published: list = []
+
+    class _CM:
+        async def __aenter__(self):
+            return _FakeSession(merged)
+
+        async def __aexit__(self, *exc):
+            return False
+
+    class _Redis:
+        async def publish_event(self, channel, payload):
+            published.append((channel, payload))
+
+    async def fake_get_redis():
+        return _Redis()
+
+    monkeypatch.setattr(ld, "get_session", lambda: _CM())
+    monkeypatch.setattr(ld, "get_redis", fake_get_redis)
+
+    asyncio.run(LotusResultDetector()._store_and_publish({
+        "match_id": MID, "completed_at": T0.isoformat(), "winner": AWAY, "loser": HOME, "margin": "",
+        "team_home": HOME, "team_away": AWAY, "source": "lotusbook_odds", "result_type": "win",
+        "closing_back_home": 9.0, "closing_back_away": 1.05, "closing_lay_home": None, "closing_lay_away": None,
+    }))
+    assert len(merged) == 1 and merged[0].winner == HOME
+    assert published == []

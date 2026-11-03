@@ -4,16 +4,15 @@ from __future__ import annotations
 
 import copy
 import json
-import operator
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy.sql.elements import BinaryExpression, BooleanClauseList
-
 from backend.models.paper_bets import PaperBet
 from strategy.base import bet_gross_pnl
 from strategy.probability import Estimate
+from training.market import band_prob_home
 from virtual_trading import paper_trader as pt
+from virtual_trading.memory_session import MemorySession
 
 T0 = datetime(2026, 11, 3, 12, 0, 0, tzinfo=timezone.utc)
 START = T0 + timedelta(hours=2)
@@ -24,53 +23,8 @@ MIN = timedelta(minutes=1)
 # ---------------------------------------------------------------- fakes
 
 
-_OPS = {
-    operator.eq: operator.eq,
-    operator.ne: operator.ne,
-    operator.lt: operator.lt,
-    operator.le: operator.le,
-    operator.gt: operator.gt,
-    operator.ge: operator.ge,
-}
-
-
-def _eval(clause, row) -> bool:
-    if isinstance(clause, BooleanClauseList):
-        return all(_eval(c, row) for c in clause.clauses)
-    assert isinstance(clause, BinaryExpression), type(clause)
-    value = getattr(row, clause.left.key)
-    target = clause.right.value
-    if clause.operator.__name__ == "in_op":
-        return value in target
-    return _OPS[clause.operator](value, target)
-
-
-class _Result:
-    def __init__(self, rows):
-        self._rows = rows
-
-    def scalars(self):
-        return self
-
-    def all(self):
-        return list(self._rows)
-
-
-class FakeSession:
-    """In-memory paper_bets: supports the SELECT shapes the ledger uses, and add_all / flush."""
-
-    def __init__(self, rows=()):
-        self.rows = list(rows)
-
-    def add_all(self, rows):
-        self.rows.extend(rows)
-
-    async def flush(self):
-        return None
-
-    async def execute(self, stmt):
-        criteria = stmt.whereclause
-        return _Result([r for r in self.rows if criteria is None or _eval(criteria, r)])
+# The in-memory session is production code (S74): the same SELECT / add_all / flush shapes as the database.
+FakeSession = MemorySession
 
 
 class FakeFeed:
@@ -103,9 +57,10 @@ class FakeFeed:
 
 
 class FakeProbability:
-    """Stands in for ProbabilityService: a fixed p_market and a sequence of p_model values."""
+    """Stands in for ProbabilityService: a sequence of p_model values, and p_market = the band midpoint of the book
+    (as the service computes it, S59), unless a fixed p_market is given."""
 
-    def __init__(self, p_model=0.6, p_market=0.5, p_model_seq=None):
+    def __init__(self, p_model=0.6, p_market=None, p_model_seq=None):
         self.p_model = p_model
         self.p_market = p_market
         self.seq = list(p_model_seq) if p_model_seq is not None else None
@@ -114,9 +69,10 @@ class FakeProbability:
     def estimate(self, match, book, state=None, *, as_of):
         self.calls.append((match["match_id"], as_of))
         p_model = self.seq.pop(0) if self.seq else self.p_model
+        p_market = self.p_market if self.p_market is not None else band_prob_home(book)
         return Estimate(
             p_model=p_model,
-            p_market=self.p_market,
+            p_market=p_market,
             source="inplay" if state else "prematch",
             has_model=p_model is not None,
             features={},
@@ -138,7 +94,18 @@ def _registry(mid=MID, simulated=False, start=START):
     }
 
 
-def _price(t, back_home=2.2, lay_home=2.3, back_away=1.9, lay_away=2.0, mid=MID, source="listing"):
+def _book_for(p, d=0.025):
+    """A two-runner book whose band midpoint is exactly ``p``: backs sum above 1 and lays below 1, so no contradiction
+    (a book with back_away 1.9 and back_home 2.2 has no band, and the S75 band guard refuses it)."""
+    return {
+        "back_home": 1.0 / (p + d),
+        "lay_home": 1.0 / (p - d),
+        "back_away": 1.0 / (1.0 - p + d),
+        "lay_away": 1.0 / (1.0 - p - d),
+    }
+
+
+def _price(t, back_home=2.2, lay_home=2.3, back_away=1.8, lay_away=1.9, mid=MID, source="listing"):
     return {
         "match_id": mid,
         "time": t,
@@ -170,7 +137,7 @@ async def test_cycle_places_fills_and_settles():
         prices=[_price(T0 - MIN)],
         last={MID: T0},
     )
-    prob = FakeProbability(p_model=0.6, p_market=0.5)
+    prob = FakeProbability(p_model=0.6)
     variants = _variants()
 
     report = await pt.run_cycle(session, feed, prob, variants, now=T0)
@@ -180,9 +147,10 @@ async def test_cycle_places_fills_and_settles():
     placed = [r for r in session.rows if r.status == "pending"]
     assert placed, "a cycle with a clear edge must place pending bets"
     assert all(r.decided_at == T0 and r.match_id == MID for r in placed)
-    # The first-cycle orders are the ones checked below: BACK home at the takeable price 2.2.
+    # The first-cycle orders are the ones checked below: BACK home at the takeable price 2.2. The control trades
+    # only on the market's own edge, which this book does not offer (the market sits at the band midpoint).
     first = {r.variant: r for r in placed}
-    assert set(first) == {v.name for v in variants}
+    assert set(first) == {v.name for v in variants if not v.market_only}
     assert all(r.side == "BACK" and r.selection == "home" and r.price_limit <= 2.2 for r in first.values())
 
     # One minute later the book still offers 2.2, so the decided orders fill at decided + 60 s.
@@ -214,15 +182,12 @@ async def test_cap_holds_across_cycles():
     feed = FakeFeed(registry=[_registry()], last={})
     # Prices move from cycle to cycle and the model swings between a strong and a weak view, so the strategy
     # adds, reduces, flips and greens up. The worst-case loss per variant must stay within 100,000 throughout.
-    back_homes = [2.2, 1.7, 3.0, 2.4, 1.5, 2.8, 2.0, 1.6, 3.1, 2.3, 1.8, 2.9]
+    p_markets = [0.45, 0.5, 0.42, 0.55, 0.4, 0.6, 0.47, 0.38, 0.58, 0.44, 0.52, 0.41]
     p_model_seq = [0.9, 0.2, 0.85, 0.3, 0.9, 0.15, 0.8, 0.25, 0.9, 0.3, 0.7, 0.2]
-    prob = FakeProbability(p_market=0.5, p_model_seq=p_model_seq)
-    for k, back_home in enumerate(back_homes):
+    prob = FakeProbability(p_model_seq=p_model_seq)
+    for k, p_mkt in enumerate(p_markets):
         now = T0 + timedelta(seconds=61 * k)
-        feed.prices.append(
-            _price(now - timedelta(seconds=30), back_home=back_home, lay_home=back_home + 0.1,
-                   back_away=3.0, lay_away=3.1)
-        )
+        feed.prices.append(_price(now - timedelta(seconds=30), **_book_for(p_mkt)))
         feed.last = {MID: now}
         await pt.run_cycle(session, feed, prob, variants, now=now)
         for variant in variants:
@@ -238,7 +203,7 @@ async def test_restart_reads_positions_from_the_ledger():
     variants = _variants()
     first = FakeSession()
     feed = FakeFeed(registry=[_registry()], prices=[_price(T0 - MIN)], last={MID: T0})
-    prob = FakeProbability(p_model=0.9, p_market=0.5)
+    prob = FakeProbability(p_model=0.9)
     await pt.run_cycle(first, feed, prob, variants, now=T0)
     feed.prices.append(_price(T0 + timedelta(seconds=30)))
     feed.last = {MID: T0 + timedelta(seconds=60)}
@@ -291,7 +256,7 @@ async def test_restart_respects_cap_from_existing_positions():
             book={},
         )
     )
-    prob = FakeProbability(p_model=0.9, p_market=0.5)
+    prob = FakeProbability(p_model=0.9)
     await pt.run_cycle(session, feed, prob, [target], now=T0)
     new_for_variant = [r for r in session.rows if r.variant == target.name and r.status == "pending"]
     assert new_for_variant == []
@@ -304,7 +269,7 @@ async def test_pending_bet_blocks_a_new_decision():
     variants = _variants()
     session = FakeSession()
     feed = FakeFeed(registry=[_registry()], prices=[_price(T0 - MIN)], last={MID: T0})
-    prob = FakeProbability(p_model=0.6, p_market=0.5)
+    prob = FakeProbability(p_model=0.6)
     await pt.run_cycle(session, feed, prob, variants, now=T0)
     count_after_first = len(session.rows)
     assert count_after_first > 0
@@ -313,7 +278,7 @@ async def test_pending_bet_blocks_a_new_decision():
     feed.last = {MID: T0 + timedelta(seconds=15)}
     report = await pt.run_cycle(session, feed, prob, variants, now=T0 + timedelta(seconds=15))
     assert len(session.rows) == count_after_first
-    assert report["skipped_pending"] == len(variants)
+    assert report["skipped_pending"] == len({r.variant for r in session.rows})  # variants with a pending bet
     assert report["intents"] == 0
 
 

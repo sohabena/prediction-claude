@@ -94,8 +94,39 @@ def _trade_line(row: Mapping[str, Any]) -> str:
     )
 
 
-def render(state: Mapping[str, Any], rows: Sequence[Mapping[str, Any]], now: datetime) -> str:
-    """The markdown report. ``state`` is ``review.review(...)``'s result for the same ``rows``."""
+def _missing_block(missing: Sequence[Mapping[str, Any]]) -> list[str]:
+    """S76: real matches with no decided result (scripts/results_reconciliation.py)."""
+    lines = ["## Results missing", ""]
+    if not missing:
+        lines.append("None: every real match with a tick in the last 7 days has a decided result or is under 3 h old.")
+        return lines
+    lines.append(
+        f"{len(missing)} real match(es) with last tick over 3 h old and no win, tie, no_result or abandoned result. "
+        'Settle each with `python scripts/set_result.py --match <id> --winner "<team>"` (or `--tie` / `--no-result`).'
+    )
+    lines.append("")
+    lines.append("| match | teams | competition | start | last tick | result |")
+    lines.append("|---|---|---|---|---|---|")
+    for item in missing[:RECENT_MATCHES]:
+        start = item["match_start_time"]
+        start_text = f"{start:%Y-%m-%d %H:%M} UTC" if start else "n/a"
+        lines.append(
+            f"| {item['match_id']} | {item['team_home']} v {item['team_away']} | {item['competition'] or 'n/a'} | "
+            f"{start_text} | {item['last_tick']:%Y-%m-%d %H:%M} UTC | {item['result_type'] or 'no row'} |"
+        )
+    if len(missing) > RECENT_MATCHES:
+        lines.append(f"\nShowing the {RECENT_MATCHES} oldest of {len(missing)}.")
+    return lines
+
+
+def render(
+    state: Mapping[str, Any],
+    rows: Sequence[Mapping[str, Any]],
+    now: datetime,
+    missing: Optional[Sequence[Mapping[str, Any]]] = None,
+) -> str:
+    """The markdown report. ``state`` is ``review.review(...)``'s result for the same ``rows``. ``missing`` is the S76
+    reconciliation list; its section is written only when it is given."""
     variants = state["variants"]
     ranking = state["ranking"]
     out: list[str] = []
@@ -167,6 +198,9 @@ def render(state: Mapping[str, Any], rows: Sequence[Mapping[str, Any]], now: dat
             + ("; R3 met" if v["r3_met"] else "")
         )
     out.append("")
+    if missing is not None:
+        out.extend(_missing_block(missing))
+        out.append("")
     out.append("## Matches")
     out.append("")
     out.extend(_match_block(rows) if rows else ["No paper bets yet."])
@@ -216,12 +250,15 @@ async def run_review(
 
     from shared.db import get_session
 
+    from scripts.results_reconciliation import missing_results
+
     now = now or datetime.now(timezone.utc)
     async with get_session() as session:
         await session.execute(text("SET TRANSACTION READ ONLY"))
         rows = await review.load_rows(session)
+        missing = await missing_results(session, now)
     state = review.review(rows, bankrolls(), now=now)
-    text_report = render(state, rows, now)
+    text_report = render(state, rows, now, missing)
     if not write:
         return state, text_report, None
     review.write_state(state, state_path)

@@ -19,7 +19,8 @@ from scripts import recording_health as health
 
 UTC = timezone.utc
 NOW = datetime(2026, 11, 3, 12, 0, tzinfo=UTC)
-PARAM_NAMES = {"now", "since", "min_odds", "max_odds", "tie_seconds", "heartbeat_since"}
+PARAM_NAMES = {"now", "since", "min_odds", "max_odds", "tie_seconds", "heartbeat_since",
+               "prematch_since", "prematch_lead_s"}  # S77 adds the last two
 
 
 def _match(match_id="m1", home="India", away="Australia", competition="ICC T20", **extra) -> dict[str, Any]:
@@ -46,8 +47,11 @@ def healthy_rows() -> dict[str, list[dict[str, Any]]]:
         "score_pipelines": [{"match_id": "m1", "score_pipeline": "livescore-v2"}],
         "results": [_match("m0", age_s=7200.0, has_result=True, winner="India", result_type="win")],
         "misattribution_ticks": [],
+        "prematch_pages": [],  # S77: no real match started in the window, so nothing to score
         "paper_open_fills": [],
         "paper_stale_settlement": [],
+        "paper_sanity_trades": [],  # S75: no paper orders in the last 24 h
+        "paper_sanity_edges": [],
     }
 
 
@@ -135,6 +139,9 @@ def test_healthy_day_is_ok_with_exit_zero():
         "freshness", "price_sanity", "duplicates", "match_page_coverage", "lay_completeness",
         "score_coverage", "registry", "results", "gaps", "srl", "misattribution",
         "model_drift", "paper_trading",
+        "prematch_pages",  # S77, appended last
+        "results_missing",  # S76, appended last
+        "paper_sanity",  # S75, appended last
     ]
 
 
@@ -366,11 +373,18 @@ def test_results_ok_for_a_recent_match_without_result_yet():
     assert one_check(dqm.check_results, rows)["status"] == "ok"
 
 
-def test_results_fail_on_empty_winner():
+def test_results_fail_on_a_win_with_empty_winner():
     rows = healthy_rows()
-    rows["results"] = [_match("nr", age_s=20000.0, has_result=True, winner="", result_type="no_result")]
+    rows["results"] = [_match("w", age_s=20000.0, has_result=True, winner="", result_type="win")]
     c = one_check(dqm.check_results, rows)
     assert c["status"] == "fail" and "empty winner" in c["detail"]
+
+
+def test_results_ok_for_no_result_and_tie_without_winner():
+    rows = healthy_rows()
+    rows["results"] = [_match("nr", age_s=20000.0, has_result=True, winner="", result_type="no_result"),
+                       _match("tie", age_s=20000.0, has_result=True, winner="", result_type="tie")]
+    assert one_check(dqm.check_results, rows)["status"] == "ok"
 
 
 def test_results_count_simulated_matches_too():

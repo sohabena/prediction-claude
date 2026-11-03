@@ -1,0 +1,589 @@
+{
+  "ledger_rows": 572,
+  "per_match": [
+    {
+      "competition": "WBBL",
+      "is_simulated": false,
+      "match_id": "lb_36262294",
+      "team_away": "Perth Scorchers W",
+      "team_home": "Melbourne Stars W",
+      "variants": {
+        "w03_e03": {
+          "fills": 14,
+          "intents": 14,
+          "pnl": 253245.72,
+          "settled": 14,
+          "stake": 453245.72,
+          "worst_case": 0.0
+        },
+        "w03_e06": {
+          "fills": 11,
+          "intents": 14,
+          "pnl": 200252.53,
+          "settled": 11,
+          "stake": 400252.53,
+          "worst_case": 0.0
+        },
+        "w05_e03": {
+          "fills": 13,
+          "intents": 13,
+          "pnl": 289660.45,
+          "settled": 13,
+          "stake": 488160.45,
+          "worst_case": 0.0
+        },
+        "w05_e06": {
+          "fills": 13,
+          "intents": 13,
+          "pnl": 289660.45,
+          "settled": 13,
+          "stake": 488160.45,
+          "worst_case": 0.0
+        },
+        "w07_e03": {
+          "fills": 12,
+          "intents": 12,
+          "pnl": 272285.2,
+          "settled": 12,
+          "stake": 472285.2,
+          "worst_case": 0.0
+        },
+        "w07_e06": {
+          "fills": 12,
+          "intents": 12,
+          "pnl": 272285.2,
+          "settled": 12,
+          "stake": 472285.2,
+          "worst_case": 0.0
+        }
+      }
+    },
+    {
+      "competition": "Nepal Premier League",
+      "is_simulated": false,
+      "match_id": "lb_36267578",
+      "team_away": "Janakpur Bolts",
+      "team_home": "Biratnagar Kings",
+      "variants": {
+        "w03_e03": {
+          "fills": 44,
+          "intents": 72,
+          "pnl": 10000.0,
+          "settled": 44,
+          "stake": 675824.55,
+          "worst_case": 0.0
+        },
+        "w03_e06": {
+          "fills": 32,
+          "intents": 59,
+          "pnl": 15062.6,
+          "settled": 32,
+          "stake": 313062.6,
+          "worst_case": 99647.68
+        },
+        "w05_e03": {
+          "fills": 46,
+          "intents": 72,
+          "pnl": 10092.76,
+          "settled": 46,
+          "stake": 991605.28,
+          "worst_case": 0.0
+        },
+        "w05_e06": {
+          "fills": 42,
+          "intents": 74,
+          "pnl": 7952.38,
+          "settled": 42,
+          "stake": 769344.27,
+          "worst_case": 0.0
+        },
+        "w07_e03": {
+          "fills": 48,
+          "intents": 66,
+          "pnl": 68876.91,
+          "settled": 48,
+          "stake": 1141154.99,
+          "worst_case": 0.0
+        },
+        "w07_e06": {
+          "fills": 47,
+          "intents": 69,
+          "pnl": 67576.95,
+          "settled": 47,
+          "stake": 1098813.46,
+          "worst_case": 0.0
+        }
+      }
+    },
+    {
+      "competition": "Nepal Premier League",
+      "is_simulated": false,
+      "match_id": "lb_36267634",
+      "team_away": "Pokhara Avengers",
+      "team_home": "Lumbini Lions",
+      "variants": {
+        "w03_e03": {
+          "fills": 2,
+          "intents": 4,
+          "pnl": 0,
+          "settled": 0,
+          "stake": 50000.0,
+          "worst_case": 50000.0
+        },
+        "w05_e03": {
+          "fills": 4,
+          "intents": 13,
+          "pnl": 0,
+          "settled": 0,
+          "stake": 100000.0,
+          "worst_case": 100000.0
+        },
+        "w05_e06": {
+          "fills": 3,
+          "intents": 4,
+          "pnl": 0,
+          "settled": 0,
+          "stake": 75000.0,
+          "worst_case": 75000.0
+        },
+        "w07_e03": {
+          "fills": 4,
+          "intents": 17,
+          "pnl": 0,
+          "settled": 0,
+          "stake": 100000.0,
+          "worst_case": 100000.0
+        },
+        "w07_e06": {
+          "fills": 4,
+          "intents": 6,
+          "pnl": 0,
+          "settled": 0,
+          "stake": 100000.0,
+          "worst_case": 100000.0
+        }
+      }
+    },
+    {
+      "competition": "ICC Cricket World Cup League Two",
+      "is_simulated": false,
+      "match_id": "lb_75878940",
+      "team_away": "Netherlands",
+      "team_home": "Oman",
+      "variants": {
+        "w03_e03": {
+          "fills": 5,
+          "intents": 6,
+          "pnl": 77820.45,
+          "settled": 5,
+          "stake": 77841.88,
+          "worst_case": 100000.0
+        },
+        "w03_e06": {
+          "fills": 4,
+          "intents": 4,
+          "pnl": 86503.97,
+          "settled": 4,
+          "stake": 87003.97,
+          "worst_case": 100000.0
+        },
+        "w05_e03": {
+          "fills": 5,
+          "intents": 6,
+          "pnl": 77800.67,
+          "settled": 5,
+          "stake": 77800.67,
+          "worst_case": 99979.4
+        },
+        "w05_e06": {
+          "fills": 5,
+          "intents": 6,
+          "pnl": 77800.67,
+          "settled": 5,
+          "stake": 77800.67,
+          "worst_case": 99979.4
+        },
+        "w07_e03": {
+          "fills": 5,
+          "intents": 8,
+          "pnl": 69795.32,
+          "settled": 5,
+          "stake": 69795.32,
+          "worst_case": 99979.4
+        },
+        "w07_e06": {
+          "fills": 5,
+          "intents": 7,
+          "pnl": 77800.67,
+          "settled": 5,
+          "stake": 77800.67,
+          "worst_case": 99979.4
+        }
+      }
+    },
+    {
+      "competition": "T20 PCB Super-3, Women",
+      "is_simulated": false,
+      "match_id": "lb_76073798",
+      "team_away": "Warriors",
+      "team_home": "Incredibles",
+      "variants": {
+        "market_only": {
+          "fills": 1,
+          "intents": 1,
+          "pnl": -2000.0,
+          "settled": 1,
+          "stake": 2000.0,
+          "worst_case": 2000.0
+        }
+      }
+    }
+  ],
+  "settings": {
+    "cycle_seconds": 15,
+    "fill_delay_seconds": 60,
+    "include_srl": false,
+    "max_match_loss": 100000.0,
+    "suspensions": "none (every variant trades; the live S73 state is not applied)",
+    "variants": [
+      "w03_e03",
+      "w03_e06",
+      "w05_e03",
+      "w05_e06",
+      "w07_e03",
+      "w07_e06",
+      "market_only"
+    ]
+  },
+  "skipped_matches": {
+    "no_market": 569
+  },
+  "skipped_registry": {
+    "no_start": 876,
+    "settled": 80,
+    "simulated": 3652,
+    "too_early": 5260
+  },
+  "variants": {
+    "market_only": {
+      "bankroll": 5000000.0,
+      "bets": 1,
+      "brier": 0.004179517315663755,
+      "brier_n": 1,
+      "churn": {
+        "tiny_share": 0.0,
+        "tiny_trades": 0,
+        "trade_matches": 1,
+        "trades": 1,
+        "trades_per_match": 1.0
+      },
+      "clv_ci_hi": null,
+      "clv_ci_lo": null,
+      "clv_mean": -0.0018939393939393923,
+      "clv_n": 1,
+      "clv_sd": null,
+      "clv_se": null,
+      "day_pnl": 0.0,
+      "fill_rate": 1.0,
+      "filled": 1,
+      "intents": 1,
+      "intents_by_side": {
+        "BACK_away": 1
+      },
+      "matches": 1,
+      "max_worst_case_per_match": 2000.0,
+      "max_worst_exposure": 2000.0,
+      "pending": 0,
+      "pnl": -2000.0,
+      "pnl_ci_hi": null,
+      "pnl_ci_lo": null,
+      "pnl_mean": -2000.0,
+      "r3_bets_left": 299,
+      "r3_matches_left": 29,
+      "r3_met": false,
+      "settled_bets": 1,
+      "settled_matches": 1,
+      "unfilled": 0,
+      "variant": "market_only",
+      "void_bets": 0
+    },
+    "w03_e03": {
+      "bankroll": 5000000.0,
+      "bets": 96,
+      "brier": 0.13546148336526426,
+      "brier_n": 63,
+      "churn": {
+        "tiny_share": 0.046153846153846156,
+        "tiny_trades": 3,
+        "trade_matches": 4,
+        "trades": 65,
+        "trades_per_match": 16.25
+      },
+      "clv_ci_hi": 0.04675424724456484,
+      "clv_ci_lo": 0.0060819028108706355,
+      "clv_mean": 0.025952073960685076,
+      "clv_n": 57,
+      "clv_sd": 0.07928201410512936,
+      "clv_se": 0.010501159301553105,
+      "day_pnl": 331066.17511926795,
+      "fill_rate": 0.6770833333333334,
+      "filled": 65,
+      "intents": 96,
+      "intents_by_side": {
+        "BACK_away": 23,
+        "BACK_home": 8,
+        "LAY_away": 50,
+        "LAY_home": 15
+      },
+      "matches": 4,
+      "max_worst_case_per_match": 100000.0,
+      "max_worst_exposure": 100000.0,
+      "pending": 0,
+      "pnl": 341066.17511926795,
+      "pnl_ci_hi": 11032.379271641805,
+      "pnl_ci_lo": 83.4230604893582,
+      "pnl_mean": 5413.748811416951,
+      "r3_bets_left": 237,
+      "r3_matches_left": 27,
+      "r3_met": false,
+      "settled_bets": 63,
+      "settled_matches": 3,
+      "unfilled": 31,
+      "variant": "w03_e03",
+      "void_bets": 0
+    },
+    "w03_e06": {
+      "bankroll": 5000000.0,
+      "bets": 77,
+      "brier": 0.10125380963922069,
+      "brier_n": 47,
+      "churn": {
+        "tiny_share": 0.02127659574468085,
+        "tiny_trades": 1,
+        "trade_matches": 3,
+        "trades": 47,
+        "trades_per_match": 15.666666666666666
+      },
+      "clv_ci_hi": 0.037424711146578166,
+      "clv_ci_lo": -0.018080584597667745,
+      "clv_mean": 0.009659969355643836,
+      "clv_n": 43,
+      "clv_sd": 0.09507223764721426,
+      "clv_se": 0.01449838031952181,
+      "day_pnl": 286756.4935064935,
+      "fill_rate": 0.6103896103896104,
+      "filled": 47,
+      "intents": 77,
+      "intents_by_side": {
+        "BACK_away": 9,
+        "BACK_home": 4,
+        "LAY_away": 51,
+        "LAY_home": 13
+      },
+      "matches": 3,
+      "max_worst_case_per_match": 100000.0,
+      "max_worst_exposure": 100000.0,
+      "pending": 0,
+      "pnl": 301819.09658751957,
+      "pnl_ci_hi": 12459.26148805985,
+      "pnl_ci_lo": 338.7528260918206,
+      "pnl_mean": 6421.6829061174385,
+      "r3_bets_left": 253,
+      "r3_matches_left": 27,
+      "r3_met": false,
+      "settled_bets": 47,
+      "settled_matches": 3,
+      "unfilled": 30,
+      "variant": "w03_e06",
+      "void_bets": 0
+    },
+    "w05_e03": {
+      "bankroll": 5000000.0,
+      "bets": 104,
+      "brier": 0.1492988132801673,
+      "brier_n": 64,
+      "churn": {
+        "tiny_share": 0.014705882352941176,
+        "tiny_trades": 1,
+        "trade_matches": 4,
+        "trades": 68,
+        "trades_per_match": 17.0
+      },
+      "clv_ci_hi": 0.030795565160892262,
+      "clv_ci_lo": -0.002276833403194057,
+      "clv_mean": 0.014115961778873611,
+      "clv_n": 58,
+      "clv_sd": 0.06441107472738256,
+      "clv_se": 0.00845758845911363,
+      "day_pnl": 367461.11987169797,
+      "fill_rate": 0.6538461538461539,
+      "filled": 68,
+      "intents": 104,
+      "intents_by_side": {
+        "BACK_away": 27,
+        "BACK_home": 13,
+        "LAY_away": 38,
+        "LAY_home": 26
+      },
+      "matches": 4,
+      "max_worst_case_per_match": 100000.0,
+      "max_worst_exposure": 100000.0,
+      "pending": 0,
+      "pnl": 377553.8766488466,
+      "pnl_ci_hi": 12794.23274069137,
+      "pnl_ci_lo": -1070.8324748653968,
+      "pnl_mean": 5899.279322638229,
+      "r3_bets_left": 236,
+      "r3_matches_left": 27,
+      "r3_met": false,
+      "settled_bets": 64,
+      "settled_matches": 3,
+      "unfilled": 36,
+      "variant": "w05_e03",
+      "void_bets": 0
+    },
+    "w05_e06": {
+      "bankroll": 5000000.0,
+      "bets": 97,
+      "brier": 0.1374655101603828,
+      "brier_n": 60,
+      "churn": {
+        "tiny_share": 0.015873015873015872,
+        "tiny_trades": 1,
+        "trade_matches": 4,
+        "trades": 63,
+        "trades_per_match": 15.75
+      },
+      "clv_ci_hi": 0.039528204433940096,
+      "clv_ci_lo": 0.004909398917303648,
+      "clv_mean": 0.0221356135787702,
+      "clv_n": 54,
+      "clv_sd": 0.06575791070495213,
+      "clv_se": 0.008948518209924022,
+      "day_pnl": 367461.11987169797,
+      "fill_rate": 0.6494845360824743,
+      "filled": 63,
+      "intents": 97,
+      "intents_by_side": {
+        "BACK_away": 20,
+        "BACK_home": 8,
+        "LAY_away": 47,
+        "LAY_home": 22
+      },
+      "matches": 4,
+      "max_worst_case_per_match": 99979.3956043956,
+      "max_worst_exposure": 99979.3956043956,
+      "pending": 0,
+      "pnl": 375413.5008240789,
+      "pnl_ci_hi": 13517.808375527424,
+      "pnl_ci_lo": -325.1127861505302,
+      "pnl_mean": 6256.891680401315,
+      "r3_bets_left": 240,
+      "r3_matches_left": 27,
+      "r3_met": false,
+      "settled_bets": 60,
+      "settled_matches": 3,
+      "unfilled": 34,
+      "variant": "w05_e06",
+      "void_bets": 0
+    },
+    "w07_e03": {
+      "bankroll": 5000000.0,
+      "bets": 103,
+      "brier": 0.1570652856877489,
+      "brier_n": 65,
+      "churn": {
+        "tiny_share": 0.043478260869565216,
+        "tiny_trades": 3,
+        "trade_matches": 4,
+        "trades": 69,
+        "trades_per_match": 17.25
+      },
+      "clv_ci_hi": 0.03500969257697649,
+      "clv_ci_lo": 0.0021248149881130597,
+      "clv_mean": 0.018434472766487797,
+      "clv_n": 64,
+      "clv_sd": 0.06621779247657963,
+      "clv_se": 0.008277224059572454,
+      "day_pnl": 342080.5218834591,
+      "fill_rate": 0.6699029126213593,
+      "filled": 69,
+      "intents": 103,
+      "intents_by_side": {
+        "BACK_away": 30,
+        "BACK_home": 16,
+        "LAY_away": 31,
+        "LAY_home": 26
+      },
+      "matches": 4,
+      "max_worst_case_per_match": 100000.0,
+      "max_worst_exposure": 100000.0,
+      "pending": 0,
+      "pnl": 410957.42835623247,
+      "pnl_ci_hi": 14222.249443122622,
+      "pnl_ci_lo": -591.5465559926739,
+      "pnl_mean": 6322.421974711268,
+      "r3_bets_left": 235,
+      "r3_matches_left": 27,
+      "r3_met": false,
+      "settled_bets": 65,
+      "settled_matches": 3,
+      "unfilled": 34,
+      "variant": "w07_e03",
+      "void_bets": 0
+    },
+    "w07_e06": {
+      "bankroll": 5000000.0,
+      "bets": 94,
+      "brier": 0.15342709604999366,
+      "brier_n": 64,
+      "churn": {
+        "tiny_share": 0.029411764705882353,
+        "tiny_trades": 2,
+        "trade_matches": 4,
+        "trades": 68,
+        "trades_per_match": 17.0
+      },
+      "clv_ci_hi": 0.04396645693000492,
+      "clv_ci_lo": 0.007876989267560244,
+      "clv_mean": 0.02659979563456883,
+      "clv_n": 59,
+      "clv_sd": 0.06905791644615342,
+      "clv_se": 0.00899057493672944,
+      "day_pnl": 350085.87370634725,
+      "fill_rate": 0.723404255319149,
+      "filled": 68,
+      "intents": 94,
+      "intents_by_side": {
+        "BACK_away": 26,
+        "BACK_home": 12,
+        "LAY_away": 32,
+        "LAY_home": 24
+      },
+      "matches": 4,
+      "max_worst_case_per_match": 100000.0,
+      "max_worst_exposure": 100000.0,
+      "pending": 0,
+      "pnl": 417662.82531020284,
+      "pnl_ci_hi": 14821.405906491074,
+      "pnl_ci_lo": -810.1441729943294,
+      "pnl_mean": 6525.981645471919,
+      "r3_bets_left": 236,
+      "r3_matches_left": 27,
+      "r3_met": false,
+      "settled_bets": 64,
+      "settled_matches": 3,
+      "unfilled": 26,
+      "variant": "w07_e06",
+      "void_bets": 0
+    }
+  },
+  "window": {
+    "cycles_run": 5300,
+    "from": "2026-11-01T00:00:00+00:00",
+    "grid_steps_skipped": 8820,
+    "matches_considered": 15,
+    "step_seconds": 15,
+    "to": "2026-11-03T10:56:38.110544+00:00"
+  }
+}

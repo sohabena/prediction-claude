@@ -272,7 +272,7 @@ async def test_suspended_variant_opens_no_new_risk_and_the_others_still_trade():
     variants = pt.build_variants()
     session = s72.FakeSession()
     feed = s72.FakeFeed(registry=[s72._registry()], prices=[s72._price(s72.T0 - s72.MIN)], last={s72.MID: s72.T0})
-    prob = s72.FakeProbability(p_model=0.6, p_market=0.5)
+    prob = s72.FakeProbability(p_model=0.6)
 
     report = await pt.run_cycle(
         session, feed, prob, variants, now=s72.T0, suspended={"w05_e03"}, primary="w03_e05"
@@ -325,9 +325,16 @@ def test_report_handles_an_empty_ledger():
 def test_run_review_writes_report_and_state_only(monkeypatch, tmp_path):
     rows = _many(3, clv=0.01)
 
+    class _NoRows:  # S76: the report also reads the results-missing list; an empty result is enough here
+        def mappings(self):
+            return self
+
+        def all(self):
+            return []
+
     class FakeSession:
         async def execute(self, *args, **kwargs):
-            return None
+            return _NoRows()
 
     class Ctx:
         async def __aenter__(self):

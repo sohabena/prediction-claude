@@ -1,7 +1,8 @@
 """Read-only market-page worker for LotusBook match pages: Winner (match odds), Bookmaker, session and
 S52 list markets, plus the Sportradar scoreboard on the same page.
 
-Rules enforced here: one page per live recorded match, polled no faster than every 3 s,
+Rules enforced here: one page per live recorded match (S77: and per real pre-match match inside the lead window),
+polled no faster than every 3 s,
 read via ``page.content()`` only (no clicks, no form input, no login, no requests other than the match
 page itself), reloaded every ``RELOAD_EVERY_S``. Simulated (SRL) matches are recorded like real ones.
 Records are stored per market: a record is written only when its own content changes, and a market
@@ -19,9 +20,9 @@ from __future__ import annotations
 
 import asyncio
 import time
-from dataclasses import replace
-from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Optional
+from dataclasses import dataclass, field, replace
+from datetime import datetime, timedelta, timezone
+from typing import Any, Awaitable, Callable, Mapping, Optional
 from urllib.parse import urljoin
 
 from scraper.parsers.lotusbook_json import EventMeta, event_id_from_url, event_meta, event_records, settlement_of
@@ -45,6 +46,17 @@ PAGE_LOAD_TIMEOUT_MS = 60_000
 RELOAD_EVERY_S = 300.0
 # S56: the DOM parse runs only when no market JSON has arrived for this long.
 JSON_FRESH_S = 30.0
+# A match worker stops when its match has shown no activity for this long (innings breaks drop matches off the
+# listing while their page keeps updating). Read by plan_market_workers and scraper/manager.py.
+MARKET_ABSENT_STOP_S = 2700.0
+# S77: a real match gets its page this many minutes before its start (env PREMATCH_PAGE_LEAD_MIN overrides).
+PREMATCH_PAGE_LEAD_MIN_DEFAULT = 75.0  # 15 min margin so the T-60m dataset snapshot has a fresh page row
+# S77: a running pre-match page stays open while its start is within this of the lead window, in either
+# direction. It closes when the start moved later by more than this (out of the window), or when the match is
+# still not live this long after its start.
+PREMATCH_STAY_GRACE_S = 1800.0
+LIVE_KIND = "live"
+PREMATCH_KIND = "prematch"
 
 StoreFn = Callable[[str, list[MarketRecord]], Awaitable[None]]
 # (match_id, scoreboard state or None when the widget is absent from the page, observed_at)
@@ -64,14 +76,161 @@ def clamp_poll_interval(interval: float) -> float:
 
 
 def eligibility(*, is_live: bool, team_home: str, team_away: str, competition: str = "") -> tuple[bool, str]:
-    """Return ``(eligible, reason)``. Only live matches get a page.
+    """Return ``(eligible, reason)``. Only live matches get a page by this rule.
 
+    S77 adds the pre-match case (real matches inside the lead window); see ``plan_market_workers``.
     S50: simulated (SRL and similar) matches are recorded like real ones, so they are eligible too.
     They are kept apart downstream (never approved or published); see scraper/manager.py.
     """
     if not is_live:
         return False, "not_live"
     return True, "ok"
+
+
+# ── S77: which matches get a page, and when ─────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class MarketCandidate:
+    """What the planner knows about one listed match. Times are UTC.
+
+    ``listing_seen``: last accepted listing event. ``live_seen``: last live activity (listing or own page).
+    ``startable``: not in a restart backoff and the page can be opened. ``completed``: result already detected.
+    """
+
+    match_id: str
+    is_live: bool = False
+    simulated: bool = False
+    start: Optional[datetime] = None
+    completed: bool = False
+    startable: bool = True
+    listing_seen: Optional[datetime] = None
+    live_seen: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class MarketPlan:
+    """``starts``: match ids to open a page for, in order. ``stops``: match id -> reason
+    (``completed``, ``absent``, ``window``, or ``preempted`` when a live match needs its slot)."""
+
+    starts: tuple[str, ...] = ()
+    stops: Mapping[str, str] = field(default_factory=dict)
+
+
+def in_prematch_window(start: datetime, now: datetime, lead: timedelta) -> bool:
+    """A page may be opened from ``lead`` before the start up to the start itself (both ends inclusive)."""
+    return start - lead <= now <= start
+
+
+def prematch_may_stay(start: datetime, now: datetime, lead: timedelta) -> bool:
+    """A running pre-match page stays while the start lies within the lead window widened by the stay grace."""
+    grace = timedelta(seconds=PREMATCH_STAY_GRACE_S)
+    return start - lead - grace <= now <= start + grace
+
+
+def _age_s(now: datetime, seen: datetime) -> float:
+    return (now - seen).total_seconds()
+
+
+def _running_stop_reason(
+    match: Optional[MarketCandidate], kind: str, now: datetime, lead: timedelta, absent_s: float
+) -> Optional[str]:
+    if match is not None and match.completed:
+        return "completed"
+    if kind == LIVE_KIND:
+        seen = match.live_seen if match is not None else None
+        return "absent" if seen is not None and _age_s(now, seen) > absent_s else None
+    # Pre-match page: absence is measured on the listing, not on live activity (it is not live yet).
+    if match is None:
+        return "absent"
+    if match.start is None:
+        return "window"
+    if match.listing_seen is not None and _age_s(now, match.listing_seen) > absent_s:
+        return "absent"
+    if not prematch_may_stay(match.start, now, lead):
+        return "window"
+    return None
+
+
+def _start_key(match: Optional[MarketCandidate], now: datetime) -> datetime:
+    return match.start if match is not None and match.start is not None else now
+
+
+def plan_market_workers(
+    matches: list[MarketCandidate],
+    running: Mapping[str, str],
+    now: datetime,
+    cap: int,
+    lead: timedelta,
+    absent_s: float = MARKET_ABSENT_STOP_S,
+) -> MarketPlan:
+    """Decide which match pages to open and which to close. Pure: no browser, no DB, no clock.
+
+    Rules (S77):
+    - Live matches (SRL included) are served first. Pre-match pages (real matches only) fill the free slots,
+      earliest start first, and only while the start is inside the lead window.
+    - A live match that finds every slot taken closes the pre-match page with the latest start, and takes its slot.
+      Live pages are never preempted.
+    - A running live page closes when its match has shown no live activity for ``absent_s`` (as before S77), or
+      when it is completed. A running pre-match page closes when its match leaves the listing for ``absent_s``,
+      when its start moved out of the window by more than the stay grace, or when it is completed.
+    - A match that was running at the start of this plan (including one being closed) is not started again in it.
+
+    ``running`` maps every open page's match id to its kind (``LIVE_KIND`` or ``PREMATCH_KIND``). A page whose match is
+    live now counts as a live page. ``cap`` bounds the pages open after the plan.
+    """
+    by_id = {m.match_id: m for m in matches}
+    kinds = dict(running)
+    for mid in list(kinds):
+        match = by_id.get(mid)
+        if match is not None and match.is_live and kinds[mid] == PREMATCH_KIND:
+            kinds[mid] = LIVE_KIND
+
+    stops: dict[str, str] = {}
+    for mid, kind in kinds.items():
+        reason = _running_stop_reason(by_id.get(mid), kind, now, lead, absent_s)
+        if reason is not None:
+            stops[mid] = reason
+
+    active = {mid: kind for mid, kind in kinds.items() if mid not in stops}
+    free = cap - len(active)
+    taken = set(kinds)
+    starts: list[str] = []
+
+    live_wanting = sorted(
+        (m for m in matches if m.is_live and not m.completed and m.startable and m.match_id not in taken),
+        key=lambda m: (m.start is None, m.start or now, m.match_id),
+    )
+    for match in live_wanting:
+        if free > 0:
+            starts.append(match.match_id)
+            active[match.match_id] = LIVE_KIND
+            free -= 1
+            continue
+        victims = [mid for mid, kind in active.items() if kind == PREMATCH_KIND]
+        if not victims:
+            break  # every slot holds a live page: nothing to preempt
+        victim = max(victims, key=lambda mid: (_start_key(by_id.get(mid), now), mid))
+        stops[victim] = "preempted"
+        del active[victim]
+        starts.append(match.match_id)
+        active[match.match_id] = LIVE_KIND
+
+    pre_wanting = sorted(
+        (
+            m for m in matches
+            if not m.is_live and not m.simulated and m.start is not None and not m.completed and m.startable
+            and m.match_id not in taken and in_prematch_window(m.start, now, lead)
+        ),
+        key=lambda m: (m.start, m.match_id),
+    )
+    for match in pre_wanting:
+        if free <= 0:
+            break
+        starts.append(match.match_id)
+        free -= 1
+
+    return MarketPlan(starts=tuple(starts), stops=stops)
 
 
 def build_match_url(site_url: str, href: str) -> str:

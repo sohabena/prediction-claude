@@ -9,7 +9,8 @@ import asyncio
 import json
 import os
 import signal
-from datetime import datetime, timezone
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +21,19 @@ from features.extractors.category_features import MatchCategoryClassifier, Match
 from scraper.live_match_tracker import LiveMatchTracker
 from scraper.match_filter import MatchClassifier, is_simulated_name
 from scraper.lotus_result_detector import LotusResultDetector
-from scraper.market_pages import MarketPageWorker, build_match_url, eligibility, open_match_page, resolve_match_href
+from scraper.market_pages import (
+    LIVE_KIND,
+    MARKET_ABSENT_STOP_S,
+    PREMATCH_KIND,
+    PREMATCH_PAGE_LEAD_MIN_DEFAULT,
+    MarketCandidate,
+    MarketPageWorker,
+    MarketPlan,
+    build_match_url,
+    open_match_page,
+    plan_market_workers,
+    resolve_match_href,
+)
 from scraper.parsers.lotusbook_json import EventMeta, is_menu_url, menu_competitions
 from scraper.parsers.lotusbook_markets import MarketRecord
 from scraper.parsers.lotusbook_score import ScoreState, to_context_row
@@ -42,10 +55,10 @@ FEED_STATE_PATH = ROOT_DIR / "logs" / "scraper_feed.json"
 MARKET_WORKER_CAP_DEFAULT = 12
 MARKET_RESTART_DELAY_S = 60.0    # a worker that ended while its match is live is restarted after this
 MARKET_MAX_RESTARTS = 5          # per match, for the process lifetime
-MARKET_ABSENT_STOP_S = 2700.0    # a worker stops when its match has shown no live activity for this long: not on the
-                                 # listing and no change on its own match page (innings breaks drop matches off the
-                                 # listing while the page keeps updating)
+#   MARKET_ABSENT_STOP_S (imported): a live page stops when its match has shown no live activity for that long.
+MARKET_COMPLETED_LINGER_S = 1800.0  # an open page stays this long after its match's result (settled-market capture)
 MARKET_SWEEP_S = 30.0            # how often the janitor checks completion and absence
+MARKET_CANDIDATE_TTL_S = 6 * 3600.0  # S77: a match not listed for this long, with no page open, is forgotten
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -208,6 +221,7 @@ class ScraperManager:
 
         # Load already-completed match IDs so we don't scrape finished matches
         await self._load_completed_matches()
+        await self._load_registry_competitions()
 
         # Pre-load already-resolved match IDs into detector
         self._result_detector.load_already_resolved(self._completed_match_ids)
@@ -243,6 +257,24 @@ class ScraperManager:
                 logger.info("scrape_approved_loaded", count=len(approved_ids))
         except Exception as e:
             logger.error("load_scrape_approved_error", error=str(e))
+
+    async def _load_registry_competitions(self) -> None:
+        """Competitions already in the registry (last 3 days), the fallback until the site's menu feed arrives.
+
+        Without it the first listing poll after a restart wrote rows with an empty competition (12 on 2026-11-03).
+        """
+        try:
+            from sqlalchemy import text as sa_text
+            async with get_session() as session:
+                rows = (await session.execute(sa_text(
+                    "SELECT match_id, competition FROM match_training_status "
+                    "WHERE competition IS NOT NULL AND competition <> '' "
+                    "AND (match_start_time IS NULL OR match_start_time > now() - interval '3 days')"
+                ))).fetchall()
+            self.__dict__["_registry_competition"] = {str(r[0]): str(r[1]) for r in rows}
+            logger.info("registry_competitions_loaded", count=len(rows))
+        except Exception as e:
+            logger.error("load_registry_competitions_error", error=str(e))
 
     async def _load_completed_matches(self) -> None:
         """Load match IDs that already have results (completed matches)."""
@@ -367,6 +399,10 @@ class ScraperManager:
             menu = self._competition_by_event.get(event.match_id[len("lb_"):]) if event.match_id.startswith("lb_") else None
             if menu is not None and menu[1] != event.competition:
                 event = event.model_copy(update={"competition": menu[1]})
+            elif menu is None and not event.competition:
+                known = self.__dict__.get("_registry_competition", {}).get(event.match_id)
+                if known:
+                    event = event.model_copy(update={"competition": known})
 
             # S50: simulated (SRL / virtual) matches are recorded like real ones (results included), but they
             # are never approved and never published to Redis. They bypass the
@@ -433,6 +469,10 @@ class ScraperManager:
             approved = (not simulated) and event.match_id in self._scrape_approved_ids
             if not approved and not self._record_all:
                 continue
+
+            # S77: every listed match is a candidate for a read-only page (live or pre-match). Noted before the
+            # throttles below, so a pre-match match whose price did not change still counts as listed.
+            self._note_market_candidate(event, now)
 
             # ── LIVE GATE: completed matches stop. Upcoming (not-live) matches are recorded pre-match
             # when SCRAPER_RECORD_PREMATCH is on, but only on a price change (see _prematch_due).
@@ -537,8 +577,6 @@ class ScraperManager:
             if prematch:
                 # Marked only once stored, so a tick rejected by the quality gates does not reset the throttle
                 self._prematch_last[event.match_id] = (self._prices(event), now)
-            else:
-                await self._ensure_market_worker(event)
 
             # Store MatchContext for every recorded match; publish it only for approved matches.
             # LotusBook often shows no score at all; a row is stored only when a score was actually read,
@@ -587,6 +625,9 @@ class ScraperManager:
                 )
         except Exception as e:
             logger.error("result_detection_error", error=str(e))
+
+        # S77: open and close read-only match pages once per poll, after every listed match is noted
+        await self._reconcile_market_workers(now)
 
         # Mark matches NOT in current batch as not-live (they may have finished)
         # and remove matches not seen for >120 seconds (completed/removed from exchange)
@@ -722,42 +763,142 @@ class ScraperManager:
             logger.warning("market_worker_cap_invalid", value=raw)
             return MARKET_WORKER_CAP_DEFAULT
 
-    async def _ensure_market_worker(self, event: OddsEvent) -> None:
-        """Start, or restart after an error, the read-only market-page worker of a live match.
+    def _market_store(self) -> dict[str, dict]:
+        """S77 per-match planner state: candidates, last event, kind of each open page. Created on first use, so a
+        manager built without ``__init__`` (the test doubles) behaves the same."""
+        return self.__dict__.setdefault("_market_s77", {"candidates": {}, "events": {}, "kinds": {}, "json_start": {}})
 
-        Called from the live branch of ``_on_events`` only, so pre-match matches never get a page. Never
-        clicks, never inputs, never logs in. Simulated (SRL) matches get a page too (S50).
-        """
+    @staticmethod
+    def _prematch_lead() -> timedelta:
+        """Minutes before the start that a real match gets its page (PREMATCH_PAGE_LEAD_MIN; invalid: default)."""
+        raw = os.getenv("PREMATCH_PAGE_LEAD_MIN", "").strip()
+        if not raw:
+            return timedelta(minutes=PREMATCH_PAGE_LEAD_MIN_DEFAULT)
+        try:
+            return timedelta(minutes=max(0.0, float(raw)))
+        except ValueError:
+            logger.warning("prematch_page_lead_invalid", value=raw)
+            return timedelta(minutes=PREMATCH_PAGE_LEAD_MIN_DEFAULT)
+
+    def _note_market_candidate(self, event: OddsEvent, now: datetime) -> None:
+        """S77: remember a listed match (real or SRL, live or upcoming) for the page planner. Storage-free."""
+        store = self._market_store()
         mid = event.match_id
+        prev: MarketCandidate | None = store["candidates"].get(mid)
+        # The market JSON's openDate, once read, beats the listing's start text (they can disagree by hours; the
+        # registry already trusts the JSON). Without this the listing would move the window back on every poll.
+        start = store["json_start"].get(mid) or event.scheduled_time or (prev.start if prev is not None else None)
+        if start is not None and start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        store["candidates"][mid] = MarketCandidate(
+            match_id=mid,
+            is_live=event.is_live,
+            simulated=is_simulated_name(event.competition, event.team_home, event.team_away),
+            start=start,
+            listing_seen=now,
+        )
+        store["events"][mid] = event
+        if event.is_live:
+            self._market_live_seen[mid] = now
+
+    def _market_startable(self, mid: str, now: datetime) -> bool:
+        """A page can be opened for this match now: a read-only listing match, not in a restart backoff."""
+        if not mid.startswith("lb_") or self._listing_page is None or self._context is None:
+            return False
+        ended_at = self._market_ended_at.get(mid)
+        if ended_at is None:
+            return True
+        if (now - ended_at).total_seconds() < MARKET_RESTART_DELAY_S:
+            return False
+        return self._market_restarts.get(mid, 0) < MARKET_MAX_RESTARTS
+
+    def _plan_market(self, now: datetime) -> MarketPlan:
+        """Run the pure planner on the current state. Records a page that is now live as a live page."""
+        store = self._market_store()
+        candidates: dict[str, MarketCandidate] = store["candidates"]
+        running = {mid: store["kinds"].get(mid, LIVE_KIND) for mid in self._market_tasks}
+        for mid, kind in running.items():
+            cand = candidates.get(mid)
+            if cand is not None and cand.is_live:
+                store["kinds"][mid] = LIVE_KIND
+        matches = []
+        done_at: dict[str, datetime] = store.setdefault("completed_at", {})
+        for mid in set(candidates) | set(running):
+            base = candidates.get(mid) or MarketCandidate(match_id=mid)
+            completed = mid in self._completed_match_ids
+            if completed and mid in running:
+                # An open page stays MARKET_COMPLETED_LINGER_S after the result, to capture the settled Winner market
+                # (runner statuses after the close have never been recorded on a real match, S76). No new page opens.
+                first = done_at.setdefault(mid, now)
+                completed = (now - first).total_seconds() >= MARKET_COMPLETED_LINGER_S
+            matches.append(replace(
+                base,
+                completed=completed,
+                startable=self._market_startable(mid, now),
+                live_seen=self._market_live_seen.get(mid),
+            ))
+        return plan_market_workers(
+            matches, running, now, cap=self._market_cap(), lead=self._prematch_lead(), absent_s=MARKET_ABSENT_STOP_S,
+        )
+
+    def _request_market_stop(self, mid: str, reason: str) -> None:
+        stop = self._market_stops.get(mid)
+        if stop is None or stop.is_set():
+            return
+        logger.info("market_worker_stop_requested", match_id=mid, reason=reason)
+        stop.set()
+
+    async def _ensure_market_worker(self, event: OddsEvent) -> None:
+        """Note one listed match and reconcile the pages. Kept as the single-event entry point; ``_on_events`` calls
+        ``_reconcile_market_workers`` once per poll instead, so the slots are planned on the whole listing."""
         now = self._market_now()
-        self._market_live_seen[mid] = now
+        self._note_market_candidate(event, now)
+        await self._reconcile_market_workers(now)
+
+    async def _reconcile_market_workers(self, now: datetime) -> None:
+        """Close the pages the planner stops, then open the pages it starts. Never clicks, inputs or logs in.
+
+        Live matches (SRL included) and real pre-match matches inside the lead window get a page (S77). Simulated
+        (SRL) matches only while live.
+        """
         if not _env_flag("SCRAPER_MARKET_PAGES", default=True):
             return
-        eligible, _reason = eligibility(
-            is_live=event.is_live,
-            team_home=event.team_home,
-            team_away=event.team_away,
-            competition=event.competition,
-        )
-        if not eligible or mid in self._market_tasks:
+        self._prune_market_candidates(now)
+        plan = self._plan_market(now)
+        for mid, reason in plan.stops.items():
+            self._request_market_stop(mid, reason)
+        for mid in plan.starts:
+            await self._start_market_worker(mid, now)
+
+    def _prune_market_candidates(self, now: datetime) -> None:
+        store = self._market_store()
+        for mid, cand in list(store["candidates"].items()):
+            if mid in self._market_tasks or cand.listing_seen is None:
+                continue
+            if (now - cand.listing_seen).total_seconds() > MARKET_CANDIDATE_TTL_S:
+                del store["candidates"][mid]
+                store["events"].pop(mid, None)
+                store["json_start"].pop(mid, None)
+
+    async def _start_market_worker(self, mid: str, now: datetime) -> None:
+        """Open the page of one planned match and start its worker (restart bookkeeping included)."""
+        store = self._market_store()
+        event = store["events"].get(mid)
+        cand = store["candidates"].get(mid)
+        if event is None or cand is None:
+            return
+        cap = self._market_cap()
+        # Workers already asked to stop free their slot (the planner counts them the same way)
+        open_pages = [m for m in self._market_tasks if not (m in self._market_stops and self._market_stops[m].is_set())]
+        if len(open_pages) >= cap:
+            logger.warning("market_worker_cap_reached", cap=cap, match_id=mid)
             return
 
         ended_at = self._market_ended_at.get(mid)
         if ended_at is not None:
-            if (now - ended_at).total_seconds() < MARKET_RESTART_DELAY_S:
-                return
-            if self._market_restarts.get(mid, 0) >= MARKET_MAX_RESTARTS:
-                return
             self._market_restarts[mid] = self._market_restarts.get(mid, 0) + 1
             del self._market_ended_at[mid]
             logger.info("market_worker_restarting", match_id=mid, restart=self._market_restarts[mid])
-
-        if not mid.startswith("lb_") or self._listing_page is None or self._context is None:
-            return
-        cap = self._market_cap()
-        if len(self._market_tasks) >= cap:
-            logger.warning("market_worker_cap_reached", cap=cap, match_id=mid)
-            return
         try:
             href = await resolve_match_href(self._listing_page, mid[len("lb_"):])
             if not href:
@@ -771,15 +912,15 @@ class ScraperManager:
             self._market_ended_at[mid] = now
             return
         stop = asyncio.Event()
+        kind = LIVE_KIND if cand.is_live else PREMATCH_KIND
 
-        async def on_meta(match_id: str, meta: EventMeta, _event: OddsEvent = event) -> None:
-            await self._apply_market_meta(_event, meta)
+        async def on_meta(match_id: str, meta: EventMeta) -> None:
+            await self._apply_market_meta(store["events"].get(match_id, event), meta)
 
         async def on_score(
             match_id: str, state: ScoreState | None, pipeline: str | None, observed_at: datetime,
-            _event: OddsEvent = event,
         ) -> None:
-            await self._on_market_score(_event, state, pipeline, observed_at)
+            await self._on_market_score(store["events"].get(match_id, event), state, pipeline, observed_at)
 
         worker = MarketPageWorker(
             match_id=mid,
@@ -793,9 +934,10 @@ class ScraperManager:
         )
         worker.seed(await self._last_market_state(mid))
         self._market_stops[mid] = stop
+        store["kinds"][mid] = kind
         self._market_tasks[mid] = asyncio.create_task(self._run_market_worker(mid, worker, page, stop))
         self._ensure_market_janitor()
-        logger.info("market_worker_started", match_id=mid, url=url)
+        logger.info("market_worker_started", match_id=mid, url=url, kind=kind, start=cand.start and cand.start.isoformat())
 
     async def _last_market_state(self, match_id: str) -> list[MarketRecord]:
         """The latest stored record of every market of a match (empty when none, or on a DB error)."""
@@ -832,9 +974,10 @@ class ScraperManager:
                 pass
             self._market_tasks.pop(mid, None)
             self._market_stops.pop(mid, None)
+            self._market_store()["kinds"].pop(mid, None)
             intentional = stop.is_set()
             if not intentional:
-                # Ended by errors or a closed page: _ensure_market_worker restarts it after the delay.
+                # Ended by errors or a closed page: the planner restarts it after the delay.
                 self._market_ended_at[mid] = self._market_now()
             logger.info(
                 "market_worker_stopped", match_id=mid, snapshots=worker.stored_snapshots, intentional=intentional
@@ -852,18 +995,13 @@ class ScraperManager:
             self._sweep_market_workers(self._market_now())
 
     def _sweep_market_workers(self, now: datetime) -> None:
-        """Ask a worker to stop when its match completed, or has not been seen live for MARKET_ABSENT_STOP_S."""
-        for mid, stop in list(self._market_stops.items()):
-            if stop.is_set():
-                continue
-            completed = mid in self._completed_match_ids
-            seen = self._market_live_seen.get(mid)
-            absent = seen is not None and (now - seen).total_seconds() > MARKET_ABSENT_STOP_S
-            if completed or absent:
-                logger.info(
-                    "market_worker_stop_requested", match_id=mid, reason="completed" if completed else "absent"
-                )
-                stop.set()
+        """Ask a worker to stop when its match completed, has not been seen live for MARKET_ABSENT_STOP_S, or (S77)
+        a pre-match page left the lead window or its match left the listing. Slot preemption is not a sweep
+        decision: it happens only when a live match is starting (see ``_reconcile_market_workers``)."""
+        plan = self._plan_market(now)
+        for mid, reason in plan.stops.items():
+            if reason != "preempted":
+                self._request_market_stop(mid, reason)
 
     async def _on_market_scoreboard(self, match_id: str, state: Any, observed_at: datetime) -> None:
         """Scoreboard step of a market poll (S52). ``state`` is None when the widget is not on the page.
@@ -912,6 +1050,12 @@ class ScraperManager:
             updates["competition"] = meta.competition_name
         if meta.open_date is not None:
             updates["scheduled_time"] = meta.open_date
+            # S77: the market JSON's start time moves the pre-match window too
+            store = self._market_store()
+            store["json_start"][event.match_id] = meta.open_date
+            cand = store["candidates"].get(event.match_id)
+            if cand is not None:
+                store["candidates"][event.match_id] = replace(cand, start=meta.open_date)
         if not updates:
             return
         refreshed = event.model_copy(update=updates)

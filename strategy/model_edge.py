@@ -26,8 +26,9 @@ Rules (evaluated in this order, at most one order per call)
 
 Sizing and cap
     Kelly stakes are rounded down by ``strategy.value_policy.round_stake``. Every trade is then shrunk to the largest
-    stake that keeps the worst outcome at or above ``-max_match_loss``. That shrunk stake, and the green-up stake, are
-    exact and not rounded. A trade below ``SIGNAL_MIN_STAKE`` is dropped.
+    stake that keeps the worst outcome at or above ``-max_match_loss``. A LAY trade is sized at its limit price (the
+    highest fill it may take, S75): its liability grows with the fill price. That shrunk stake, and the green-up stake,
+    are exact and not rounded. A trade below ``SIGNAL_MIN_STAKE`` is dropped.
 
 Gates
     ``enter``, ``add`` and ``flip`` are blocked by the cooldown (``cooldown_s`` since ``last_trade_at``), by
@@ -42,7 +43,7 @@ Price
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Mapping, Optional
 
 from shared.constants import SIGNAL_MIN_STAKE
@@ -232,6 +233,12 @@ def _label(balance: float, delta_balance: float) -> str:
     return "flip" if crossed else "reduce"
 
 
+def _reprice(cand: _Cand, price: float) -> _Cand:
+    """The same candidate at another price: the outcome effects change, the probability does not."""
+    vh, va = _effect(cand.side, cand.selection, price)
+    return replace(cand, price=price, vh=vh, va=va)
+
+
 def _build(
     variant: Variant,
     book: Book,
@@ -240,6 +247,11 @@ def _build(
     reason: Optional[str],
 ) -> Optional[OrderIntent]:
     """Cap-shrink ``stake`` for ``cand``, drop it below the minimum, and label it unless ``reason`` is given."""
+    limit = _limit_price(variant, cand)
+    if cand.side == LAY and limit > cand.price:
+        # A LAY bet's liability grows with its fill price, and the fill may be as high as the limit. Size it at the
+        # limit so the worst case holds whatever price fills. BACK exposure is the stake, whatever the price.
+        cand = _reprice(cand, limit)
     room = _cap_room(book.home_pnl, book.away_pnl, cand.vh, cand.va, variant.max_match_loss)
     size = min(stake, room)
     if reason is None:
@@ -250,7 +262,7 @@ def _build(
         size = min(size, variant.max_trade_risk / risk_per_unit)
     if not size >= max(SIGNAL_MIN_STAKE, variant.min_trade_stake):
         return None
-    return OrderIntent(cand.side, cand.selection, _limit_price(variant, cand), size, reason)
+    return OrderIntent(cand.side, cand.selection, limit, size, reason)
 
 
 def _limit_price(variant: Variant, cand: _Cand) -> float:

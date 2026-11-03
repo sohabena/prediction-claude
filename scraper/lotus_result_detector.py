@@ -56,6 +56,8 @@ MAX_TICK_HISTORY = 500
 
 SOURCE_ODDS = "lotusbook_odds"
 SOURCE_SCOREBOARD = "lotusbook_scoreboard"
+# Results entered by hand (scripts/set_result.py, S76): the detector never replaces them
+MANUAL_SOURCES = ("public_scorecard", "manual_fix")
 
 RESULT_WIN = "win"
 RESULT_TIE = "tie"
@@ -553,6 +555,10 @@ class LotusResultDetector:
                     closing_lay_home=result.get("closing_lay_home"),
                     closing_lay_away=result.get("closing_lay_away"),
                 )
+                existing = await session.get(MatchResultRecord, result["match_id"])
+                if existing is not None and existing.source in MANUAL_SOURCES:
+                    logger.info("result_kept_manual", match_id=result["match_id"], source=existing.source)
+                    return
                 # merge: a scoreboard result replaces an earlier price row for the same match
                 await session.merge(record)
 

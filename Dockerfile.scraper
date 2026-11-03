@@ -40,6 +40,7 @@ COPY backend/models/ /app/backend/models/
 COPY scripts/run_scraper_forever.py /app/scripts/run_scraper_forever.py
 COPY scripts/data_quality_monitor.py /app/scripts/data_quality_monitor.py
 COPY scripts/quarantine_ticks.py /app/scripts/quarantine_ticks.py
+COPY scripts/results_reconciliation.py /app/scripts/results_reconciliation.py
 
 # S65 trainer (profile recording): weekly prematch, dataset, blend and gate, plus the registry. Same image.
 COPY strategy/ /app/strategy/
@@ -58,6 +59,8 @@ COPY scripts/synthetic_market.py /app/scripts/synthetic_market.py
 COPY virtual_trading/ /app/virtual_trading/
 COPY scripts/run_paper_trader.py /app/scripts/run_paper_trader.py
 COPY scripts/paper_report.py /app/scripts/paper_report.py
+COPY scripts/set_result.py /app/scripts/set_result.py
+COPY scripts/replay_paper.py /app/scripts/replay_paper.py
 
 # Create non-root user; logs/ is bind-mounted from the host so heartbeats are visible there
 RUN useradd --create-home phoenix && mkdir -p /app/logs && chown -R phoenix /app/logs

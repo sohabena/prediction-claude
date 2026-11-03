@@ -184,6 +184,11 @@ def _band_crossed(book: Mapping[str, Any]) -> bool:
     return bounds is not None and bounds[0] > bounds[1] + 1e-12
 
 
+def band_bounds(book: Mapping[str, Any]) -> Optional[tuple[float, float]]:
+    """Public: (low, high) of P(home) the two runners' prices allow, or None when a bound is missing (S75 guards)."""
+    return _band_bounds(book)
+
+
 def band_prob_home(book: Mapping[str, Any]) -> Optional[float]:
     """Midpoint of the P(home) range the two runners' prices jointly allow; None when a bound is missing or the
     book contradicts itself (the range is empty, e.g. a stale or mixed book)."""
@@ -354,6 +359,7 @@ __all__ = [
     "DEVIG_METHODS",
     "DEFAULT_DEVIG",
     "TRADING_DEVIG",
+    "band_bounds",
     "band_prob_home",
     "implied",
     "takeable",

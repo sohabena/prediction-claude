@@ -155,6 +155,27 @@ GROUP BY match_id, market_type
 ORDER BY last_seen DESC;
 ```
 
+### Pre-match match pages (S77)
+
+- A real match gets its read-only match page from `PREMATCH_PAGE_LEAD_MIN` minutes before its start (default
+  75, so the T-60m dataset snapshot finds a page row under 15 min old), not only when live. The page is the same one the live recording uses, so its rows go through the same
+  dedupe and land in `market_ticks` before the start. SRL matches still open a page only while live.
+- Slots: the cap (`SCRAPER_MARKET_WORKER_CAP`, default 12) goes to live matches first. Pre-match pages fill the
+  free slots, earliest start first. A live match that finds every slot taken closes the pre-match page with the
+  latest start. Live pages are never closed for a pre-match one.
+- A pre-match page closes when its match leaves the listing for 45 min, when its start moves more than 30 min
+  outside the lead window, or when the match completes. It stays open while the match is not live yet.
+- Selection is `plan_market_workers` in `scraper/market_pages.py` (pure, unit-tested in
+  `tests/unit/test_s77_prematch_pages.py`).
+- Monitor: `scripts/data_quality_monitor.py` check `prematch_pages` warns below 90% of real matches started
+  since `PREMATCH_PAGES_SINCE` (set it to the deploy time before the first run that should count) that have
+  match-page rows before their start. Matches first listed later than the lead are not scored.
+- Dataset (S58, `training/dataset.py`): snapshots read the as-of book from `v_match_odds`, which merges listing
+  and match-page rows. A value counts only from a row at or before the snapshot and at most 15 min old. Match-page
+  rows are written on change, so with the default lead the page opens about at T-60m and the T-60m snapshot gets
+  no match-page lays. A quiet market can also read as empty at T-10m or T-0. A longer lead gives T-60m rows only
+  when prices moved within the 15 min before it.
+
 ## 7. 30-day recording run in Docker (2026-11-02)
 
 **What runs:** `docker compose --profile recording up -d scraper` starts `phoenix-scraper` (with `phoenix-timescaledb`
@@ -214,6 +235,7 @@ only, 1 at least one failure (or the database could not be read).
 | `score_coverage` | over 10 % of matches with match-page rows have no score state | any |
 | `registry` | a recorded match has no registry row, or competition is empty | team-name variants for one match id |
 | `results` | a match's last tick is over 6 h old with no result, or a result has an empty winner | |
+| `results_missing` (S76) | | a real match's last tick is over 3 h old with no win, tie, no_result or abandoned result |
 | `gaps` | | a gap over 5 min inside one live match |
 | `srl` | never | never (count only) |
 
@@ -240,3 +262,48 @@ report.
   public scorecards. Matches that vanish without a decisive price are `unresolved`.
 - Ticks and matches recorded before match-page recording began (2026-11-03 ~02:26 UTC) cannot have match-page lays;
   the monitor reports them apart instead of scoring them.
+
+## 10. Results: verified wording, missing results, hand-set results (S76)
+
+**Verified wording (2026-11-03).** The first finished `livescore-v2` match is `lb_36267578` (Biratnagar Kings v
+Janakpur Bolts). The scraper logged the feed's finished text as `Biratnagar Kings won by 2 runs 🏆` (parsed=true,
+`logs/scraper_child.log`, 10:20:55Z), and the match's last `match_context` row is `status = completed`. The parsers
+(`scraper/parsers/lotusbook_scoreboard.py`, `scraper/lotus_result_detector.py`) read that text as a win by 2 runs.
+Fixture: `tests/fixtures/s76/finished_livescore_v2_lb_36267578.json`. The raw score/v3 body was not logged, so the
+field that carried the text (`stats.result` or `stats.status`) is still unknown.
+
+**Winner (match odds) market at the end: NOT VERIFIED.** No stored `market_ticks` row has a WINNER, WON, LOSER or
+LOST runner status. Real finished matches end with the Winner market still `open` (lb_36267578, fixture
+`winner_market_end_of_real_match_lb_36267578.json`) or `suspended` (lb_76227860). The only `closed` Winner rows are
+one real match closed at 05:10Z (runners `suspended`) and SRL matches. So `lotusbook_json.settlement_of` returns no
+winner on the data seen so far, and the settled-winner path has never produced a result.
+
+- Settled-market capture: since 2026-11-03 11:31 UTC an open match page stays `MARKET_COMPLETED_LINGER_S` (30 min)
+  after its match's result instead of closing at once (before, the Biratnagar page closed 6 s after the score said
+  completed). After the next real finish, check the Winner runner statuses in `market_ticks`; until then the
+  WINNER/WON wording stays unverified and the scoreboard text is the source of record.
+- Tie and no-result wording (`Match tied`, `No result`) is not in any stored feed text yet. Both parsers accept the
+  usual forms; that is unverified too.
+
+**Missing results.** `python scripts/results_reconciliation.py` lists real matches (SRL excluded) whose last tick
+(odds or market) is over 3 h old with no win, tie, no_result or abandoned result, over the last 7 days. Exit 2 when
+any is listed. The paper report has a "Results missing" section with the same list, and the monitor check
+`results_missing` warns (its window is the monitor's 24 h). Rows with an `unresolved` result but no tick in the
+database (for example lb_36246097, lb_36266985, lb_76292634, lb_76064830) are outside the last-tick rule and are not
+listed; decide them by hand.
+
+**Writing a result by hand.** Use this only when a public scorecard gives the result and the scraper did not:
+
+```powershell
+python scripts\set_result.py --match lb_<match id> --winner "Melbourne Stars W" --margin "15 runs" --source public_scorecard --url <scorecard url> --dry-run
+python scripts\set_result.py --match lb_<match id> --winner "Melbourne Stars W" --margin "15 runs" --source public_scorecard --url <scorecard url>
+python scripts\set_result.py --match lb_<match id> --tie        # or --no-result
+```
+
+- The winner must match the registry's `team_home` or `team_away` (case and spacing ignored). A trusted result (win,
+  tie, no_result, abandoned) is refused unless `--force`, and `--force` is refused when paper bets on the match are
+  already settled against it. Each write appends a line to `logs\set_result.jsonl`.
+- The write settles the match's filled paper bets at once (`paper_ledger.settle`, the same function the trader runs
+  every cycle). Tie and no_result void the bets.
+- The detector can still write a row for the same match later (it merges on `match_id`). Check
+  `scripts\results_reconciliation.py` after a manual write.

@@ -1,0 +1,42 @@
+{
+  "_provenance": "Winner (match_odds) rows of the same real match, last four stored (market_ticks, market_type match_odds). The market is still open with runners active at the last stored row; no closed or winner row exists for it. The match page worker stopped at 2026-11-03T10:21:01Z (reason completed), so no later market JSON was read.",
+  "match_id": "lb_36267578",
+  "rows": [
+    {
+      "time": "2026-11-03T10:20:55.595920+00:00",
+      "selection": "Janakpur Bolts",
+      "runner_status": "active",
+      "status": "open",
+      "back": 200.0,
+      "lay": 1000.0,
+      "market_id": "1.264887422"
+    },
+    {
+      "time": "2026-11-03T10:20:55.595920+00:00",
+      "selection": "Biratnagar Kings",
+      "runner_status": "active",
+      "status": "open",
+      "back": null,
+      "lay": 1.01,
+      "market_id": "1.264887422"
+    },
+    {
+      "time": "2026-11-03T10:20:46.546503+00:00",
+      "selection": "Janakpur Bolts",
+      "runner_status": "active",
+      "status": "open",
+      "back": 1000.0,
+      "lay": null,
+      "market_id": "1.264887422"
+    },
+    {
+      "time": "2026-11-03T10:20:46.546503+00:00",
+      "selection": "Biratnagar Kings",
+      "runner_status": "active",
+      "status": "open",
+      "back": null,
+      "lay": 1.01,
+      "market_id": "1.264887422"
+    }
+  ]
+}

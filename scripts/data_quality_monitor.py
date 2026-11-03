@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import re
 import sys
 from datetime import datetime, timedelta, timezone
@@ -34,6 +35,7 @@ if str(ROOT) not in sys.path:
 
 from scraper.match_filter import is_simulated_name  # noqa: E402
 from scripts.quarantine_ticks import RULES, classify  # noqa: E402
+from scripts.results_reconciliation import RESULTS_SQL, select_missing  # noqa: E402
 from shared.logging import setup_logging  # noqa: E402
 from training.registry import DEFAULT_ROOT, DRIFT_MIN_SETTLED, Registry, drift_assessment, read_jsonl  # noqa: E402
 
@@ -67,6 +69,18 @@ PAPER_FRESH_FAIL_S = 5 * 60  # trader log older than this while matches are live
 PAPER_SETTLE_FAIL_S = 12 * 3600  # filled bets still open this long after their result: fail
 # Per match, per variant: mirrors MAX_MATCH_LOSS in virtual_trading/paper_trader.py (the cap on the worst outcome)
 PAPER_MATCH_LOSS = 100_000.0
+PAPER_SANITY_CONTROL = "market_only"  # S75: the control variant, which should place (almost) nothing
+PAPER_SANITY_CONTROL_MAX = 2  # trades by the control in 24 h
+PAPER_SANITY_EDGE_MAX = 0.20  # a filled bet whose recorded edge at its decision price is above this is implausible
+PAPER_SANITY_MATCH_TRADES_MAX = 15  # trades by one variant on one match in 24 h
+# Bets decided before the S75 guards went live (2026-11-03 11:25 UTC, written into the two SQL queries) are not counted:
+# they were placed by the code the guards replaced.
+# S77: pre-match match pages. Matches that started on or after PREMATCH_PAGES_SINCE are scored. The operator sets
+# this to the time the S77 scraper was deployed (placeholder below) before the first run that should count.
+PREMATCH_PAGES_SINCE = datetime(2026, 11, 3, 11, 1, tzinfo=timezone.utc)  # S77 scraper deploy
+PREMATCH_PAGE_WARN = 0.90  # share of scored real matches with a match-page row before their start
+# Lead before the start, in minutes: same variable and default as the scraper (PREMATCH_PAGE_LEAD_MIN, 75).
+PREMATCH_PAGE_LEAD_MIN = float(os.environ.get("PREMATCH_PAGE_LEAD_MIN") or 75)
 
 Fetch = Callable[[str, dict[str, Any]], Awaitable[list[dict[str, Any]]]]
 
@@ -163,6 +177,28 @@ SQL: dict[str, str] = {
                EXISTS (SELECT 1 FROM match_context c
                        WHERE c.match_id = l.match_id AND c.time >= :since) AS has_context
         FROM live l
+    """,
+    "prematch_pages": """
+        WITH started AS (
+            SELECT s.match_id, s.team_home, s.team_away, s.competition, s.match_start_time,
+                   (SELECT MIN(o.time) FROM odds_ticks o
+                     WHERE o.match_id = s.match_id
+                       AND o.time BETWEEN s.match_start_time - INTERVAL '2 days' AND s.match_start_time) AS first_listed
+            FROM match_training_status s
+            WHERE s.match_start_time IS NOT NULL
+              AND s.match_start_time >= CAST(:prematch_since AS timestamptz)
+              AND s.match_start_time >= CAST(:since AS timestamptz)
+              AND s.match_start_time <= CAST(:now AS timestamptz)
+        )
+        SELECT st.match_id, st.team_home, st.team_away, st.competition, st.match_start_time,
+               (st.first_listed IS NOT NULL
+                AND st.first_listed <= st.match_start_time
+                    - CAST(:prematch_lead_s AS double precision) * INTERVAL '1 second') AS listed_in_time,
+               EXISTS (SELECT 1 FROM market_ticks m
+                       WHERE m.match_id = st.match_id
+                         AND m.time < st.match_start_time
+                         AND m.time >= st.match_start_time - INTERVAL '2 days') AS has_prematch_page
+        FROM started st
     """,
     "score_pipeline_column": """
         SELECT EXISTS (
@@ -301,29 +337,20 @@ SQL: dict[str, str] = {
           AND m.completed_at <= CAST(:now AS timestamptz) - INTERVAL '12 hours'
         GROUP BY p.variant, p.match_id
     """,
-    "results": """
-        WITH ticks AS (
-            SELECT match_id, time FROM odds_ticks WHERE time >= :since
-            UNION ALL
-            SELECT match_id, time FROM market_ticks WHERE time >= :since
-        ),
-        last_tick AS (
-            SELECT match_id, MAX(time) AS last_time FROM ticks GROUP BY match_id
-        ),
-        names AS (
-            SELECT match_id, MAX(team_home) AS team_home, MAX(team_away) AS team_away,
-                   MAX(competition) AS competition
-            FROM odds_ticks WHERE time >= :since GROUP BY match_id
-        )
-        SELECT l.match_id, n.team_home, n.team_away, n.competition,
-               EXTRACT(EPOCH FROM (CAST(:now AS timestamptz) - l.last_time)) AS age_s,
-               r.match_id IS NOT NULL AS has_result,
-               r.winner,
-               r.result_type
-        FROM last_tick l
-        LEFT JOIN names n ON n.match_id = l.match_id
-        LEFT JOIN match_results r ON r.match_id = l.match_id
+    "paper_sanity_trades": """
+        SELECT variant, match_id, COUNT(*) AS trades
+        FROM paper_bets
+        WHERE decided_at >= GREATEST(CAST(:now AS timestamptz) - INTERVAL '24 hours', TIMESTAMPTZ '2026-11-03 11:25:00+00')
+        GROUP BY variant, match_id
     """,
+    "paper_sanity_edges": """
+        SELECT variant, match_id, side, selection, edge, price_filled
+        FROM paper_bets
+        WHERE status IN ('filled', 'settled', 'void')
+          AND price_filled IS NOT NULL
+          AND decided_at >= GREATEST(CAST(:now AS timestamptz) - INTERVAL '24 hours', TIMESTAMPTZ '2026-11-03 11:25:00+00')
+    """,
+    "results": RESULTS_SQL,  # S76: shared with scripts/results_reconciliation.py
 }
 
 _PARAM_RE = re.compile(r"(?<![:\w]):([A-Za-z_]\w*)")
@@ -461,6 +488,31 @@ async def check_match_page_coverage(fetch: Fetch, p: dict[str, Any]) -> dict[str
     return _check("match_page_coverage", status, share, detail)
 
 
+async def check_prematch_pages(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]:
+    """S77: real matches that started in the window (and were listed early enough for a pre-match page to open)
+    should have match-page rows before their start. Matches listed later than the lead are not scored. SRL has no
+    pre-match listing and is left out."""
+    rows = await fetch("prematch_pages", p)
+    real = [r for r in rows if not is_simulated_name(r.get("competition"), r.get("team_home"), r.get("team_away"))]
+    scored = [r for r in real if r.get("listed_in_time")]
+    if not scored:
+        return _check("prematch_pages", OK, None,
+                      f"no real match started since {PREMATCH_PAGES_SINCE:%Y-%m-%d %H:%M} UTC was listed in time "
+                      "for a pre-match page")
+    with_page = [r for r in scored if r["has_prematch_page"]]
+    share = len(with_page) / len(scored)
+    missing = [_match_label(r) for r in scored if not r["has_prematch_page"]][:5]
+    detail = (f"{len(with_page)} of {len(scored)} real matches started in the window have pre-match match-page rows "
+              f"(lead {PREMATCH_PAGE_LEAD_MIN:g} min)")
+    late = len(real) - len(scored)
+    if late:
+        detail += f"; {late} listed too late for a pre-match page (not scored)"
+    if missing:
+        detail += "; no pre-match page: " + ", ".join(missing)
+    status = WARN if share < PREMATCH_PAGE_WARN else OK
+    return _check("prematch_pages", status, share, detail)
+
+
 async def check_lay_completeness(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]:
     """Listing ticks often carry back prices only. That is fine when the match page was being recorded (its
     match_odds rows are change-only and hold the lays, or show none were offered); it is a gap when it was not.
@@ -543,7 +595,9 @@ async def check_results(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]:
              and _num(r["age_s"]) > RESULT_STALE_S and not r["has_result"]]
     # An 'unresolved' row for a match that is still being recorded is provisional (it left the listing for a while,
     # e.g. an innings break); it only counts once the match has been quiet for RESULT_PROVISIONAL_S.
+    # A tie, no result or abandonment has no winner by definition (S76: entered from public scorecards).
     empty = [r for r in real if r["has_result"] and not (r["winner"] or "").strip()
+             and r.get("result_type") not in ("tie", "no_result", "draw", "abandoned")
              and not (r.get("result_type") == "unresolved" and _num(r["age_s"]) is not None
                       and _num(r["age_s"]) < RESULT_PROVISIONAL_S)]
     detail = (
@@ -556,6 +610,17 @@ async def check_results(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]:
         detail += "; empty winner: " + ", ".join(_match_label(r) for r in empty[:3])
     status = FAIL if (stale or empty) else OK
     return _check("results", status, len(stale) + len(empty), detail)
+
+
+async def check_results_missing(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]:
+    """S76: real matches (SRL excluded) whose last tick is over 3 h old with no win, tie, no_result or abandoned
+    result. A warning: the operator settles them with scripts/set_result.py. Same rule as the reconciliation report;
+    the window is this monitor's (24 h), so an older silent match is not seen here."""
+    missing = select_missing(await fetch("results", p), p["now"])
+    detail = f"{len(missing)} real match(es) with last tick over 3 h old and no decided result"
+    if missing:
+        detail += "; e.g. " + ", ".join(_match_label(r) for r in missing[:3])
+    return _check("results_missing", WARN if missing else OK, len(missing), detail)
 
 
 async def check_model_drift(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]:
@@ -706,6 +771,38 @@ async def check_paper_trading(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]
     return _check("paper_trading", OK, max_worst, detail)
 
 
+async def check_paper_sanity(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]:
+    """S75: a sanity check on the paper trader's decisions over the last 24 h. It fails when the market_only control
+    placed more than 2 trades, when a filled bet's recorded edge at its decision price is above 20% (implausible), or
+    when one variant placed more than 15 trades on one match. Trades are recorded paper orders of any status."""
+    per_key = await fetch("paper_sanity_trades", p)
+    control = sum(_int(r["trades"]) for r in per_key if r["variant"] == PAPER_SANITY_CONTROL)
+    busiest = max((_int(r["trades"]) for r in per_key), default=0)
+    problems: list[str] = []
+    if control > PAPER_SANITY_CONTROL_MAX:
+        problems.append(f"{PAPER_SANITY_CONTROL} placed {control} trades in 24 h (max {PAPER_SANITY_CONTROL_MAX})")
+    busy = sorted(
+        ((r["variant"], str(r["match_id"]), _int(r["trades"])) for r in per_key
+         if _int(r["trades"]) > PAPER_SANITY_MATCH_TRADES_MAX),
+        key=lambda item: -item[2],
+    )
+    if busy:
+        problems.append(f"{len(busy)} variant-match(es) over {PAPER_SANITY_MATCH_TRADES_MAX} trades: " + ", ".join(
+            f"{variant} {mid} ({n})" for variant, mid, n in busy[:3]))
+    edges = await fetch("paper_sanity_edges", p)
+    high = [r for r in edges if _num(r["edge"]) is not None and _num(r["edge"]) > PAPER_SANITY_EDGE_MAX]
+    if high:
+        problems.append(f"{len(high)} filled bet(s) with recorded edge over {PAPER_SANITY_EDGE_MAX:.0%}: " + ", ".join(
+            f"{r['variant']} {r['match_id']} {r['side']} {r['selection']} (edge {_num(r['edge']):.3f})"
+            for r in high[:3]))
+    detail = (f"{control} {PAPER_SANITY_CONTROL} trade(s) in 24 h (max {PAPER_SANITY_CONTROL_MAX}); busiest "
+              f"variant-match {busiest} trade(s) (max {PAPER_SANITY_MATCH_TRADES_MAX}); {len(edges)} matched bet(s) "
+              f"checked for edge over {PAPER_SANITY_EDGE_MAX:.0%}")
+    if problems:
+        return _check("paper_sanity", FAIL, busiest, detail + "; " + "; ".join(problems))
+    return _check("paper_sanity", OK, busiest, detail)
+
+
 CHECKS: list[Callable[[Fetch, dict[str, Any]], Awaitable[dict[str, Any]]]] = [
     check_freshness,
     check_price_sanity,
@@ -720,6 +817,9 @@ CHECKS: list[Callable[[Fetch, dict[str, Any]], Awaitable[dict[str, Any]]]] = [
     check_misattribution,
     check_model_drift,  # S65, appended so the existing check order is unchanged
     check_paper_trading,  # S73, appended last
+    check_prematch_pages,  # S77, appended last
+    check_results_missing,  # S76, appended last (its logic sits next to check_results)
+    check_paper_sanity,  # S75, appended last
 ]
 
 
@@ -743,6 +843,8 @@ async def run_checks(fetch: Fetch, *, now: datetime, window_hours: float,
         "max_odds": MAX_ODDS,
         "tie_seconds": TIE_SECONDS,
         "heartbeat_since": LIVE_HEARTBEAT_SINCE,
+        "prematch_since": PREMATCH_PAGES_SINCE,
+        "prematch_lead_s": PREMATCH_PAGE_LEAD_MIN * 60,
         "registry_root": registry_root or DEFAULT_ROOT,
     }
     cached = _memo(fetch)

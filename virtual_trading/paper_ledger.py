@@ -6,7 +6,7 @@ Exchange conventions and the fill rule follow ``strategy/base.py``:
 - BACK fills at the back price, LAY fills at the lay price (the takeable price of the side).
 - A bet is decided at ``t`` on the book at ``t`` and fills at ``t + 60 s`` at the takeable price, only if that price
   is still within the limit: BACK needs price >= limit, LAY needs price <= limit. Otherwise it is ``unfilled``.
-- Settlement: a win for the selection pays per ``bet_gross_pnl``; a tie, no result or abandonment voids the bet
+- Settlement: a win for the selection pays per ``bet_gross_pnl``; a tie, a draw, no result or abandonment voids the bet
   (P&L 0, status ``void``); an unresolved result leaves the bet ``filled`` until a result is known.
 - Commission is not modelled, so P&L is gross.
 
@@ -34,7 +34,10 @@ IN_PLAY_CLV_DELAY = timedelta(minutes=10)
 # result_type values from match_results. "win" is a decided result. Any other value that is not listed in
 # VOID_RESULT_TYPES (for example "unresolved") leaves the bets open.
 WIN_RESULT_TYPES = frozenset({"win"})
-VOID_RESULT_TYPES = frozenset({"tie", "no_result", "no result", "abandoned", "abandonment"})
+VOID_RESULT_TYPES = frozenset({"tie", "draw", "no_result", "no result", "abandoned", "abandonment"})
+# S75: result types that end a match for the registry (no more decisions). The detector writes "draw" for a drawn
+# match, which is void for betting. Any other type (or none) leaves the match open.
+SETTLED_RESULT_TYPES = frozenset({"win", "tie", "no_result", "draw", "abandoned"})
 
 BookAt = Callable[[str, datetime], Optional[Mapping[str, Any]]]
 
@@ -254,6 +257,16 @@ async def record_clv(session: Any, row: Any, book_at: BookAt, off_at: Optional[d
     row.clv = clv_for(row, ref)
     await session.flush()
     return row.clv
+
+
+async def recent_decisions(session: Any, since: datetime, variants: Iterable[str]) -> list[Any]:
+    """Every paper order of ``variants`` decided at or after ``since``, whatever its status (S75 guard history: the
+    rate and flip rules). Filtered by variant too, so the (variant, decided_at) index serves the read."""
+    names = sorted(set(variants))
+    if not names:
+        return []
+    stmt = select(PaperBet).where(PaperBet.variant.in_(names), PaperBet.decided_at >= since)
+    return list((await session.execute(stmt)).scalars().all())
 
 
 async def position(session: Any, variant: str, match_id: str) -> dict[str, float]:
