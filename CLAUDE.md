@@ -8,4 +8,10 @@ and the insights learned so far:
 
 @GOLDEN-RULEBOOK.md
 
-When a fact in the rulebook changes, update the rulebook in the same change.
+The story behind the rules (what was observed, the evidence, what changed, newest first) is in
+`docs/LEARNINGS.md`. Read it before investigating a data or trading problem: it may already be solved.
+
+Keep both current:
+- when a fact or rule changes, update the rulebook in the same change;
+- when something surprising is found on real data, a bug is fixed, or an idea is tested, add an entry to
+  `docs/LEARNINGS.md` (what was seen, the evidence, what was done, the rule it produced).

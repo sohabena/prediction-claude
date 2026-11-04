@@ -3,8 +3,8 @@
 Read this first, every session. It holds the goal, the rules that are never broken, and the insights that cost real
 time to learn. Last full review: 2026-11-03. When a fact here changes, update this file in the same change.
 
-Detailed designs: `docs/GOAL-AND-ARCHITECTURE.md` (pillars and scorecard), `docs/architecture/value-focused-plan.md`
-(which metrics matter), `docs/architecture/paper-trading.md`, `docs/architecture/training-strategy.md`,
+The learnings log behind these rules: `docs/LEARNINGS.md`. Detailed designs: `docs/GOAL-AND-ARCHITECTURE.md`
+(pillars and scorecard), `docs/architecture/value-focused-plan.md` (which metrics matter), `docs/architecture/paper-trading.md`, `docs/architecture/training-strategy.md`,
 `docs/architecture/profit-architecture.md`, `docs/runbooks/recording.md`, stories in `docs/stories/`.
 
 ---
@@ -248,8 +248,10 @@ once; it must be bought, never scraped, and only on the operator's decision.
 
 ## 10. Working in this repo with Claude Code
 
-- **Start of a session:** read this file; check `docker ps`, the last monitor run (`logs/data_quality.jsonl`) and the
-  trader log tail (`logs/paper_trader.log`) before changing anything.
+- **Start of a session:** read this file and skim `docs/LEARNINGS.md`; check `docker ps`, the last monitor run
+  (`logs/data_quality.jsonl`) and the trader log tail (`logs/paper_trader.log`) before changing anything.
+- **Keep the learnings log:** every surprising observation on real data, bug fix or tested idea gets a dated entry in
+  `docs/LEARNINGS.md` (seen, evidence, done, rule). Rules it produces go into this file in the same change.
 - **Stories:** non-trivial work is written as a story in `docs/stories/SNN-*.md` with acceptance criteria, then
   implemented by **Haiku sub-agents** (operator's choice), one story per agent, each with its own files. The lead
   reviews every report, runs the full suite, replays, and deploys. Agents never commit and never touch Docker.
@@ -262,17 +264,24 @@ once; it must be bought, never scraped, and only on the operator's decision.
   and keep new columns nullable so old code keeps working.
 - **Reports:** the daily review (00:05 UTC) writes `reports/paper/<date>.md`; the dashboard is
   `reports/paper/dashboard.html`; replays go to `reports/replay/<name>/` (`bets.csv` is not committed).
+  Downloadable bet reports: `python scripts/export_paper_bets.py` writes an Excel workbook (Summary, By Match,
+  Match x Variant, By Era, All Bets) and CSVs to `reports/paper/exports/`.
+- **Report results by code era.** The trading code changed many times on 2026-11-03; losses from fixed bugs are not
+  evidence about the current strategy. The export's By Era sheet and its `ERAS` list must gain a row whenever a
+  change to trading logic goes live.
 - **Commits:** end with the attribution line the session asks for; branch `betfair-historical-importer`.
 - **The UI** (http://localhost:3001): Today (live paper positions), Evidence (Tier-A measures and the ladder), Data
   (monitor, missing results with a result form, recorded matches). It is read-only except the result form; it can
   never place a bet, change a strategy or delete data.
 
-## 11. State on 2026-11-03 (update when it changes)
+## 11. State on 2026-11-04 01:45 UTC (update when it changes)
 
-- Recording since 2026-11-01: 22 real and 16 SRL matches; 11 real matches with a decided result; monitor OK.
-- Paper trading since 2026-11-03 09:00 UTC: 344 paper bets, 213 settled. Every strategy variant is net negative on
-  its two settled matches (-72,630 to -118,828); `market_only` lost 63,994 during the morning's false-edge hour,
-  before the band fix. **No variant has evidence of an edge; R1 3/200, R2 8/150, R3 1/30.**
+- Recording since 2026-11-01: 22 real and 24 SRL matches; 15 real matches with a decided result; monitor has no
+  failures (one review warning).
+- Paper trading since 2026-11-03 09:00 UTC, 3 settled real matches. **All strategy variants combined: -177,160 on
+  11.23 M staked (-1.6%).** By code era: A -222,614 and B -600,000 (bugs, fixed), C +46,639, **D (current strategy)
+  +598,814 over 2 matches** while the placebos lost 38,643. `market_only` lost 63,994 in era A.
+  **No variant has evidence of an edge yet; R1 3/200, R2 8/150, R3 1/30 matches.**
 - Every story S37 to S95 is implemented except S78 (market-implied ratings), S79 (variant evolution; waits for
   more evidence), S80 (toss model), S81 (zero-downtime deploys).
 - Next priorities: (1) let evidence accumulate and keep the data clean; (2) re-run the soft-vs-sharp test (section 8.3)

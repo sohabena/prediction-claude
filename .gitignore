@@ -100,3 +100,4 @@ reports/paper/dashboard.html
 # The UI Data page (the data/ rule above is for datasets)
 !frontend/app/data/
 !frontend/components/data/
+reports/paper/exports/
