@@ -43,8 +43,12 @@ MAX_BOOKMAKERS_PER_CALL = 3  # documented
 FINISHED_STATUS_ID = 2  # documented: 0 not started, 1 live, 2 finished, 3 cancelled
 CRICKET_SPORT_NAME = "Cricket"  # documented as sportName; the cricket sportId is looked up at run time
 PLAYER_KEY = "0"  # documented in the historical-odds example: match prices sit under players "0"
-DEFAULT_BOOKMAKERS = ("pinnacle", "bet365", "1xbet")  # pinnacle and bet365 are in the docs; 1xbet # unverified: slug
-MATCH_WINNER_MARKET_ID = "101"  # unverified: "Full Time Result" (1x2) on the markets page; no two-way id is documented
+# Verified 2026-11-04 (/v4/bookmakers, 370 slugs): cricket history came from 1xbet (low-profile leagues included) and
+# bet365; pinnacle had none on the fixtures tried.
+DEFAULT_BOOKMAKERS = ("1xbet", "bet365", "pinnacle")
+# Verified 2026-11-04 (/v4/markets?sportId=27): cricket market 271 is "Winner (incl. super over)", a moneyline with
+# outcomes 271 = "1" (participant 1) and 272 = "2". 273 is the 1X2 market (274 = X, the tie); 101 is football.
+MATCH_WINNER_MARKET_ID = "271"
 DEFAULT_CACHE_ROOT = ho.DEFAULT_ROOT
 
 _T20 = re.compile(r"\bT20|\bTwenty20", re.IGNORECASE)
@@ -331,41 +335,58 @@ def cricket_sport_id(client: OddsPapiClient) -> Optional[int]:
     raise OddsPapiError("no sport named Cricket in /v4/sports")
 
 
+def is_srl(tournament_name: Any) -> bool:
+    """True for a simulated (SRL) tournament, e.g. "Big Bash League SRL": never real cricket, never imported."""
+    return "srl" in _text(tournament_name).casefold().split()
+
+
 def discover_fixtures(
     client: OddsPapiClient,
     date_from: date,
     date_to: date,
     *,
     sport_id: Optional[int] = None,
+    window_days: int = 1,
+    include_srl: bool = False,
 ) -> list[Fixture]:
     """Finished cricket fixtures on UTC days ``date_from`` to ``date_to``, each once, sorted by start time.
 
-    One ``/v4/fixtures`` call per UTC day, so every from/to window is 24 hours (the docs allow under 10 days with
-    sportId and under 48 hours for from/to alone). Offline, an uncached window is counted in
+    One ``/v4/fixtures`` call per window of ``window_days`` UTC days (the docs allow under 10 days with sportId; each
+    call is billable, so the importer uses 9). Simulated (SRL) tournaments are skipped unless ``include_srl``
+    (2026-11-04: about 60% of cricket fixtures are SRL). Offline, an uncached window is counted in
     ``client.stats["uncached_windows"]`` and skipped.
     """
+    if not 1 <= window_days <= 9:
+        raise ValueError("window_days must be 1 to 9 (the API allows under 10 days per call)")
     days = list(days_between(date_from, date_to))
+    windows = [days[i:i + window_days] for i in range(0, len(days), window_days)]
     sport = sport_id if sport_id is not None else cricket_sport_id(client)
     if sport is None:
-        client.stats["uncached_windows"] += 1 + len(days)
+        client.stats["uncached_windows"] += 1 + len(windows)
         return []
     found: dict[str, Fixture] = {}
-    for day in days:
-        start = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+    for window in windows:
+        first, last = window[0], window[-1]
+        start = datetime(first.year, first.month, first.day, tzinfo=timezone.utc)
+        end = datetime(last.year, last.month, last.day, tzinfo=timezone.utc) + timedelta(days=1)
         params = {
             "sportId": sport,
             "from": _z(start),
-            "to": _z(start + timedelta(days=1)),
+            "to": _z(end),
             "statusId": FINISHED_STATUS_ID,
             "language": "en",
         }
-        items = client.fetch_json("fixtures", f"sport{sport}_{day.isoformat()}", "/v4/fixtures", params)
+        key = f"sport{sport}_{first.isoformat()}" + ("" if len(window) == 1 else f"_{last.isoformat()}")
+        items = client.fetch_json("fixtures", key, "/v4/fixtures", params)
         if items is None:
             client.stats["uncached_windows"] += 1
             continue
         for item in items:
             if _text(item.get("statusId")) != str(FINISHED_STATUS_ID):
                 client.stats["not_finished"] += 1
+                continue
+            if not include_srl and is_srl(item.get("tournamentName")):
+                client.stats["srl_skipped"] += 1
                 continue
             fixture = fixture_from_item(item)
             if fixture is None:

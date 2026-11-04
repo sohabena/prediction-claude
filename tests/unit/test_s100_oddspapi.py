@@ -81,7 +81,7 @@ def _entries(*points: tuple[float, float]) -> list[dict]:
     ]
 
 
-def _book(outcomes: Mapping[str, list], market: str = "101") -> dict:
+def _book(outcomes: Mapping[str, list], market: str = "271") -> dict:
     return {"markets": {market: {"outcomes": {oid: {"players": {"0": entries}} for oid, entries in outcomes.items()}}}}
 
 
@@ -92,16 +92,16 @@ def _history(**books: dict) -> dict:
 def _three_way() -> dict:
     """Home, draw, away. Pre-start prices move; one post-start price per side must be ignored."""
     return _book({
-        "101": _entries((-120, 1.90), (-30, 1.80), (5, 1.20)),
-        "102": _entries((-120, 3.60), (-10, 3.70), (2, 9.00)),
-        "103": _entries((-120, 2.00), (-10, 2.10), (1, 1.05)),
+        "271": _entries((-120, 1.90), (-30, 1.80), (5, 1.20)),
+        "272": _entries((-120, 3.60), (-10, 3.70), (2, 9.00)),
+        "273": _entries((-120, 2.00), (-10, 2.10), (1, 1.05)),
     })
 
 
 def _two_way() -> dict:
     return _book({
-        "101": _entries((-60, 1.70), (-5, 1.75)),
-        "102": _entries((-60, 2.20), (-5, 2.10)),
+        "271": _entries((-60, 1.70), (-5, 1.75)),
+        "272": _entries((-60, 2.20), (-5, 2.10)),
     })
 
 
@@ -381,7 +381,7 @@ def test_open_and_close_use_the_right_prices_and_ignore_those_after_the_start():
 
 
 def test_a_book_with_only_prices_after_the_start_gives_no_records():
-    late = _book({"101": _entries((5, 1.2)), "102": _entries((5, 1.1))})
+    late = _book({"271": _entries((5, 1.2)), "272": _entries((5, 1.1))})
     assert op.records_from_history(_fixture(), _history(pinnacle=late)) == []
 
 
@@ -396,9 +396,9 @@ def test_a_draw_outcome_goes_to_price_draw_and_a_two_way_market_has_none():
 
 def test_a_three_way_book_missing_its_draw_before_the_start_is_incomplete():
     book = _book({
-        "101": _entries((-30, 1.8)),
-        "102": _entries((5, 3.5)),
-        "103": _entries((-30, 2.1)),
+        "271": _entries((-30, 1.8)),
+        "272": _entries((5, 3.5)),
+        "273": _entries((-30, 2.1)),
     })
     stats = op.Counter()
     assert op.records_from_history(_fixture(), _history(pinnacle=book), stats=stats) == []
@@ -522,3 +522,11 @@ def test_the_key_never_reaches_logs_or_cache_file_names(tmp_path, caplog):
         assert KEY not in str(path)
         if path.is_file():
             assert KEY not in path.read_text(encoding="utf-8")
+
+
+def test_srl_tournaments_are_skipped_and_windows_cover_several_days():
+    """2026-11-04: about 60% of cricket fixtures are SRL; one billable fixtures call covers up to 9 days."""
+    assert op.is_srl("Big Bash League SRL") and op.is_srl("T20 International SRL")
+    assert not op.is_srl("Big Bash League") and not op.is_srl("Sri Lanka Premier League")
+    with pytest.raises(ValueError):
+        op.discover_fixtures(None, date(2026, 1, 1), date(2026, 1, 2), sport_id=27, window_days=10)

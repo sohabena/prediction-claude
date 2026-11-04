@@ -31,6 +31,7 @@ from training import historical_odds as ho  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 KEY_ENV = "ODDSPAPI_API_KEY"
+DISCOVERY_WINDOW_DAYS = 9  # one billable fixtures call per 9 days (the API allows under 10)
 
 
 def _key_from_dotenv(path: Path) -> str:
@@ -108,7 +109,7 @@ def main(
     )
     span = f"{args.date_from.isoformat()} to {args.date_to.isoformat()}"
     try:
-        fixtures = op.discover_fixtures(client, args.date_from, args.date_to)
+        fixtures = op.discover_fixtures(client, args.date_from, args.date_to, window_days=DISCOVERY_WINDOW_DAYS)
         records, stats = op.import_fixtures(client, fixtures, slugs, args.market_id)
     except op.OddsPapiError as exc:
         print(f"OddsPapi: {exc}", file=sys.stderr)

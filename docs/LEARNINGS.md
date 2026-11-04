@@ -13,6 +13,15 @@ delete an entry; if it turns out wrong, add a later entry that corrects it.
 
 ## 2026-11-04
 
+**OddsPapi verified on real responses** (operator's free key). Cricket is sport 27; the match-winner market is **271**
+("Winner (incl. super over)", outcomes 271 = participant 1, 272 = participant 2), not 101 (football's 1X2, the
+importer's unverified guess, which would have found nothing); 273 is the 1X2 with the tie (274), 278 the coin toss.
+`/v4/historical-odds` is free (not counted) and returned history for about 60% of real fixtures sampled from March to
+November 2026: Pinnacle on the earlier dates, 1xbet (low-profile leagues: MCA Super Premier League, PCB women,
+Topklasse, Delhi Premier League) and bet365 later. A 404 "No historical odds found" means no prices for that
+fixture, not an error; `hasOdds` is false on every finished fixture. About 60% of cricket fixtures are SRL: the
+importer now skips them and lists fixtures in 9-day windows (one billable call each). Responses are about 12 KB.
+
 **First R1 test on bought or published odds: the pre-match model does not beat the BBL closing price.** The
 operator saved the aussportsbetting BBL file (672 matches, 2011-12 to 2026-01; Odds Portal average for all, bet365
 open/min/max/close for 423 from 2018). Verified (S102): 95% linked to Cricsheet once the verifier read Cricsheet's
