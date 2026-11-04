@@ -570,7 +570,7 @@ class MarketPageWorker:
                 changed.append(record)
                 self._last_by_key[key] = record
                 written_at[key] = now
-            elif record.market_type == "match_odds" and key in written_at and (
+            elif record.market_type == "match_odds" and record.status == "open" and key in written_at and (
                 (now - written_at[key]).total_seconds() >= MATCH_ODDS_HEARTBEAT_S
             ):
                 # Heartbeat: an unchanged match-odds book is stored again every 5 min, so a quiet market that also
@@ -587,6 +587,7 @@ class MarketPageWorker:
             closed = _closed(previous, now)
             changed.append(closed)
             self._last_by_key[key] = closed
+            written_at[key] = now  # the heartbeat counts from the last stored row, closed rows included
         return changed
 
     async def _scoreboard_step(self, html: str, now: datetime) -> None:

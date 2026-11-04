@@ -501,3 +501,21 @@ def test_an_unchanged_match_odds_book_is_stored_again_after_the_heartbeat():
     assert worker._changed_records([rec, other], T0 + timedelta(seconds=60)) == []
     beat = worker._changed_records([rec, other], T0 + timedelta(seconds=mp.MATCH_ODDS_HEARTBEAT_S))
     assert [r.market_type for r in beat] == ["match_odds"]
+
+
+def test_the_heartbeat_counts_from_a_closed_row_and_skips_closed_markets():
+    """2026-11-04, lb_76110454: a market that left and came back closed was re-stored 216 s after its closed row."""
+    from scraper import market_pages as mp
+    from scraper.parsers.lotusbook_markets import MarketRecord
+
+    worker = mp.MarketPageWorker.__new__(mp.MarketPageWorker)
+    worker._last_by_key = {}
+    open_rec = MarketRecord(match_id="lb_1", time=T0, market_type="match_odds", market_name="match_odds",
+                            selection="A", back=None, lay=None, status="open")
+    assert len(worker._changed_records([open_rec], T0)) == 1
+    closed_rows = worker._changed_records([], T0 + timedelta(seconds=90))      # the market left the page
+    assert [r.status for r in closed_rows] == ["closed"]
+    back = MarketRecord(match_id="lb_1", time=T0, market_type="match_odds", market_name="match_odds",
+                        selection="A", back=None, lay=None, status="closed")
+    assert worker._changed_records([back], T0 + timedelta(seconds=mp.MATCH_ODDS_HEARTBEAT_S)) == []
+    assert worker._changed_records([back], T0 + timedelta(seconds=3 * mp.MATCH_ODDS_HEARTBEAT_S)) == []

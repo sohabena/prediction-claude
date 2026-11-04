@@ -33,7 +33,9 @@ the most complete record, with the score feed only as a tie-break, so the trader
 
 **Change-only match-page rows plus a listing drop left a 6 min 20 s hole** in a quiet live market (`lb_75330686`,
 22:46-22:52). Fix: the match page stores an unchanged match-odds book again every 5 min (heartbeat); the duplicates
-check ignores those rows.
+check ignores those rows. First version had a flaw: a closed row did not reset the heartbeat clock, so a market
+that left the page and came back closed was re-stored 216 s after its closed row (lb_76110454, 2026-11-04 02:49;
+the monitor flagged 2 duplicates). Fixed: closed rows reset the clock and only open markets get a heartbeat.
 
 **The operator proposed a model that uses only the odds' movement and the scoreboard** (no ratings), betting both
 sides as the odds change. Written as S97 (market-dynamics model): it predicts the market probability 10 minutes
