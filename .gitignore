@@ -104,3 +104,6 @@ reports/paper/exports/
 
 # Historical odds reports: statistics from licensed or personal-use data (aussportsbetting terms: personal use only)
 reports/historical_odds/
+
+# Secrets: never tracked (2026-11-04)
+.env
