@@ -530,3 +530,18 @@ def test_srl_tournaments_are_skipped_and_windows_cover_several_days():
     assert not op.is_srl("Big Bash League") and not op.is_srl("Sri Lanka Premier League")
     with pytest.raises(ValueError):
         op.discover_fixtures(None, date(2026, 1, 1), date(2026, 1, 2), sport_id=27, window_days=10)
+
+
+def test_a_history_404_is_an_empty_history_that_is_cached(tmp_path):
+    """2026-11-04, real API: 404 NOT_FOUND "No historical odds found" means no prices; the import goes on."""
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        return httpx.Response(404, json={"error": {"message": "No historical odds found.", "code": "NOT_FOUND"}})
+
+    client, _ = _client(tmp_path, handler)
+    first = client.historical_odds("id1", ["1xbet"])
+    second = client.historical_odds("id1", ["1xbet"])
+    assert first == second and first["bookmakers"] == {}
+    assert len(calls) == 1 and client.stats["no_history"] == 1

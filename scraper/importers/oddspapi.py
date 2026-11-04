@@ -65,6 +65,11 @@ class QuotaExhausted(OddsPapiError):
     """REQUEST_LIMIT_EXCEEDED: the monthly quota is used up, so retrying does not help (documented)."""
 
 
+class NotFound(OddsPapiError):
+    """HTTP 404 NOT_FOUND. For /v4/historical-odds it means the fixture has no prices for those bookmakers
+    ("No historical odds found", verified 2026-11-04): an answer, not a failure."""
+
+
 @dataclass(frozen=True)
 class Fixture:
     """One finished cricket fixture, as the match-winner records need it."""
@@ -278,6 +283,8 @@ class OddsPapiClient:
                 code = _error_code(response)
                 if code == "REQUEST_LIMIT_EXCEEDED":
                     raise QuotaExhausted(f"{path}: the monthly request quota is used up (HTTP {response.status_code})")
+                if response.status_code == 404:
+                    raise NotFound(f"{path}: HTTP 404 {code or 'NOT_FOUND'}")
                 if response.status_code != 429 and response.status_code < 500:
                     raise OddsPapiError(f"{path}: HTTP {response.status_code} {code or 'error'}")
                 problem = f"HTTP {response.status_code} {code}".strip()
@@ -315,13 +322,23 @@ class OddsPapiClient:
             raise OddsPapiError(f"{endpoint}: the response is not JSON") from None
 
     def historical_odds(self, fixture_id: str, group: Sequence[str]) -> Optional[Mapping[str, Any]]:
-        """Price history of one fixture for up to three bookmakers (documented endpoint)."""
-        return self.fetch_json(
-            "historical-odds",
-            historical_key(fixture_id, group),
-            "/v4/historical-odds",
-            {"fixtureId": fixture_id, "bookmakers": ",".join(group)},
-        )
+        """Price history of one fixture for up to three bookmakers (documented endpoint).
+
+        A 404 means the fixture has no prices from those bookmakers: it is cached as an empty history
+        (``{"bookmakers": {}}``, counted in ``stats["no_history"]``), so the import goes on and never asks again.
+        """
+        key = historical_key(fixture_id, group)
+        try:
+            return self.fetch_json(
+                "historical-odds", key, "/v4/historical-odds", {"fixtureId": fixture_id, "bookmakers": ",".join(group)}
+            )
+        except NotFound:
+            self.stats["no_history"] += 1
+            empty = {"fixtureId": fixture_id, "bookmakers": {}, "not_found": True}
+            target = self.cache_path("historical-odds", key)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(json.dumps(empty), encoding="utf-8")
+            return empty
 
 
 def cricket_sport_id(client: OddsPapiClient) -> Optional[int]:

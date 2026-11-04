@@ -280,6 +280,8 @@ Sources: aussportsbetting BBL (free, manual download: the page has a bot check t
 | Unfilled orders were counted as bets in the churn check | An order that did not fill is not a bet |
 | A hard 30-bet limit would have cut late hedges worth +347k in replay | The budget limits new risk; hedges may pass it |
 | The first market in each payload took the plain name, so `_BR` leaked into the book | A stored name never depends on list order |
+| `.env` is tracked by git; `git add -A` put an API key into a local commit (caught before push) | Stage files by path; check `git diff --cached --stat` for `.env` before every commit |
+| A guessed API constant (OddsPapi market 101, football) would have imported nothing | Verify every API constant on one real response before a bulk run |
 | A write that hit no row was marked done | Mark a write done only once it is stored |
 
 ## 10. Working in this repo with Claude Code
