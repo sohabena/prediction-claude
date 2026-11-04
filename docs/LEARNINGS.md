@@ -13,6 +13,18 @@ delete an entry; if it turns out wrong, add a later entry that corrects it.
 
 ## 2026-11-04
 
+**First R1 test on bought or published odds: the pre-match model does not beat the BBL closing price.** The
+operator saved the aussportsbetting BBL file (672 matches, 2011-12 to 2026-01; Odds Portal average for all, bet365
+open/min/max/close for 423 from 2018). Verified (S102): 95% linked to Cricsheet once the verifier read Cricsheet's
+`all` folder (the four format folders hold no BBL match: 0% linked before), winners agree on 631 of 631, bet365
+close calibration slope 0.99 on 417 matches. R1 (S103, walk-forward out-of-sample, 619 matches): log loss market
+0.680, our v3 model 0.685, Elo 0.700; model minus market +0.005 (95% CI -0.010 to +0.021); a blend of model and
+market +0.003 (CI -0.004 to +0.010); flat backing at the closing price when the model differs by 3 or 6 points:
+ROI +4.7% / +6.1% with CIs from about -4% to +14% / +17% (not takeable, direction only). Reading: in a high-profile
+league the closing price already holds what our ratings know. The thesis (section 8.1) is untested where it should
+be strongest, low-profile competitions with lazy prices; BBL is not that. Rule: beating Elo is not beating the
+market, now measured on 619 matches.
+
 **The unbettable `_BR` market leaked back into the trading book.** The parser gave the plain `match_odds` name to
 whichever market came first in each payload. On Hobart Hurricanes W v Melbourne Renegades W (lb_36266944) the `_BR`
 market took it for 560 rows (06:55 to 11:36), next to the exchange market, so `v_match_odds` served a `_BR` book at

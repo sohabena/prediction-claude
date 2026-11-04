@@ -149,6 +149,9 @@ to `odds_ticks_quarantine` (never deletes): post-settlement prices, cross-match 
   land outside the book and created false edges for the market-only control (2026-11-03).
 - **Pre-match model** (`models/prematch/{t20,odi}_v3.joblib`, trained on 23,193 Cricsheet matches): T20 log loss
   0.6499 vs Elo 0.6540; ODI about equal to Elo. **Beating Elo says nothing about beating the market.**
+- **R1 on 619 BBL matches (2026-11-04, historical closing odds): fails.** Market 0.680, model 0.685, Elo 0.700;
+  model minus market +0.005 (CI -0.010 to +0.021); a model-market blend adds nothing. In a high-profile league the
+  pre-match model has no edge over the close; test low-profile competitions before trusting any pre-match signal.
 - **Coverage gap:** Cricsheet has no data for Afghanistan, Ford Trophy, Emirates D20, NCL GT20 and some domestic
   women's events, so many recorded matches have no model view. Story S78 (ratings from our own prices) addresses it.
 - **In-play model** (trained ball by ball on Cricsheet) has never been shown to beat the LotusBook in-play price. On
