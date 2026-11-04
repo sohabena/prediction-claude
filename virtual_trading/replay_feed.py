@@ -15,6 +15,8 @@ returned, so a decision at ``t`` cannot see the future. Methods mirror ``paper_t
 
 - ``size_rows`` (S87): the match-page sizes (``SIZE_ROWS_SQL``) loaded once up to ``end`` and answered as of the cursor,
   like the prices. No size row after the cursor is ever returned, so a fill at ``t`` cannot see a later size.
+- ``registry`` (S105): ``bookmaker_only`` as of the cursor. Loaded once as the first bookmaker and first exchange tick
+  times per match (``MATCH_ODDS_FIRST_SQL``); the flag is true from the first ``_BR`` tick until the first exchange tick.
 
 Fills, CLV and settlement are not computed here. ``run_cycle`` computes them from these reads at later cycles, which
 is how the 60 s fill delay and the 10 min in-play CLV are reproduced: by stepping the clock, not by peeking.
@@ -30,7 +32,7 @@ from typing import Any, Iterable, Mapping, Optional, Sequence
 from sqlalchemy import text
 
 from virtual_trading import paper_ledger as ledger
-from virtual_trading.paper_trader import FRESH_PRICE, SIZE_ROWS_SQL
+from virtual_trading.paper_trader import FRESH_PRICE, MATCH_ODDS_FIRST_SQL, SIZE_ROWS_SQL
 
 SETTLE_DELAY = timedelta(minutes=10)  # results without completed_at: silence after the last tick
 TOSS_LEAD = timedelta(minutes=30)  # toss fields visible from this long before the start
@@ -68,11 +70,14 @@ class ReplayFeed:
         results: Iterable[Mapping[str, Any]],
         end: datetime,
         sizes: Iterable[Mapping[str, Any]] = (),
+        match_odds_times: Iterable[Mapping[str, Any]] = (),
     ) -> None:
         if end.tzinfo is None:
             raise ValueError("end must be timezone-aware")
         self.end = end
         self.cursor: Optional[datetime] = None
+        # S105: rows of MATCH_ODDS_FIRST_SQL (match_id, first_bookmaker, first_exchange); no row: never bookmaker_only
+        self._match_odds_first = {str(r["match_id"]): dict(r) for r in match_odds_times}
         self._prices: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for row in prices:
             if row["time"] <= end:
@@ -123,6 +128,9 @@ class ReplayFeed:
             "WHERE table_name = 'match_training_status' AND column_name = 'canonical_match_id')"
         ))).scalar())
         canonical_expr = "canonical_match_id" if has_canonical else "NULL::text AS canonical_match_id"
+        # S105: the first bookmaker and exchange match-odds ticks, one read up to the end (the cursor applies in registry)
+        match_odds_times = (await session.execute(text(MATCH_ODDS_FIRST_SQL), {"ids": ids, "until": end})).mappings().all() \
+            if ids else []
         registry = (await session.execute(text(
             "SELECT match_id, team_home, team_away, competition, match_start_time, is_simulated, toss_winner, "
             f"toss_decision, {actual_expr}, {canonical_expr} FROM match_training_status WHERE match_id = ANY(:ids)"
@@ -145,6 +153,7 @@ class ReplayFeed:
             results=[dict(r) for r in results],
             end=end,
             sizes=[dict(r) for r in sizes],
+            match_odds_times=[dict(r) for r in match_odds_times],
         )
 
     # ------------------------------------------------------------------ cursor
@@ -206,6 +215,10 @@ class ReplayFeed:
                 for r in self._results.get(str(mid), [])
             )
             toss_known = start is not None and t >= start - TOSS_LEAD
+            # S105: the live rule as of the cursor: a bookmaker tick at or before t and no exchange tick at or before t
+            first = self._match_odds_first.get(str(mid), {})
+            first_br, first_ex = first.get("first_bookmaker"), first.get("first_exchange")
+            bookmaker_only = first_br is not None and first_br <= t and not (first_ex is not None and first_ex <= t)
             # S86: the actual start is visible only once it was observed (its time is at or before the cursor), so a
             # replay decision never uses an off that a live cycle could not yet have known. None before that.
             actual = row.get("actual_start_time")
@@ -222,6 +235,7 @@ class ReplayFeed:
                 "toss_winner": row.get("toss_winner") if toss_known else None,
                 "toss_decision": row.get("toss_decision") if toss_known else None,
                 "settled": settled,
+                "bookmaker_only": bookmaker_only,  # S105
             })
         return out
 

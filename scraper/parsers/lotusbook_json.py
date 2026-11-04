@@ -148,23 +148,57 @@ def event_meta(payload: Any) -> Optional[EventMeta]:
     return meta
 
 
-def event_records(payload: Any, match_id: str, observed_at: datetime) -> list[MarketRecord]:
+def is_bookmaker_leg(market_id: Any) -> bool:
+    """True for a bookmaker market id (``1.75326606.340._BR``). Its runners are always suspended, so its prices cannot
+    be bet (S105, 2026-11-04); the exchange market of the same match has a plain id (``1.264885668``)."""
+    return str(market_id or "").endswith("_BR")
+
+
+def has_exchange_match_odds(payload: Any) -> bool:
+    """True when the payload carries a match-odds market that is not a bookmaker leg (the exchange market, S105)."""
+    for market in _markets(payload):
+        market_type, _name = _classify_list_market(str(market.get("name") or ""))
+        market_id = str(market.get("id") or "")
+        if market_type == "match_odds" and market_id and not is_bookmaker_leg(market_id):
+            return True
+    return False
+
+
+def _slot_owner(market_type: str, ids: set[str], exchange_seen: bool) -> Optional[str]:
+    """The market id that keeps a slot's plain name within one payload, or None when no market may keep it (S105).
+
+    Order-independent: the lowest id by string order owns a slot, so names do not flip between payloads. A match-odds
+    slot belongs to the exchange market (an id not ending ``_BR``) whatever its position in the list. A bookmaker leg
+    keeps the plain name only when no exchange market fills the slot in the payload and none has been seen on this
+    page (``exchange_seen``): then the leg is the only match-odds book there is (an SRL match, which is recorded and
+    never traded).
+    """
+    if market_type == "match_odds":
+        exchange = {market_id for market_id in ids if not is_bookmaker_leg(market_id)}
+        if exchange:
+            return min(exchange)
+        return None if exchange_seen else min(ids)
+    return min(ids)
+
+
+def event_records(
+    payload: Any, match_id: str, observed_at: datetime, *, exchange_seen: bool = False
+) -> list[MarketRecord]:
     """One record per runner per market of the event JSON.
 
     Dedupe key is (market id, market type, market name, selection). Two markets with the same name and the
-    same selection but different ids get a ``#<market id>`` suffix on the later one's market name, so the
-    stored key (time, match, type, name, selection) never collides.
+    same selection but different ids get a ``#<market id>`` suffix on every market but the slot's owner, so the
+    stored key (time, match, type, name, selection) never collides. The owner is chosen by ``_slot_owner``: the
+    exchange market keeps ``match_odds`` whatever its position in the payload, and a bookmaker leg is suffixed
+    (``match_odds#<market id>``) once the exchange market is known, which ``exchange_seen`` tells the parser.
     """
-    records: list[MarketRecord] = []
-    seen_keys: set[tuple[str, str, str, str]] = set()
-    owner_by_slot: dict[tuple[str, str, str], str] = {}
+    parsed: list[tuple[dict, str, str, str, list[tuple[dict, str, Optional[float], Optional[float]]]]] = []
+    ids_by_slot: dict[tuple[str, str, str], set[str]] = {}
 
     for market in _markets(payload):
         market_id = str(market.get("id") or "")
         market_type, market_name = _classify_list_market(str(market.get("name") or ""))
-        market_status = str(market.get("status") or "open").lower()
-        source_updated_at = _utc_from_ms(market.get("lastUpdateTime"))
-
+        runners = []
         for runner in market.get("runners") or []:
             if not isinstance(runner, dict):
                 continue
@@ -172,9 +206,20 @@ def event_records(payload: Any, match_id: str, observed_at: datetime) -> list[Ma
             if not runner_name:
                 continue
             selection, line_no, line_yes = _list_selection(market_type, market_name, runner_name)
+            ids_by_slot.setdefault((market_type, market_name, selection), set()).add(market_id)
+            runners.append((runner, selection, line_no, line_yes))
+        parsed.append((market, market_id, market_type, market_name, runners))
 
-            slot = (market_type, market_name, selection)
-            owner = owner_by_slot.setdefault(slot, market_id)
+    owner_by_slot = {slot: _slot_owner(slot[0], ids, exchange_seen) for slot, ids in ids_by_slot.items()}
+    records: list[MarketRecord] = []
+    seen_keys: set[tuple[str, str, str, str]] = set()
+
+    for market, market_id, market_type, market_name, runners in parsed:
+        market_status = str(market.get("status") or "open").lower()
+        source_updated_at = _utc_from_ms(market.get("lastUpdateTime"))
+
+        for runner, selection, line_no, line_yes in runners:
+            owner = owner_by_slot[(market_type, market_name, selection)]
             name_for_record = market_name if owner == market_id else f"{market_name}#{market_id}"
 
             key = (market_id, market_type, name_for_record, selection)

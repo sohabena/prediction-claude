@@ -30,7 +30,9 @@ from scraper.parsers.lotusbook_json import (
     event_id_from_url,
     event_meta,
     event_records,
+    has_exchange_match_odds,
     in_play_of,
+    is_bookmaker_leg,
     settlement_of,
 )
 from scraper.parsers.lotusbook_markets import MarketRecord, parse_market_html
@@ -324,6 +326,9 @@ class MarketPageWorker:
         self._on_score = on_score
         self._on_in_play = on_in_play
         self._in_play_sent = False  # S86: one hand-over per worker; the manager keeps the first write
+        # S105: a non-bookmaker match-odds (exchange) market has been seen on this page, in a body or in the stored rows.
+        # Without it a bookmaker leg alone on a payload would take the plain match_odds name.
+        self._exchange_seen = False
         # S68 score feed state: last handed state, pipeline last handed, and one-time flags
         self._score_last: Optional[ScoreState] = None
         self._score_pipeline_sent: Optional[str] = None
@@ -479,7 +484,7 @@ class MarketPageWorker:
         """
         now = datetime.now(timezone.utc)
         try:
-            records = event_records(payload, self.match_id, now)
+            records = event_records(payload, self.match_id, now, exchange_seen=self._exchange_seen)
             meta = event_meta(payload)
             settlement = settlement_of(payload)
         except Exception as exc:
@@ -490,6 +495,8 @@ class MarketPageWorker:
 
         self._json_at = self._clock()
         self._json_snapshots += 1
+        if has_exchange_match_odds(payload):
+            self._exchange_seen = True
 
         if meta is not None:
             await self._send_meta(meta)
@@ -548,12 +555,15 @@ class MarketPageWorker:
 
     def seed(self, records: list[MarketRecord]) -> None:
         """Start from the last stored state of each market (read from the DB), so a restarted worker does not rewrite
-        every unchanged market once."""
+        every unchanged market once. S105: a stored exchange match-odds row (not a bookmaker leg) also tells the worker
+        that the exchange market exists on this page."""
         written_at = self.__dict__.setdefault("_written_at", {})
         for record in records:
             key = (record.market_type, record.market_name, record.selection)
             self._last_by_key[key] = record
             written_at[key] = record.time  # the heartbeat counts from the stored row, not from the restart
+            if record.market_type == "match_odds" and record.market_id and not is_bookmaker_leg(record.market_id):
+                self._exchange_seen = True
 
     def _changed_records(self, records: list[MarketRecord], now: datetime) -> list[MarketRecord]:
         """Records whose own content differs from the last stored record of the same key, plus one

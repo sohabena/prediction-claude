@@ -27,8 +27,9 @@ from training import historical_odds as ho
 from training.dataset import CricsheetIndex, team_key
 from training.market import fit_fav_longshot
 
-# The Cricsheet folders scripts/build_training_dataset.py reads.
-CRICSHEET_DIRS = ("ipl", "odis", "t20s", "tests")
+# Cricsheet's "all" download: every match, domestic leagues included (2026-11-04: the four format folders hold no Big
+# Bash League match, so 0 of 672 BBL events linked). One folder, so no match is indexed twice under two ids.
+CRICSHEET_DIRS = ("all",)
 
 BAD_PRICE_FAIL_SHARE = 0.01
 OVERROUND_LOW, OVERROUND_HIGH = 1.00, 1.15

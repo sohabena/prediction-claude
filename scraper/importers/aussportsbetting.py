@@ -56,6 +56,7 @@ ROLE_BY_HEADER = {
     "away team": "away",
     "date": "date",
     "match date": "date",
+    "time (local)": "clock",
     "kick-off (local)": "clock",
     "kick off (local)": "clock",
     "kickoff (local)": "clock",
@@ -69,6 +70,10 @@ ROLE_BY_HEADER = {
     "bookmakers surveyed": "surveyed",
     "notes": "notes",
 }
+# The real file (2026-11-04) writes "Home Team (H)" and "Away Team (A)": the side letter in brackets is dropped.
+_SIDE_SUFFIX = re.compile(r"\s*\((?:h|a)\)$")
+# Winner codes in the real file's Notes sheet: H home, A away, D draw, V void (abandoned, no result).
+WINNER_CODES = {"h": "home", "a": "away", "d": "tie", "v": "no_result"}
 ODDS_HEADER = re.compile(r"^(home|away) odds(?: (open|min|max|close))?$")
 TIE_WORDS = ("tie", "tied", "draw")
 NO_RESULT_WORDS = ("no result", "nr", "no-result", "abandoned", "cancelled", "canceled")
@@ -202,10 +207,36 @@ def _read_sheets(path: Path) -> list[Sheet]:
     raise ValueError(f"{path.name}: not a spreadsheet (expected .xlsx, .xls or .csv)")
 
 
+def _header_key(value: Any) -> str:
+    """A header cell as a lookup key: one line, casefolded, without a trailing side letter (``Home Team (H)``)."""
+    return _SIDE_SUFFIX.sub("", _text(value).casefold())
+
+
+def _bookmakers_by_kind(group_row: tuple[Any, ...], odds: dict[Optional[str], dict[str, int]],
+                        plain_kind: str) -> dict[str, str]:
+    """Bookmaker of each odds kind from the group labels in the row above the header (``Odds Portal`` over the plain
+    odds, ``bet365 Odds`` over Open/Min/Max/Close in the real file): the nearest label at or left of the kind's home
+    column, as a slug (``odds_portal``, ``bet365``). Kinds without a label keep the source's own name."""
+    # Only a label that sits over an odds column is a group label; a note row has its text in the first column.
+    odds_columns = {position for sides in odds.values() for position in sides.values()}
+    labels = [(position, _text(cell)) for position, cell in enumerate(group_row)
+              if _text(cell) and position in odds_columns]
+    books: dict[str, str] = {}
+    for raw_kind, sides in odds.items():
+        column = sides.get("home")
+        if column is None:
+            continue
+        label = next((text for position, text in reversed(labels) if position <= column), "")
+        slug = re.sub(r"[^a-z0-9]+", "_", re.sub(r"\s+odds$", "", label.casefold())).strip("_")
+        if slug:
+            books[raw_kind or plain_kind] = slug
+    return books
+
+
 def _header_position(rows: list[tuple[int, tuple[Any, ...]]]) -> Optional[int]:
     """Index in ``rows`` of the first row holding both ``Home Team`` and ``Away Team``."""
     for index, (_, row) in enumerate(rows):
-        cells = {_text(value).casefold() for value in row}
+        cells = {_header_key(value) for value in row}
         if "home team" in cells and "away team" in cells:
             return index
     return None
@@ -218,7 +249,7 @@ def _map_columns(header: tuple[Any, ...]) -> tuple[dict[str, int], dict[Optional
     unknown: list[str] = []
     for position, cell in enumerate(header):
         name = _text(cell)
-        key = name.casefold()
+        key = _header_key(cell)
         if not key:
             continue
         match = ODDS_HEADER.match(key)
@@ -266,7 +297,8 @@ def _parse_sheet(
     kinds = _odds_kinds(result, sheet, odds, result.plain_odds_kind)
     if not kinds:
         result.warnings.append(f"sheet {sheet!r}: no complete odds columns; nothing to record")
-    return _parse_rows(result, sheet, rows[position + 1:], roles, kinds)
+    books = _bookmakers_by_kind(rows[position - 1][1], odds, result.plain_odds_kind) if position > 0 else {}
+    return _parse_rows(result, sheet, rows[position + 1:], roles, kinds, books)
 
 
 def _parse_rows(
@@ -275,6 +307,7 @@ def _parse_rows(
     rows: list[tuple[int, tuple[Any, ...]]],
     roles: dict[str, int],
     kinds: dict[str, dict[str, int]],
+    books: Optional[dict[str, str]] = None,
 ) -> set[str]:
     teams: set[str] = set()
     seen_events: set[str] = set()
@@ -325,7 +358,8 @@ def _parse_rows(
                 continue
             record = ho.OddsRecord(
                 source=SOURCE, source_event_id=event_id, competition=result.competition, format=FORMAT,
-                gender=result.gender, start_time_utc=start, home=home, away=away, bookmaker=BOOKMAKER,
+                gender=result.gender, start_time_utc=start, home=home, away=away,
+                bookmaker=(books or {}).get(kind, BOOKMAKER),
                 kind=kind, price_home=values["home"], price_away=values["away"], winner=winner,
             )
             problems = ho.validate(record)
@@ -493,6 +527,8 @@ def _plain_number(raw: Any) -> Optional[float]:
 
 def _winner_word(text: str, home: str, away: str) -> Optional[str]:
     key = text.casefold()
+    if key in WINNER_CODES:
+        return WINNER_CODES[key]
     home_key, away_key = home.casefold(), away.casefold()
     if key in ("home", home_key) or key.startswith(home_key + " "):
         return "home"

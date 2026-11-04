@@ -297,13 +297,23 @@ MATCH_FACTS_SQL = """
            COALESCE(r.actual_start_time, r.match_start_time) AS start_at,
            res.result_type, res.winner, res.completed_at,
            COALESCE(bool_or(v.back_home IS NOT NULL AND v.lay_home IS NOT NULL
-                            AND v.back_away IS NOT NULL AND v.lay_away IS NOT NULL), false) AS tradable,
+                            AND v.back_away IS NOT NULL AND v.lay_away IS NOT NULL), false)
+               AND NOT bool_or(bo.bookmaker_only) AS tradable,
            COALESCE(bool_or(v.back_home IS NOT NULL AND v.back_away IS NOT NULL
-                            AND v.time < COALESCE(r.actual_start_time, r.match_start_time)), false) AS prematch_price,
+                            AND v.time < COALESCE(r.actual_start_time, r.match_start_time)), false)
+               AND NOT bool_or(bo.bookmaker_only) AS prematch_price,
            max(v.time) AS last_price_at
     FROM match_training_status r
     LEFT JOIN match_results res ON res.match_id = r.match_id
     LEFT JOIN v_match_odds v ON v.match_id = r.match_id
+    -- S105: a page that shows only the bookmaker (_BR) match odds has no price a person can bet, so it is neither
+    -- tradable nor a pre-match price for R1 (the same rule as the trader's bookmaker_only skip)
+    CROSS JOIN LATERAL (
+        SELECT (SELECT 1 FROM market_ticks t WHERE t.match_id = r.match_id AND t.market_type = 'match_odds'
+                  AND RIGHT(t.market_id, 3) = '_BR' LIMIT 1) IS NOT NULL
+           AND (SELECT 1 FROM market_ticks t WHERE t.match_id = r.match_id AND t.market_type = 'match_odds'
+                  AND COALESCE(RIGHT(t.market_id, 3), '') <> '_BR' LIMIT 1) IS NULL AS bookmaker_only
+    ) bo
     WHERE r.is_simulated IS NOT TRUE
     GROUP BY r.match_id, r.team_home, r.team_away, r.competition, r.is_simulated, r.actual_start_time,
              r.match_start_time, res.result_type, res.winner, res.completed_at

@@ -338,3 +338,34 @@ def test_an_empty_incoming_folder_is_reported(tmp_path, capsys):
     incoming.mkdir()
     assert script.main(["--incoming", str(incoming), "--root", str(tmp_path / "store")]) == 1
     assert "no .xlsx" in capsys.readouterr().out
+
+
+def test_the_real_file_layout_side_letters_winner_codes_and_bookmaker_groups(tmp_path):
+    """2026-11-04, the operator's file: "Home Team (H)", "Time (Local)", Winner H/A/D/V, and a group row naming
+    Odds Portal over the plain odds and bet365 over Open/Min/Max/Close."""
+    from openpyxl import Workbook
+
+    header = ["Date", "Time\n(Local)", "Home Team (H)", "Away Team (A)", "Winner", "Home\nOdds", "Away\nOdds",
+              "Home Odds Open", "Home Odds Min", "Home Odds Max", "Home Odds Close",
+              "Away Odds Open", "Away Odds Min", "Away Odds Max", "Away Odds Close"]
+    group = [None] * 5 + ["Odds Portal", None, "bet365 Odds"] + [None] * 7
+    wb = Workbook()
+    ws = wb.active
+    ws.append(group)
+    ws.append(header)
+    ws.append([datetime(2026, 1, 25), time(16, 15), "Perth Scorchers", "Sydney Sixers", "H", 1.56, 2.31,
+               1.66, 1.56, 1.70, 1.56, 2.13, 2.13, 2.45, 2.45])
+    ws.append([datetime(2026, 1, 23), time(19, 15), "Sydney Sixers", "Hobart Hurricanes", "V", 1.70, 2.07,
+               None, None, None, None, None, None, None, None])
+    path = tmp_path / "big_bash_league.xlsx"
+    wb.save(path)
+
+    result = abb.parse_workbook(path)
+    by_kind = {(r.source_event_id[:10], r.kind): r for r in result.records}
+    assert by_kind[("2026-01-25", "average")].bookmaker == "odds_portal"
+    assert by_kind[("2026-01-25", "close")].bookmaker == "bet365"
+    assert by_kind[("2026-01-25", "close")].price_away == 2.45
+    assert by_kind[("2026-01-25", "close")].winner == "home"
+    assert by_kind[("2026-01-23", "average")].winner == "no_result"
+    assert ("2026-01-23", "close") not in by_kind
+    assert result.skipped == []

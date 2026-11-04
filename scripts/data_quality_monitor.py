@@ -399,6 +399,36 @@ SQL: dict[str, str] = {
     "results": RESULTS_SQL,  # S76: shared with scripts/results_reconciliation.py
     "canonical_column": CANONICAL_COLUMN_SQL,  # S96: presence of match_training_status.canonical_match_id
     "twin_rows": TWIN_ROWS_SQL,  # S96: lb_ registry rows with match-page counts and results (scripts/link_twins.py)
+    # S105: a bookmaker ("_BR") match-odds market stored under the plain match_odds name on a match that also has the
+    # exchange market. A row whose relabel would collide with an existing key is counted apart (colliding).
+    "bookmaker_leak": """
+        WITH leaks AS (
+            SELECT m.match_id,
+                   EXISTS (
+                       SELECT 1 FROM market_ticks x
+                       WHERE x.time = m.time AND x.match_id = m.match_id AND x.market_type = m.market_type
+                         AND x.market_name = 'match_odds#' || m.market_id AND x.selection = m.selection
+                   ) AS colliding
+            FROM market_ticks m
+            WHERE m.time >= :since
+              AND m.market_type = 'match_odds' AND m.market_name = 'match_odds'
+              AND RIGHT(m.market_id, 3) = '_BR'
+              AND EXISTS (
+                  SELECT 1 FROM market_ticks e
+                  WHERE e.match_id = m.match_id AND e.market_type = 'match_odds' AND e.time >= :since
+                    AND e.market_id IS NOT NULL AND RIGHT(e.market_id, 3) <> '_BR'
+              )
+        )
+        SELECT l.match_id,
+               MAX(s.team_home) AS team_home,
+               MAX(s.team_away) AS team_away,
+               MAX(s.competition) AS competition,
+               COUNT(*) FILTER (WHERE NOT l.colliding) AS leaked,
+               COUNT(*) FILTER (WHERE l.colliding) AS colliding
+        FROM leaks l
+        LEFT JOIN match_training_status s ON s.match_id = l.match_id
+        GROUP BY l.match_id
+    """,
 }
 
 _PARAM_RE = re.compile(r"(?<![:\w]):([A-Za-z_]\w*)")
@@ -787,6 +817,27 @@ async def check_misattribution(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any
     return _check("misattribution", FAIL if flagged else OK, len(flagged), detail)
 
 
+async def check_bookmaker_leak(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]:
+    """S105: rows of a bookmaker ("_BR") match-odds market stored under the plain match_odds name on a real match that
+    also has the exchange market. The bookmaker's runners are always suspended, so v_match_odds would serve an
+    unbettable book. Leaked rows fail. A row whose relabel would collide with an existing key is left as it is by the
+    hourly harmonise step and only warns (the operator may remove the duplicate). Simulated (SRL) matches have no
+    exchange market and are left out in any case."""
+    real, _ = _split_live(await fetch("bookmaker_leak", p))
+    leaked = sum(_int(r["leaked"]) for r in real)
+    colliding = sum(_int(r["colliding"]) for r in real)
+    detail = f"{leaked} bookmaker-market row(s) under the plain match_odds name on real matches with an exchange market"
+    leaking = [r for r in real if _int(r["leaked"])]
+    if leaking:
+        detail += "; " + ", ".join(f"{_match_label(r)} {_int(r['leaked'])} row(s)" for r in leaking[:3])
+    detail += f"; {colliding} row(s) left as they are because the relabel would collide with an existing row"
+    colliders = [r for r in real if _int(r["colliding"])]
+    if colliders:
+        detail += "; collisions: " + ", ".join(f"{_match_label(r)} {_int(r['colliding'])}" for r in colliders[:3])
+    status = FAIL if leaked else WARN if colliding else OK
+    return _check("bookmaker_leak", status, leaked + colliding, detail)
+
+
 async def check_paper_trading(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]:
     """S73: the paper trader is running while matches are live, no variant's worst-case exposure on a match is beyond
     the 100,000 cap, and no filled paper bet is still open 12 h after its result. Any breach is a failure."""
@@ -966,6 +1017,7 @@ CHECKS: list[Callable[[Fetch, dict[str, Any]], Awaitable[dict[str, Any]]]] = [
     check_gaps,
     check_srl,
     check_misattribution,
+    check_bookmaker_leak,  # S105, next to the other row-integrity check; the tail of CHECKS is unchanged
     check_model_drift,  # S65, appended so the existing check order is unchanged
     check_paper_trading,  # S73, appended last
     check_prematch_pages,  # S77, appended last
@@ -1070,9 +1122,49 @@ HARMONISE_SQL = """
 """
 
 
+# S105: relabel a bookmaker leg stored under the exchange's name to its own name, so the plain match_odds name
+# belongs to the exchange market alone. UPDATE only (never a delete). A row whose new key already exists is skipped:
+# the duplicate stays for the operator, and the check reports it as a warning. Simulated matches are excluded, and so
+# is a match with no exchange market (an SRL match keeps its plain name by design).
+BOOKMAKER_LEAK_RELABEL_SQL = """
+    UPDATE market_ticks m SET market_name = 'match_odds#' || m.market_id
+     WHERE m.time > now() - INTERVAL '2 days'
+       AND m.market_type = 'match_odds' AND m.market_name = 'match_odds'
+       AND RIGHT(m.market_id, 3) = '_BR'
+       AND EXISTS (
+           SELECT 1 FROM market_ticks e
+            WHERE e.match_id = m.match_id AND e.market_type = 'match_odds' AND e.time > now() - INTERVAL '2 days'
+              AND e.market_id IS NOT NULL AND RIGHT(e.market_id, 3) <> '_BR')
+       AND NOT EXISTS (
+           SELECT 1 FROM match_training_status s WHERE s.match_id = m.match_id AND s.is_simulated)
+       AND NOT EXISTS (
+           SELECT 1 FROM market_ticks x
+            WHERE x.time = m.time AND x.match_id = m.match_id AND x.market_type = m.market_type
+              AND x.market_name = 'match_odds#' || m.market_id AND x.selection = m.selection)
+"""
+
+
+async def _relabel_bookmaker_leak() -> None:
+    """S105: relabel leaked bookmaker rows, then log how many collisions were skipped (the check's colliding rows)."""
+    from sqlalchemy import text
+
+    from shared.db import get_session
+
+    try:
+        async with get_session() as session:
+            result = await session.execute(text(BOOKMAKER_LEAK_RELABEL_SQL))
+            left = await _db_fetch(session, "bookmaker_leak",
+                                   {"since": datetime.now(timezone.utc) - timedelta(days=2)})
+        skipped = sum(_int(r["colliding"]) for r in left)
+        logger.info("bookmaker_leak_relabelled", rows=result.rowcount, skipped_collisions=skipped)
+    except Exception as exc:
+        logger.error("bookmaker_leak_relabel_failed", error=str(exc))
+
+
 async def _harmonise() -> None:
-    """Fill a competition missing on recent ticks (stored before the listing menu arrived) from the registry, then link
-    twin event ids and copy decided results between them (S96, the same functions as scripts/link_twins.py --apply)."""
+    """Fill a competition missing on recent ticks (stored before the listing menu arrived) from the registry, relabel
+    bookmaker legs stored under the exchange's name (S105), then link twin event ids and copy decided results between
+    them (S96, the same functions as scripts/link_twins.py --apply)."""
     from sqlalchemy import text
 
     from shared.db import get_session
@@ -1083,6 +1175,7 @@ async def _harmonise() -> None:
         logger.info("harmonise_applied", competitions_filled=result.rowcount)
     except Exception as exc:
         logger.error("harmonise_failed", error=str(exc))
+    await _relabel_bookmaker_leak()
     await _link_twins()
 
 

@@ -101,3 +101,6 @@ reports/paper/dashboard.html
 !frontend/app/data/
 !frontend/components/data/
 reports/paper/exports/
+
+# Historical odds reports: statistics from licensed or personal-use data (aussportsbetting terms: personal use only)
+reports/historical_odds/

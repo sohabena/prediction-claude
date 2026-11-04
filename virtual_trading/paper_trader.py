@@ -154,6 +154,9 @@ def select_candidates(
         if row.get("is_simulated") and not include_simulated:
             skipped["simulated"] += 1
             continue
+        if row.get("bookmaker_only") is True:  # S105: only the bookmaker's _BR market; its runners are never bettable
+            skipped["bookmaker_only"] += 1
+            continue
         # S86: the actual off when recorded, else the scheduled start
         start = row.get("actual_start_time") or row.get("match_start_time")
         if start is None:
@@ -242,6 +245,18 @@ SIZE_ROWS_SQL = r"""
     FROM runner
     WHERE sel_key IN (home_key, away_key)
     ORDER BY match_id, time
+"""
+
+# S105: the first time of each match's bookmaker (_BR) and exchange match-odds ticks at or before ``:until``. One read
+# serves the replay cursor: the match is bookmaker_only as of t when first_bookmaker <= t and first_exchange is not
+# <= t. The same rule as the live registry SQL (DbFeed.registry). Constants and bind parameters only.
+MATCH_ODDS_FIRST_SQL = r"""
+    SELECT match_id,
+           min(time) FILTER (WHERE RIGHT(market_id, 3) = '_BR') AS first_bookmaker,
+           min(time) FILTER (WHERE COALESCE(RIGHT(market_id, 3), '') <> '_BR') AS first_exchange
+    FROM market_ticks
+    WHERE match_id = ANY(:ids) AND market_type = 'match_odds' AND source = 'lotusbook' AND time <= :until
+    GROUP BY match_id
 """
 
 
@@ -348,7 +363,14 @@ class DbFeed:
             # S96: read through to_jsonb, so the trader runs on a database without the migration (NULL there)
             "r.toss_winner, r.toss_decision, (to_jsonb(r) ->> 'canonical_match_id') AS canonical_match_id, "
             f"EXISTS (SELECT 1 FROM match_results m WHERE m.match_id = r.match_id AND m.result_type IN ({_SETTLED_SQL})) "
-            "AS settled "
+            "AS settled, "
+            # S105: bookmaker_only = the match has a bookmaker (_BR) match-odds tick and no other match-odds tick. The replay
+            # feed applies the same rule as of its cursor (MATCH_ODDS_FIRST_SQL). Scalar subqueries with LIMIT 1: each is an
+            # index probe on match_id (EXISTS here made the planner scan the whole hypertable every cycle).
+            "(COALESCE((SELECT true FROM market_ticks b WHERE b.match_id = r.match_id AND b.market_type = 'match_odds' "
+            "AND b.source = 'lotusbook' AND RIGHT(b.market_id, 3) = '_BR' LIMIT 1), false) "
+            "AND NOT COALESCE((SELECT true FROM market_ticks x WHERE x.match_id = r.match_id AND x.market_type = 'match_odds' "
+            "AND x.source = 'lotusbook' AND COALESCE(RIGHT(x.market_id, 3), '') <> '_BR' LIMIT 1), false)) AS bookmaker_only "
             "FROM match_training_status r WHERE r.match_id = ANY(:ids)"
         )
         rows = (await self.session.execute(stmt, {"ids": list(match_ids)})).mappings().all()

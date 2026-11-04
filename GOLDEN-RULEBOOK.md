@@ -81,6 +81,11 @@ user `phoenix`.
   listing shows its prices; its ladder runs 1.01 to 1000 and shows ghost prices (1000, 500) when a side is empty;
 - a **bookmaker** market (id ending `_BR`), stored as `market_name = 'match_odds#<id>'`. SRL matches have only the
   `_BR` market, stored as plain `match_odds`.
+- **The exchange market always owns the plain `match_odds` name** (S105, 2026-11-04): naming no longer depends on
+  list order, a `_BR` market is plain only when the page has never shown an exchange market (SRL), the monitor's
+  `bookmaker_leak` check relabels any recurrence, and the trader skips a real match whose page shows only `_BR`
+  match odds (`bookmaker_only`). Before the fix the `_BR` market took the plain name on Hobart Hurricanes W v
+  Melbourne Renegades W for 4.5 h.
 - **`v_match_odds` must use `market_name = 'match_odds'` only.** Mixing the two made the book flip between them row
   by row and let ghost prices in; every replay before 2026-11-03 13:00 UTC ran on that mixed book.
 - Bookmaker-style markets ("Bookmaker 0 Commission") legitimately quote below 1.01 (1.0075 seen).
@@ -232,7 +237,9 @@ to `odds_ticks_quarantine` (never deletes): post-settlement prices, cross-match 
 5. **Not available:** latency or courtsiding (we are 10 to 30 s behind the pictures), market making, anything learned
    on a synthetic market.
 
-**The binding constraint is evidence, not code:** about 7 real matches a day are recorded. R1 needs 200 matches per
+**The binding constraint is evidence, not code:** about 7 real matches a day are recorded, but only about a third
+carry a bettable exchange book (2026-11-04: 9 of 26 in three days); the rest show only the `_BR` market and are
+never traded or counted. R1 needs 200 matches per
 segment (1 to 2 months). A licensed historical cricket closing-odds dataset would test R1 on thousands of matches at
 once; it must be bought, never scraped, and only on the operator's decision.
 
@@ -269,6 +276,7 @@ Sources: aussportsbetting BBL (free, manual download: the page has a bot check t
 | One fixture under two ids would count twice | Link twins; consumers use the canonical match only |
 | Unfilled orders were counted as bets in the churn check | An order that did not fill is not a bet |
 | A hard 30-bet limit would have cut late hedges worth +347k in replay | The budget limits new risk; hedges may pass it |
+| The first market in each payload took the plain name, so `_BR` leaked into the book | A stored name never depends on list order |
 | A write that hit no row was marked done | Mark a write done only once it is stored |
 
 ## 10. Working in this repo with Claude Code

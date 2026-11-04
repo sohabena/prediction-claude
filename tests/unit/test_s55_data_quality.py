@@ -56,6 +56,7 @@ def healthy_rows() -> dict[str, list[dict[str, Any]]]:
         "start_times": [],
         "canonical_column": [{"present": True}],  # S96: the column exists and there are no twins
         "twin_rows": [],
+        "bookmaker_leak": [],  # S105: no bookmaker-market row under the exchange's name
     }
 
 
@@ -142,6 +143,7 @@ def test_healthy_day_is_ok_with_exit_zero():
     assert [c["name"] for c in report["checks"]] == [
         "freshness", "price_sanity", "duplicates", "match_page_coverage", "lay_completeness",
         "score_coverage", "registry", "results", "gaps", "srl", "misattribution",
+        "bookmaker_leak",  # S105, next to misattribution
         "model_drift", "paper_trading",
         "prematch_pages",  # S77, appended last
         "results_missing",  # S76, appended last

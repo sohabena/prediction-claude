@@ -13,6 +13,26 @@ delete an entry; if it turns out wrong, add a later entry that corrects it.
 
 ## 2026-11-04
 
+**The unbettable `_BR` market leaked back into the trading book.** The parser gave the plain `match_odds` name to
+whichever market came first in each payload. On Hobart Hurricanes W v Melbourne Renegades W (lb_36266944) the `_BR`
+market took it for 560 rows (06:55 to 11:36), next to the exchange market, so `v_match_odds` served a `_BR` book at
+500 runner-timestamps; West Indies A v England Lions got 2 such rows after its exchange market left the page.
+Impact checked with the live code: every decision and fill saw the exchange book (the as-of rule picked exchange
+rows); recomputing CLV changed 1 of 231 Hobart bets (reference 3.50 to 3.45), so the recorded evidence stands. The
+560 rows were relabelled `match_odds#<id>` (no deletion). S105 makes naming order-independent and adds a monitor
+check that relabels any recurrence. Rule: a market's stored name must not depend on its position in the payload.
+
+**Most recorded real matches have no bettable book.** In the three days to 2026-11-04, 17 of 26 real matches with
+match odds carried only the `_BR` market (Senior Women's T20 Trophy, Emirates D20, ICC League 2 and others); the
+trader priced them every cycle and the scorecard counted them as tradable. Now (S105, era F from 13:29 UTC) the
+trader skips them (`bookmaker_only`) and the scorecard counts neither tradable nor R1 pre-match prices on them: the
+R2 count fell from 22 to 11 settled matches, R1 from 15 to 7. Rule: evidence counts only prices a person can bet;
+the binding constraint (matches with a bettable book) is about half of what was thought.
+
+**Offline CLV recomputes are not the live recorder.** Recomputing a reference 10 minutes after a fill that falls
+after the result finds stale or ghost prices (2.22, 1000) where the live recorder had stored none; never rewrite
+such references from a recompute.
+
 **Reduces broke the 30-bet limit.** `mkt_dyn_e06` made 36 matched bets on New Zealand v India (14 new risk, 22
 reduces): it kept rating New Zealand above the market while their price drifted from 0.43 to 0.07, and every add was
 followed by reduces as the Kelly target shrank. S90 never blocked reduces, so the count passed the operator's 30.

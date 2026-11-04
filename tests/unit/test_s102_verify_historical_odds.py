@@ -352,7 +352,7 @@ def test_a_store_that_cannot_be_read_fails():
 
 # --------------------------------------------------------------------------- Cricsheet loader
 def test_loader_keeps_outcome_gender_and_event_and_reports_unreadable(tmp_path):
-    folder = tmp_path / "ipl"
+    folder = tmp_path / "all"  # Cricsheet's every-match folder: the only one read (BBL is in no format folder)
     folder.mkdir()
     (folder / "1.json").write_text(json.dumps({"info": {
         "teams": ["A", "B"], "dates": ["2025-01-02"], "match_type": "T20", "gender": "female",
@@ -365,7 +365,7 @@ def test_loader_keeps_outcome_gender_and_event_and_reports_unreadable(tmp_path):
 
     matches, unreadable = load_cricsheet_matches(tmp_path)
 
-    assert [m["match_id"] for m in matches] == ["ipl/1"]
+    assert [m["match_id"] for m in matches] == ["all/1"]
     assert matches[0]["gender"] == "female"
     assert matches[0]["event"] == "Women's Premier"
     assert matches[0]["winner"] == "B"
@@ -373,7 +373,7 @@ def test_loader_keeps_outcome_gender_and_event_and_reports_unreadable(tmp_path):
 
 
 def test_loader_gives_no_winner_for_a_match_without_a_decided_result(tmp_path):
-    folder = tmp_path / "t20s"
+    folder = tmp_path / "all"
     folder.mkdir()
     (folder / "9.json").write_text(json.dumps({"info": {
         "teams": ["A", "B"], "dates": ["2025-01-02"], "outcome": {"result": "no result"},
