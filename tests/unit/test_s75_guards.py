@@ -366,16 +366,34 @@ def test_a_large_edge_at_long_odds_with_a_small_probability_gap_is_not_implausib
     assert _sanity(rows)["status"] == "ok"
 
 
-def test_more_than_the_per_match_limit_of_trades_by_one_variant_fails():
-    """Limit 35: a 30-ticket budget (operator, 2026-11-03) plus reduces, which the budget never blocks."""
-    limit = dqm.PAPER_SANITY_MATCH_TRADES_MAX
+def test_more_new_risk_bets_than_the_ticket_budget_fails():
+    """The 30-ticket budget (operator, 2026-11-03) limits new risk: enter, add and flip."""
+    limit = dqm.PAPER_SANITY_NEW_RISK_MAX
     rows = s55.healthy_rows()
-    rows["paper_sanity_trades"] = [{"variant": "w07_e06", "match_id": "m9", "trades": limit + 1}]
+    rows["paper_sanity_trades"] = [{"variant": "w07_e06", "match_id": "m9", "trades": limit + 5, "new_risk": limit + 1}]
     check = _sanity(rows)
     assert check["status"] == "fail"
     assert f"w07_e06 m9 ({limit + 1})" in check["detail"]
-    rows["paper_sanity_trades"] = [{"variant": "w07_e06", "match_id": "m9", "trades": limit}]
+    rows["paper_sanity_trades"] = [{"variant": "w07_e06", "match_id": "m9", "trades": limit + 5, "new_risk": limit}]
     assert _sanity(rows)["status"] == "ok"
+
+
+def test_hedges_past_the_budget_are_allowed_and_a_very_busy_match_is_a_review():
+    """Operator, 2026-11-04: hedges may pass 30 (New Zealand v India: 14 new risk, 22 reduces, 36 bets)."""
+    rows = s55.healthy_rows()
+    rows["paper_sanity_trades"] = [{"variant": "mkt_dyn_e06", "match_id": "m9", "trades": 36, "new_risk": 14}]
+    assert _sanity(rows)["status"] == "ok"
+    review = dqm.PAPER_SANITY_MATCH_TRADES_REVIEW
+    rows["paper_sanity_trades"] = [{"variant": "mkt_dyn_e06", "match_id": "m9", "trades": review + 1, "new_risk": 14}]
+    check = _sanity(rows)
+    assert check["status"] == "warn"
+    assert "(review)" in check["detail"]
+
+
+def test_a_row_without_a_new_risk_count_is_judged_on_all_its_bets():
+    rows = s55.healthy_rows()
+    rows["paper_sanity_trades"] = [{"variant": "w07_e06", "match_id": "m9", "trades": dqm.PAPER_SANITY_NEW_RISK_MAX + 1}]
+    assert _sanity(rows)["status"] == "fail"
 
 
 def test_paper_sanity_queries_are_selects_over_the_ledger_for_24_hours():
@@ -385,9 +403,9 @@ def test_paper_sanity_queries_are_selects_over_the_ledger_for_24_hours():
 
 
 def test_churn_counts_matched_bets_not_unfilled_orders():
-    """2026-11-04, a 50-over match: 54 orders but 33 matched bets (30 tickets plus reduces) is within the limit."""
+    """2026-11-04, a 50-over match: 54 orders but 33 matched bets (17 of them reduces) is within the limits."""
     rows = s55.healthy_rows()
-    rows["paper_sanity_trades"] = [{"variant": "w03_e03", "match_id": "m9", "orders": 54, "trades": 33}]
+    rows["paper_sanity_trades"] = [{"variant": "w03_e03", "match_id": "m9", "orders": 54, "trades": 33, "new_risk": 16}]
     assert _sanity(rows)["status"] == "ok"
     rows["paper_sanity_trades"] = [{"variant": "market_only", "match_id": "m9", "orders": 3, "trades": 0}]
     assert _sanity(rows)["status"] == "fail"  # the control is judged on every order it placed

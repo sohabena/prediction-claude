@@ -80,7 +80,10 @@ PAPER_SANITY_CONTROL_MAX = 2  # trades by the control in 24 h
 # probability gap, not the edge: at long odds a few points of probability is a large edge (2026-11-03: 0.085 vs
 # 0.043 at 23.0 is an edge of 0.95, a real model-market disagreement, not a pricing bug).
 PAPER_SANITY_PROB_GAP_MAX = 0.20
-PAPER_SANITY_MATCH_TRADES_MAX = 35  # matched bets by one variant on one match in 24 h (budget 30 tickets, plus reduces)
+# Operator, 2026-11-04: the 30-ticket budget limits new risk (enter, add, flip); hedges (reduce, green-up) may go past
+# it. More new-risk bets than the budget on one variant-match is a failure; a busy match with hedges is a review.
+PAPER_SANITY_NEW_RISK_MAX = 30  # new-risk matched bets by one variant on one match in 24 h (the ticket budget)
+PAPER_SANITY_MATCH_TRADES_REVIEW = 45  # all matched bets by one variant on one match, hedges included: review
 # Bets decided before the S90 strategy went live (2026-11-03 12:36 UTC, written into the two SQL queries) are not
 # counted: they were placed by code that S75 and S90 replaced (S90 limits a variant to 10 tickets per match).
 # S77: pre-match match pages. Matches that started on or after PREMATCH_PAGES_SINCE are scored. The operator sets
@@ -365,7 +368,9 @@ SQL: dict[str, str] = {
     """,
     "paper_sanity_trades": """
         SELECT variant, match_id, COUNT(*) AS orders,
-               COUNT(*) FILTER (WHERE status IN ('filled', 'settled', 'void')) AS trades
+               COUNT(*) FILTER (WHERE status IN ('filled', 'settled', 'void')) AS trades,
+               COUNT(*) FILTER (WHERE status IN ('filled', 'settled', 'void')
+                                AND reason IN ('enter', 'add', 'flip')) AS new_risk
         FROM paper_bets
         WHERE decided_at >= GREATEST(CAST(:now AS timestamptz) - INTERVAL '24 hours', TIMESTAMPTZ '2026-11-03 12:36:00+00')
         GROUP BY variant, match_id
@@ -835,8 +840,9 @@ def _prob_gap(row: dict[str, Any]) -> Optional[float]:
 
 async def check_paper_sanity(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]:
     """S75: a sanity check on the paper trader's decisions over the last 24 h. It fails when the market_only control
-    placed more than 2 trades, when a filled bet's recorded edge at its decision price is above 20% (implausible), or
-    when one variant placed more than 15 trades on one match. Trades are recorded paper orders of any status."""
+    placed more than 2 orders, or when one variant made more new-risk bets (enter, add, flip) on one match than the
+    30-ticket budget. A variant-match with more than 45 matched bets (hedges included) and a filled bet with a
+    probability gap over 20 points are warnings to review."""
     per_key = await fetch("paper_sanity_trades", p)
     # The control is judged on every order it placed (any order means it saw an edge); churn on matched bets only:
     # an order that did not fill within the 60 s delay is not a bet (2026-11-04: 54 orders, 33 bets on a 50-over match).
@@ -845,14 +851,25 @@ async def check_paper_sanity(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]:
     problems: list[str] = []
     if control > PAPER_SANITY_CONTROL_MAX:
         problems.append(f"{PAPER_SANITY_CONTROL} placed {control} trades in 24 h (max {PAPER_SANITY_CONTROL_MAX})")
-    busy = sorted(
-        ((r["variant"], str(r["match_id"]), _int(r["trades"])) for r in per_key
-         if _int(r["trades"]) > PAPER_SANITY_MATCH_TRADES_MAX),
+    # Hedges may pass the budget (operator, 2026-11-04): only new risk beyond it is a failure. A row without the
+    # new_risk count (older fakes) is judged on all its matched bets.
+    risky = sorted(
+        ((r["variant"], str(r["match_id"]), _int(r.get("new_risk", r["trades"]))) for r in per_key
+         if _int(r.get("new_risk", r["trades"])) > PAPER_SANITY_NEW_RISK_MAX),
         key=lambda item: -item[2],
     )
+    if risky:
+        problems.append(f"{len(risky)} variant-match(es) over {PAPER_SANITY_NEW_RISK_MAX} new-risk bets: " + ", ".join(
+            f"{variant} {mid} ({n})" for variant, mid, n in risky[:3]))
+    busy = sorted(
+        ((r["variant"], str(r["match_id"]), _int(r["trades"])) for r in per_key
+         if _int(r["trades"]) > PAPER_SANITY_MATCH_TRADES_REVIEW),
+        key=lambda item: -item[2],
+    )
+    busy_note = ""
     if busy:
-        problems.append(f"{len(busy)} variant-match(es) over {PAPER_SANITY_MATCH_TRADES_MAX} trades: " + ", ".join(
-            f"{variant} {mid} ({n})" for variant, mid, n in busy[:3]))
+        busy_note = (f"{len(busy)} variant-match(es) over {PAPER_SANITY_MATCH_TRADES_REVIEW} matched bets with hedges "
+                     "(review): " + ", ".join(f"{variant} {mid} ({n})" for variant, mid, n in busy[:3]))
     edges = await fetch("paper_sanity_edges", p)
     high = [r for r in edges if (_prob_gap(r) or 0.0) > PAPER_SANITY_PROB_GAP_MAX]
     # A large probability gap is a warning to review, not a failure: late in a chase the in-play model and the price
@@ -863,13 +880,16 @@ async def check_paper_sanity(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]:
         gap_note = (f"{len(high)} filled bet(s) with a probability gap over {PAPER_SANITY_PROB_GAP_MAX:.0%} (review): "
                     + ", ".join(f"{r['variant']} {r['match_id']} {r['side']} {r['selection']} "
                                 f"(gap {_prob_gap(r):.3f})" for r in high[:3]))
-    detail = (f"{control} {PAPER_SANITY_CONTROL} trade(s) in 24 h (max {PAPER_SANITY_CONTROL_MAX}); busiest "
-              f"variant-match {busiest} trade(s) (max {PAPER_SANITY_MATCH_TRADES_MAX}); {len(edges)} matched bet(s) "
-              f"checked for a probability gap over {PAPER_SANITY_PROB_GAP_MAX:.0%}")
+    most_new = max((_int(r.get("new_risk", r["trades"])) for r in per_key), default=0)
+    detail = (f"{control} {PAPER_SANITY_CONTROL} trade(s) in 24 h (max {PAPER_SANITY_CONTROL_MAX}); most new-risk "
+              f"bets on a variant-match {most_new} (max {PAPER_SANITY_NEW_RISK_MAX}); busiest variant-match {busiest} "
+              f"matched bet(s) with hedges (review over {PAPER_SANITY_MATCH_TRADES_REVIEW}); {len(edges)} matched "
+              f"bet(s) checked for a probability gap over {PAPER_SANITY_PROB_GAP_MAX:.0%}")
+    notes = [n for n in (busy_note, gap_note) if n]
     if problems:
-        return _check("paper_sanity", FAIL, busiest, "; ".join([detail, *problems] + ([gap_note] if gap_note else [])))
-    if gap_note:
-        return _check("paper_sanity", WARN, busiest, detail + "; " + gap_note)
+        return _check("paper_sanity", FAIL, busiest, "; ".join([detail, *problems, *notes]))
+    if notes:
+        return _check("paper_sanity", WARN, busiest, "; ".join([detail, *notes]))
     return _check("paper_sanity", OK, busiest, detail)
 
 

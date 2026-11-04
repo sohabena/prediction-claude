@@ -13,6 +13,23 @@ delete an entry; if it turns out wrong, add a later entry that corrects it.
 
 ## 2026-11-04
 
+**Reduces broke the 30-bet limit.** `mkt_dyn_e06` made 36 matched bets on New Zealand v India (14 new risk, 22
+reduces): it kept rating New Zealand above the market while their price drifted from 0.43 to 0.07, and every add was
+followed by reduces as the Kelly target shrank. S90 never blocked reduces, so the count passed the operator's 30.
+S104 (built and tested, **not deployed**, waiting on the operator): 30 is a hard limit; past it only a ticket that
+brings the worst case back within the cap. Replay to 2026-11-04 12:00 (6 to 13 matches per variant): every strategy
+variant then tops out at exactly 30 bets, but the 37 bets past the 30th (35 reduces, 2 green-ups) had been worth
++347k, so most variants' replay P&L falls (w07_e03 +21.6k to -93.3k; mkt_dyn_e06 +220k to +187k); mean CLV barely
+moves. Few matches, so this is not evidence of value either way (rulebook 7.5), but late reduces are real hedging,
+not just churn. **Operator's decision (2026-11-04): hedges may pass 30.** S104 was reverted; the monitor now fails
+only when new-risk bets (enter, add, flip) on one variant-match pass the 30-ticket budget, and reviews a
+variant-match over 45 matched bets. Rule: the budget limits new risk, never a hedge.
+
+**Pondicherry v Hyderabad (Senior Women's T20 Trophy) had nothing on the page to settle it**: only the `_BR` market,
+frozen at 1.60 / 2.25 for 30 minutes, and no score feed, so it ended `unresolved`. BCCI's match centre
+(bcci.tv/matches) had the result: Hyderabad Women won by 7 wickets; entered with `set_result.py`. Rule: for Indian
+domestic matches, BCCI's match centre has same-day results.
+
 **Historical odds: what can actually be obtained** (plan `docs/architecture/historical-odds-plan.md`, S98 to S103).
 The aussportsbetting.com BBL file is free but its page sits behind a Cloudflare check (HTTP 403 to scripts; "Just a
 moment" in a browser pane): it is not bypassed, the operator downloads it by hand. OddsPapi's
