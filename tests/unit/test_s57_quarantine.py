@@ -451,6 +451,29 @@ def test_placeholder_book_on_three_matches_is_flagged_but_not_on_two():
     assert flagged == {"a", "b", "c"}
 
 
+def test_a_real_ladder_price_on_three_matches_hours_apart_is_not_a_placeholder():
+    """2026-11-04: 50/100 v 1.01/1.02 and 11.5/12 v 1.09/1.10 are real prices late in a chase; they recur across
+    matches on different days. The old rule quarantined 1,958 such real rows."""
+    from scripts import quarantine_ticks as q
+    late = (50.0, 100.0, 1.01, 1.02)
+    ticks = [_t("a", 0, *late), _t("b", 180, *late), _t("c", 720, *late)]
+    assert q.placeholder_flags(ticks) == []
+
+
+def test_the_same_book_on_three_matches_within_the_window_is_a_placeholder():
+    from scripts import quarantine_ticks as q
+    book = (1.95, 2.0, 1.95, 2.0)
+    ticks = [_t("a", 0, *book), _t("b", 4, *book), _t("c", 14, *book), _t("d", 300, *book)]
+    assert {t["match_id"] for t in q.placeholder_flags(ticks)} == {"a", "b", "c"}
+
+
+def test_the_known_default_book_is_flagged_even_when_spread_out():
+    from scripts import quarantine_ticks as q
+    ph = (1.92, 1.99, 2.02, 2.1)
+    ticks = [_t("a", 0, *ph), _t("b", 600, *ph), _t("c", 1200, *ph)]
+    assert len(q.placeholder_flags(ticks)) == 3
+
+
 def test_ticks_after_a_trusted_result_are_flagged():
     from datetime import datetime, timezone
     from scripts import quarantine_ticks as q

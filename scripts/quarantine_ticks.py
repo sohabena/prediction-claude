@@ -42,6 +42,12 @@ RULES = (RULE_POST_SETTLEMENT, RULE_CROSS_MATCH, RULE_PLACEHOLDER, RULE_AFTER_RE
 # LotusBook shows a default book (seen: 1.92/1.99/2.02/2.10) when a market opens or reopens with no real price. The
 # same full four-price book on this many different matches is a placeholder, not a price of any of them.
 PLACEHOLDER_MIN_MATCHES = 3
+# ... but only when those matches show it close together in time (markets opening at once), or it is a known
+# default. Real prices sit on one ladder and recur across matches days apart (11.5/12 v 1.09/1.10 late in a chase,
+# 50/100 v 1.01/1.02 at the end): without the window the rule quarantined 1,958 real rows on 14 matches
+# (2026-11-03 to 2026-11-04). Measured on those rows, 5 and 15 minutes keep exactly the 81 default-book rows.
+PLACEHOLDER_WINDOW_S = 15 * 60
+KNOWN_PLACEHOLDER_BOOKS = frozenset({(1.92, 1.99, 2.02, 2.1)})
 # Results whose completion time comes from an outside authority; ticks after it belong to no live match.
 TRUSTED_RESULT_SOURCES = ("public_scorecard", "lotusbook_scoreboard", "lotusbook_settled")
 
@@ -127,15 +133,29 @@ def cross_match_flags(ticks: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def placeholder_flags(ticks: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Ticks whose full four-price book appears on PLACEHOLDER_MIN_MATCHES or more different matches."""
+    """Ticks whose full four-price book is a placeholder: a known default book on PLACEHOLDER_MIN_MATCHES or more
+    matches, or any book that PLACEHOLDER_MIN_MATCHES or more different matches show within PLACEHOLDER_WINDOW_S of
+    the tick."""
     ticks = list(ticks)
-    owners: dict[tuple, set[str]] = defaultdict(set)
+    by_book: dict[tuple, list[dict[str, Any]]] = defaultdict(list)
     for tick in ticks:
         book = book_key(tick)
         if book is not None:
-            owners[book].add(tick["match_id"])
-    placeholders = {b for b, ids in owners.items() if len(ids) >= PLACEHOLDER_MIN_MATCHES}
-    return [t for t in ticks if book_key(t) in placeholders]
+            by_book[book].append(tick)
+    flagged: list[dict[str, Any]] = []
+    for book, members in by_book.items():
+        if len({m["match_id"] for m in members}) < PLACEHOLDER_MIN_MATCHES:
+            continue
+        if book in KNOWN_PLACEHOLDER_BOOKS:
+            flagged.extend(members)
+            continue
+        members.sort(key=lambda m: m["time"])
+        for tick in members:
+            near = {m["match_id"] for m in members
+                    if abs((m["time"] - tick["time"]).total_seconds()) <= PLACEHOLDER_WINDOW_S}
+            if len(near) >= PLACEHOLDER_MIN_MATCHES:
+                flagged.append(tick)
+    return flagged
 
 
 def after_result_flags(ticks: Iterable[dict[str, Any]], completed_at: dict[str, datetime]) -> list[dict[str, Any]]:

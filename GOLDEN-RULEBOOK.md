@@ -117,7 +117,10 @@ user `phoenix`.
 - The settled market (verified 2026-11-03): exchange runners turn `winner` / `loser` **while the market is still
   `suspended`**; the `_BR` market then closes with runners `suspended`. Match pages stay open 30 min after a result
   (`MARKET_COMPLETED_LINGER_S`) to capture this.
-- Tie and no-result wording from the site is **not yet verified**.
+- Tie and no-result wording from the site is **not yet verified**. A scoreboard "tied" is **not** the match-odds
+  result when a super over decides it: the exchange market ("Winner (incl. super over)") settles on the super-over
+  winner, so the market's `winner` beats a scoreboard tie (Hobart v Melbourne Renegades W, 2026-11-04: 231 bets were
+  wrongly voided).
 - A match that vanishes waits 45 min before it is called `unresolved` (innings breaks drop matches off the listing).
 - Missing results are listed daily; enter them from a public scorecard with `scripts/set_result.py` or the UI Data
   page. Hand-entered results (`public_scorecard`, `manual_fix`) are never overwritten by the detector. The detector
@@ -282,6 +285,7 @@ Sources: aussportsbetting BBL (free, manual download: the page has a bot check t
 | The first market in each payload took the plain name, so `_BR` leaked into the book | A stored name never depends on list order |
 | `.env` is tracked by git; `git add -A` put an API key into a local commit (caught before push) | Stage files by path; check `git diff --cached --stat` for `.env` before every commit |
 | A guessed API constant (OddsPapi market 101, football) would have imported nothing | Verify every API constant on one real response before a bulk run |
+| The placeholder rule matched books across days and quarantined 1,958 real prices | A "same value on many matches" rule needs a time window; a shared odds ladder is not a copy |
 | A write that hit no row was marked done | Mark a write done only once it is stored |
 
 ## 10. Working in this repo with Claude Code
