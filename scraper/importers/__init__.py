@@ -1,9 +1,6 @@
-"""Importers package for external data sources."""
+"""Importers package for external data sources.
 
-from scraper.importers.betfair_importer import (
-    BetfairHistoricalImporter,
-    ImportSummary,
-)
-
-__all__ = ["BetfairHistoricalImporter", "ImportSummary"]
-
+Modules are imported by name (``from scraper.importers import oddspapi``); nothing is loaded eagerly, so the
+historical-odds importers (S99 to S101) never load the retired Betfair importer, whose data is never used
+(Golden Rulebook rule 3).
+"""

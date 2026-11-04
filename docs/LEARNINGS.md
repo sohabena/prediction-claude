@@ -13,6 +13,14 @@ delete an entry; if it turns out wrong, add a later entry that corrects it.
 
 ## 2026-11-04
 
+**Historical odds: what can actually be obtained** (plan `docs/architecture/historical-odds-plan.md`, S98 to S103).
+The aussportsbetting.com BBL file is free but its page sits behind a Cloudflare check (HTTP 403 to scripts; "Just a
+moment" in a browser pane): it is not bypassed, the operator downloads it by hand. OddsPapi's
+`/v4/historical-odds` needs a free key, covers January 2026 onward only, allows 3 bookmakers per call and one call
+per 5 s. The Odds API has cricket snapshots since mid-2020 but is paid. Aggregators carry Betfair as a bookmaker:
+every importer drops Betfair rows, and the store (`training/historical_odds.py`) refuses them. Rule: one record
+contract for every source, verified against Cricsheet results (S102) before any model is judged on it (S103).
+
 **A match first listed already in play never got a start time** (Pondicherry v Hyderabad, Senior Women's T20,
 scheduled 03:30, first listed at 04:51 live). The live-badge write ran before its registry row existed, updated
 nothing, and the match was marked done anyway. Fix: retry until a start is stored; and a match first seen already

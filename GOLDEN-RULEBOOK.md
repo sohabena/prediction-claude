@@ -234,6 +234,13 @@ to `odds_ticks_quarantine` (never deletes): post-settlement prices, cross-match 
 segment (1 to 2 months). A licensed historical cricket closing-odds dataset would test R1 on thousands of matches at
 once; it must be bought, never scraped, and only on the operator's decision.
 
+**Historical odds** (`docs/architecture/historical-odds-plan.md`): every source becomes S98 `OddsRecord`s in
+`data/historical_odds/<source>/` with a manifest (input sha256, provenance). Betfair rows are dropped by every
+importer and refused by the store, including Betfair inside an aggregator. A store is evidence only after
+`scripts/verify_historical_odds.py` (S102) passes; R1 on it (S103) uses out-of-sample walk-forward predictions only.
+Sources: aussportsbetting BBL (free, manual download: the page has a bot check that is never bypassed), OddsPapi
+(free key, January 2026 onward), The Odds API (paid, since 2020; the importer spends nothing without a budget).
+
 ## 9. Mistakes never to repeat
 
 | What happened | Rule |
@@ -297,6 +304,10 @@ once; it must be bought, never scraped, and only on the operator's decision.
   11.23 M staked (-1.6%).** By code era: A -222,614 and B -600,000 (bugs, fixed), C +46,639, **D (current strategy)
   +598,814 over 2 matches** while the placebos lost 38,643. `market_only` lost 63,994 in era A.
   **No variant has evidence of an edge yet; R1 3/200, R2 8/150, R3 1/30 matches.**
+- Historical odds (S98 to S103) are built and tested (2,063 tests pass) but hold no data yet: waiting for the
+  operator to save the aussportsbetting BBL file in `data/historical_odds/incoming/aussportsbetting/` and/or put a free
+  `ODDSPAPI_API_KEY` in `.env`. The OddsPapi cricket match-winner market id (`--market-id`, default 101) is unverified:
+  check it on one real response before a full import.
 - Every story S37 to S95 is implemented except S78 (market-implied ratings), S79 (variant evolution; waits for
   more evidence), S80 (toss model), S81 (zero-downtime deploys).
 - Next priorities: (1) let evidence accumulate and keep the data clean; (2) re-run the soft-vs-sharp test (section 8.3)

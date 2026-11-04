@@ -1,6 +1,11 @@
 """S60: pre-match strength model v3, season walk-forward on Cricsheet (labels only, no prices).
 
     python scripts/train_prematch_model.py --family t20 [--gender male|female|all] [--out-dir models/prematch]
+        [--export-predictions PATH]
+
+``--export-predictions PATH`` (S103) also writes one JSON line per walk-forward test match (out of sample only, never a
+training or calibration match): match_id, date, season, gender, tier, home, away, label, p_v3, p_elo, fold_season,
+family. The R1 benchmark (scripts/benchmark_historical_odds.py) reads that file. Without the flag nothing changes.
 
 Walk-forward rule: for each season Y with enough data, fit the base learners on seasons < Y-2, calibrate on the
 two seasons Y-2 and Y-1, test on season Y. The calibrated candidate (pure Elo + Platt, logistic + Platt, or a stack
@@ -95,10 +100,14 @@ def _pooled(chunks: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def walk_forward(rows: Sequence[MatchFeatures], *, seed: int = 0, min_train: int = 200,
-                 min_test: int = 30) -> Dict[str, Any]:
-    """Season-by-season walk-forward: base learners on seasons < Y-2, calibration on Y-2 and Y-1, test on Y."""
+                 min_test: int = 30, export_predictions: bool = False) -> Dict[str, Any]:
+    """Season-by-season walk-forward: base learners on seasons < Y-2, calibration on Y-2 and Y-1, test on Y.
+
+    With ``export_predictions`` the result also has ``test_predictions``: one dict per test match (test seasons only).
+    """
     folds: List[Dict[str, Any]] = []
     chunks: List[Dict[str, Any]] = []
+    exported: List[Dict[str, Any]] = []
     for year in sorted({r.season for r in rows}):
         train = [r for r in rows if r.season < year - 2]
         calib = [r for r in rows if r.season in (year - 2, year - 1)]
@@ -125,9 +134,19 @@ def walk_forward(rows: Sequence[MatchFeatures], *, seed: int = 0, min_train: int
         folds.append(fold)
         chunks.append({"y": y, "gender": np.asarray([r.gender for r in test]),
                        "tier": np.asarray([r.tier for r in test]), **preds})
+        if export_predictions:
+            for i, r in enumerate(test):
+                exported.append({
+                    "match_id": r.match_id, "date": r.date, "season": r.season, "gender": r.gender,
+                    "tier": int(r.tier), "home": r.home, "away": r.away, "label": int(r.label),
+                    "p_v3": float(preds["v3"][i]), "p_elo": float(preds["elo"][i]), "fold_season": year,
+                })
     winners = Counter(f["selected"] for f in folds)
-    return {"folds": folds, "pooled": _pooled(chunks), "selected_winners": dict(winners),
-            "min_train_matches": min_train, "min_test_matches": min_test}
+    result: Dict[str, Any] = {"folds": folds, "pooled": _pooled(chunks), "selected_winners": dict(winners),
+                              "min_train_matches": min_train, "min_test_matches": min_test}
+    if export_predictions:
+        result["test_predictions"] = exported
+    return result
 
 
 def fit_final(rows: Sequence[MatchFeatures], seed: int = 0) -> PrematchModel:
@@ -160,6 +179,14 @@ def _summary(report: Dict[str, Any]) -> List[str]:
     return lines
 
 
+def _write_predictions(path: Path, rows: Sequence[Dict[str, Any]], family: str) -> None:
+    """One JSON line per out-of-sample test match (S103); the family is added to every line."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps({"family": family, **row}, separators=(",", ":")) + "\n")
+
+
 def run(args: argparse.Namespace) -> Dict[str, Any]:
     family = args.family
     stats: Counter = Counter()
@@ -169,7 +196,10 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
     rows = build_feature_rows(ratings, gender=gender)
     stats["labelled"] = len(rows)
     stats["ratings_rejected"] = sum(ratings.rejected.values())
-    result = walk_forward(rows, seed=args.seed, min_train=args.min_train, min_test=args.min_test)
+    export_path = getattr(args, "export_predictions", None)
+    result = walk_forward(rows, seed=args.seed, min_train=args.min_train, min_test=args.min_test,
+                          export_predictions=bool(export_path))
+    test_predictions = result.pop("test_predictions", None)
     suffix = "" if gender is None else f"_{gender}"
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -185,6 +215,9 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
         "caveats": CAVEATS,
         **result,
     }
+    if test_predictions is not None:
+        _write_predictions(Path(export_path), test_predictions, family)
+        report["predictions_export"] = str(export_path)
     if rows:
         model = fit_final(rows, seed=args.seed)
         model_file = out_dir / f"{family}_{VERSION}{suffix}.joblib"
@@ -206,10 +239,14 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--min-train", type=int, default=200)
     ap.add_argument("--min-test", type=int, default=30)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--export-predictions", metavar="PATH", default=None,
+                    help="also write the out-of-sample test predictions as JSON lines (S103)")
     args = ap.parse_args(argv)
     report = run(args)
     print("\n".join(_summary(report)))
     print(f"report: {report['report_path']}")
+    if report.get("predictions_export"):
+        print(f"predictions: {report['predictions_export']}")
 
 
 if __name__ == "__main__":
