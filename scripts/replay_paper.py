@@ -17,6 +17,13 @@ time, never after it). No size known: at most 10,000, marked ``size_unknown``. `
 twice, capped (reported) and uncapped, and writes the uncapped summary to ``<out>/uncapped``. The summary then carries
 capped minus uncapped P&L per variant, with a match-clustered 95% CI.
 
+Market dynamics (S97)::
+
+    python scripts/replay_paper.py --from 2026-11-01 --to 2026-11-04T02:00:00Z --dynamics current   # default: models/market_dynamics/current.json
+    python scripts/replay_paper.py --from 2026-11-01 --dynamics lomo    # one model per held-out match (no in-sample fit)
+    python scripts/replay_paper.py --from 2026-11-01 --dynamics none    # the dynamics variants open no new risk
+    python scripts/replay_paper.py --from 2026-11-01 --dynamics path/to/model.joblib
+
 Clock: decisions every 15 s of recorded time from ``--from`` to ``--to`` (default: the last recorded tick). When no
 real match has a fresh price and no bet is open, the clock jumps to the next recorded tick on the 15 s grid. Nothing
 can happen in between, so the jump gives the same decisions as stepping (a parity-tested shortcut).
@@ -105,6 +112,7 @@ async def replay_window(
     fill_delay: timedelta = ledger.FILL_DELAY,
     size_cap: bool = False,  # same default as run_cycle (S87 cap off until the size unit is verified)
     reference: str = review.DEFAULT_REFERENCE,  # S85: the variant the placebo controls copy
+    market_dynamics: Any = None,  # S97: model_for(match_id) source for the mkt_dyn variants (None: no model)
 ) -> ReplayResult:
     """Step the clock from ``start`` to ``end`` (inclusive) and run ``run_cycle`` at each step on the in-memory ledger.
     ``guards`` defaults to the S75 settings (``GuardConfig()``)."""
@@ -132,6 +140,7 @@ async def replay_window(
         report = await pt.run_cycle(
             session, feed, probability, variants, now=now, include_simulated=include_simulated,
             guards=guards or pt.GuardConfig(), fill_delay=fill_delay, size_cap=size_cap, reference=reference,
+            market_dynamics=market_dynamics,
         )
         result.cycles += 1
         _add_counts(result.skipped_registry, report["skipped_registry"])
@@ -510,6 +519,40 @@ def _select_variants(names: Optional[str]) -> tuple[pt.Variant, ...]:
     return tuple(v for v in variants if v.name in wanted)
 
 
+def load_dynamics(spec: str) -> tuple[Any, str]:
+    """The market-dynamics model source for ``--dynamics`` (S97) and a one-line description of it."""
+    from strategy.market_dynamics import MarketDynamicsModel, load_current
+    from training import market_dynamics as md
+    from pathlib import Path as _Path
+
+    if spec == "none":
+        return None, "none (the dynamics variants open no new risk)"
+    if spec == "current":
+        model = load_current(pt.ROOT)
+        if model is None:
+            return None, "current: no active model (the dynamics variants open no new risk)"
+        return model, f"current: {model.meta.get('date')} ({model.meta.get('version')})"
+    if spec == "lomo":
+        from scripts.train_market_dynamics import load_rows
+        dataset = DATA_DIR_MD / "dataset.parquet"
+        if not dataset.exists():
+            dataset = DATA_DIR_MD / "dataset.csv"
+        rows = load_rows(dataset)
+        per_match = md.fit_leave_one_match_out_models(rows)
+        from strategy.market_dynamics import PerMatchDynamics
+        models = {mid: MarketDynamicsModel(est, meta={"version": md.VERSION, "date": "lomo"}) for mid, est in per_match.items()}
+        return PerMatchDynamics(models, default=None), (
+            f"lomo: one model per match, fitted without that match ({len(models)} matches, dataset {dataset.name})")
+    path = _Path(spec)
+    if not path.is_absolute():
+        path = pt.ROOT / path
+    model = MarketDynamicsModel.load(path)
+    return model, f"file: {path.name}"
+
+
+DATA_DIR_MD = pt.ROOT / "data" / "market_dynamics"
+
+
 async def _run(args: argparse.Namespace, probability: Any, variants: Sequence[pt.Variant]) -> int:
     started = time.perf_counter()
     start_arg = _parse_day(args.from_) if args.from_ else None
@@ -526,15 +569,16 @@ async def _run(args: argparse.Namespace, probability: Any, variants: Sequence[pt
     size_cap = (bool(args.size_cap) or bool(args.compare_size_cap)) and not args.no_size_cap
     # S85: the placebos copy the primary in models/paper/primary.json when there is one, else w05_e03
     reference = args.reference or review.reference_name(review.load_state())
+    dynamics, dynamics_note = load_dynamics(args.dynamics)  # S97
     result = await replay_window(
         feed, probability, variants, start=start, end=end, include_simulated=args.include_srl, guards=guards_cfg,
-        fill_delay=fill_delay, size_cap=size_cap, reference=reference,
+        fill_delay=fill_delay, size_cap=size_cap, reference=reference, market_dynamics=dynamics,
     )
     uncapped = None
     if args.compare_size_cap:
         uncapped = await replay_window(
             feed, probability, variants, start=start, end=end, include_simulated=args.include_srl, guards=guards_cfg,
-            fill_delay=fill_delay, size_cap=False, reference=reference,
+            fill_delay=fill_delay, size_cap=False, reference=reference, market_dynamics=dynamics,
         )
     replayed = time.perf_counter()
     settings = {
@@ -549,6 +593,7 @@ async def _run(args: argparse.Namespace, probability: Any, variants: Sequence[pt
         "max_match_loss": pt.MAX_MATCH_LOSS,
         "guards": asdict(guards_cfg),
         "suspensions": "none (every variant trades; the live S73 state is not applied)",
+        "market_dynamics": dynamics_note,  # S97
     }
     summary = build_summary(result, variants, feed, settings=settings, uncapped=uncapped, reference=reference)
     out_dir = Path(args.out) if args.out else REPLAY_DIR / datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
@@ -585,6 +630,9 @@ def main(argv: Optional[list[str]] = None) -> int:
                         help="do not cut fills to the size shown (the pre-S87 fill)")
     parser.add_argument("--compare-size-cap", action="store_true",
                         help="run the capped and the uncapped replay; the uncapped summary goes to <out>/uncapped")
+    parser.add_argument("--dynamics", default="current",
+                        help="S97 market-dynamics model for mkt_dyn and mkt_dyn_e06: current (default), lomo, none, "
+                             "or a model file path")
     args = parser.parse_args(argv)
     variants = _select_variants(args.variants)
     probability = pt.load_probability_service(pt.ROOT)  # blocking; before the event loop starts

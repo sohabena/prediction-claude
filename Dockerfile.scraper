@@ -54,6 +54,9 @@ COPY scripts/evaluate_models.py /app/scripts/evaluate_models.py
 COPY scripts/retrain_weekly.py /app/scripts/retrain_weekly.py
 COPY scripts/cricsheet_harmonizer.py /app/scripts/cricsheet_harmonizer.py
 COPY scripts/synthetic_market.py /app/scripts/synthetic_market.py
+# S97 market-dynamics model (weekly, in the retrain run): dataset from the recordings, then training and activation
+COPY scripts/build_market_dynamics_dataset.py /app/scripts/build_market_dynamics_dataset.py
+COPY scripts/train_market_dynamics.py /app/scripts/train_market_dynamics.py
 
 # S72 paper trader (profile recording): virtual bets from the models; writes only to paper_bets
 # Whole package: the paper trader imports several of its modules (ledger, review, risk helpers)
@@ -65,6 +68,7 @@ COPY scripts/replay_paper.py /app/scripts/replay_paper.py
 COPY scripts/paper_dashboard.py /app/scripts/paper_dashboard.py
 COPY scripts/evaluate_inplay.py /app/scripts/evaluate_inplay.py
 COPY scripts/backfill_actual_start.py /app/scripts/backfill_actual_start.py
+# S97: the paper trader reads models/market_dynamics/current.json (volume) through strategy/ and training/ (copied above)
 
 # Create non-root user; logs/ is bind-mounted from the host so heartbeats are visible there
 RUN useradd --create-home phoenix && mkdir -p /app/logs && chown -R phoenix /app/logs

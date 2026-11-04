@@ -17,6 +17,9 @@ One run, in order. Every training step is a subprocess; a failed step stops the 
                held-out window as the champion; then the prematch versions fitted for it.
   7. inplay    S89 ``evaluate_inplay.py`` (read-only database) -> reports/inplay_eval/<YYYYMMDD>/ and the in-play gate
                models/registry/inplay_gate.json. Non-fatal: a failure is recorded and the run status is unchanged.
+  8. dynamics  S97 ``build_market_dynamics_dataset.py`` (read-only database) -> data/market_dynamics/, then
+               ``train_market_dynamics.py --activate-if-not-worse`` -> models/market_dynamics/<YYYYMMDD>.joblib,
+               current.json only when not worse, and reports/market_dynamics/<YYYYMMDD>/. Non-fatal.
 
 Exit code: 0 when the run finished (promoted or not), 1 when a step failed.
 """
@@ -342,6 +345,16 @@ def run_retrain(
     except Exception as exc:
         record["steps"].append({"step": "inplay_eval", "status": "failed", "detail": f"{type(exc).__name__}: {exc}"})
         logger.error("inplay_eval_failed", error=f"{type(exc).__name__}: {exc}")
+    # S97: the market-dynamics model. Non-fatal: a failure is recorded and never changes the blend promotion. The
+    # trainer replaces the active model only when its simulated CLV on the matches the active model did not train on
+    # is not worse than the candidate's (--activate-if-not-worse).
+    try:
+        if step("market_dynamics_dataset", [py, "scripts/build_market_dynamics_dataset.py"]):
+            step("market_dynamics_train", [py, "scripts/train_market_dynamics.py", "--date", stamp,
+                                           "--activate-if-not-worse"])
+    except Exception as exc:
+        record["steps"].append({"step": "market_dynamics", "status": "failed", "detail": f"{type(exc).__name__}: {exc}"})
+        logger.error("market_dynamics_failed", error=f"{type(exc).__name__}: {exc}")
     promoted = record["promotion"]["blend"]["promoted"]
     return finish("promoted" if promoted else "not_promoted")
 

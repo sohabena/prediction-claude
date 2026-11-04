@@ -20,6 +20,9 @@ A cycle (every 15 s from ``scripts/run_paper_trader.py``) does, in this order:
    cycle: ``placebo_random`` places one intent with the reference's stake on a seeded-random side and selection,
    ``placebo_favourite`` backs the market favourite with that stake. Priced and capped by ``model_edge.placebo_ticket``
    and checked by the S75 new-risk guards. They use the market probability only, so the source is ``market_only``.
+   S97: the ``mkt_dyn`` and ``mkt_dyn_e06`` variants take their probability from the market-dynamics model (source
+   ``market_dynamics``): the band price now plus the predicted 10-minute change. In play only; pre-match, or with no
+   model file, they open no new risk. Everything else about them is the same decision and guard path.
 
 Nothing is kept in memory between cycles: positions, pending bets and the last trade time all come from the ledger,
 so a restart resumes exactly where the table says. Writes go only to ``paper_bets``. No real money, no site access.
@@ -65,6 +68,9 @@ PENDING_LOOKBACK = timedelta(minutes=20)  # covers the 15 min staleness limit pl
 CLV_DELAY = timedelta(minutes=10)
 W_GRID = (0.3, 0.5, 0.7)
 EDGE_GRID = (0.03, 0.06)
+# S97: the market-dynamics variants and their minimum edge. Their probability is the model's, not the blend's (w = 1).
+DYNAMICS_MIN_EDGE = {"mkt_dyn": 0.03, "mkt_dyn_e06": 0.06}
+DYNAMICS_VARIANTS = frozenset(DYNAMICS_MIN_EDGE)
 
 
 # ----------------------------------------------------------------------------- variants (one place)
@@ -74,21 +80,26 @@ def variant_name(w: float, min_edge: float) -> str:
 
 
 def build_variants(max_match_loss: float = MAX_MATCH_LOSS) -> tuple[Variant, ...]:
-    """The grid of the plan (w x min_edge), the market-only control and the two S85 placebos. Every variant has its own
-    cap and ledger. The placebos are placed from the reference's decisions (see ``run_cycle``); they are never ranked."""
+    """The grid of the plan (w x min_edge), the market-only control, the two S97 market-dynamics variants and the two S85
+    placebos. Every variant has its own cap and ledger. The placebos are placed from the reference's decisions (see
+    ``run_cycle``); they are never ranked."""
     grid = [
         Variant(variant_name(w, e), w=w, min_edge=e, max_match_loss=max_match_loss)
         for w in W_GRID
         for e in EDGE_GRID
     ]
     control = Variant("market_only", w=0.0, min_edge=0.03, max_match_loss=max_match_loss, market_only=True)
+    dynamics = [
+        Variant(name, w=1.0, min_edge=edge, max_match_loss=max_match_loss)  # S97: w=1, the model's probability alone
+        for name, edge in DYNAMICS_MIN_EDGE.items()
+    ]
     placebos = [
         Variant(paper_review.PLACEBO_RANDOM, w=0.0, min_edge=0.03, max_match_loss=max_match_loss, market_only=True,
                 placebo="random"),
         Variant(paper_review.PLACEBO_FAVOURITE, w=0.0, min_edge=0.03, max_match_loss=max_match_loss, market_only=True,
                 placebo="favourite"),
     ]
-    return tuple(grid + [control] + placebos)
+    return tuple(grid + [control] + dynamics + placebos)
 
 
 def placebo_random_choice(match_id: str, decided_at: datetime, variant_name: str) -> tuple[str, str]:
@@ -424,6 +435,7 @@ async def run_cycle(
     fill_delay: timedelta = ledger.FILL_DELAY,
     size_cap: bool = False,  # S87: off until the unit of the shown size is verified (decision 2026-11-03)
     reference: str = paper_review.DEFAULT_REFERENCE,  # S85: the variant whose decisions the placebos copy
+    market_dynamics: Any = None,  # S97: a model_for(match_id) source (strategy.market_dynamics); None: no model
 ) -> dict[str, Any]:
     """One decision cycle. Returns the report (JSON-serialisable) that the loop writes to the log.
 
@@ -450,7 +462,13 @@ async def run_cycle(
     for row in open_rows:
         since = min(since, row.decided_at - PENDING_LOOKBACK)
     price_ids = sorted({c.match_id for c in candidates} | open_ids)
-    cache = PriceCache(await feed.price_rows(price_ids, since) if price_ids else [])
+    raw_prices = await feed.price_rows(price_ids, since) if price_ids else []
+    cache = PriceCache(raw_prices)
+    prices_by_match: dict[str, list[dict[str, Any]]] = {}  # S97: the same rows, per match, for the dynamics features
+    if market_dynamics is not None:
+        for row in raw_prices:
+            prices_by_match.setdefault(str(row["match_id"]), []).append(row)
+    dynamics_counts: Counter = Counter()
     # S87: the sizes shown, read once here because the fill callback is synchronous. A feed without size_rows, or
     # size_cap False (replay --no-size-cap), gives no size: the fill is the pre-S87 one.
     sizes = None
@@ -530,6 +548,14 @@ async def run_cycle(
         if est.p_market is None:
             skip_match["no_market"] += 1
             continue
+        # S97: the market-dynamics probability, in play only (pre-match it stays None: the dynamics variants open no new
+        # risk before the off). The features read the same price and score rows as the rest of the cycle.
+        dyn_p: Optional[float] = None
+        if market_dynamics is not None and cand.in_play:
+            dyn_model = market_dynamics.model_for(cand.match_id)
+            if dyn_model is not None:
+                dyn_p = dyn_model.estimate(prices_by_match.get(cand.match_id, []), rows, now, off=cand.match_start_time)
+            dynamics_counts["estimated" if dyn_p is not None else "no_estimate"] += 1
         matches_report.append(
             {
                 "match_id": cand.match_id,
@@ -537,6 +563,7 @@ async def run_cycle(
                 "source": est.source,
                 "p_model": est.p_model,
                 "p_market": est.p_market,
+                "p_dynamics": dyn_p,
             }
         )
         refusal = trade_guards.book_refusal(book, est.p_market)
@@ -555,10 +582,15 @@ async def run_cycle(
             if key in pending:
                 pending_skips += 1
                 continue
-            if unpriced_in_play and not variant.market_only:
-                guard_refusals["inplay_without_state"] += 1
-            p_model_used = None if unpriced_in_play else est.p_model
-            source_used = "market_only" if unpriced_in_play else est.source
+            if variant.name in DYNAMICS_VARIANTS:
+                # S97: the model's own probability (None pre-match or without a model: no new risk, as market_only)
+                p_model_used = dyn_p
+                source_used = "market_dynamics" if dyn_p is not None else "market_only"
+            else:
+                if unpriced_in_play and not variant.market_only:
+                    guard_refusals["inplay_without_state"] += 1
+                p_model_used = None if unpriced_in_play else est.p_model
+                source_used = "market_only" if unpriced_in_play else est.source
             position = books.get(key, Book())
             last = last_trade.get(key)
             decide_as = replace(variant, max_trades_per_match=0) if variant.name in suspended_set else variant
@@ -730,6 +762,7 @@ async def run_cycle(
         "settled": dict(settled_counts),
         "primary": primary,
         "suspended": sorted(suspended_set),
+        "market_dynamics": {"loaded": market_dynamics is not None, **dict(dynamics_counts)},  # S97
     }
 
 
@@ -768,6 +801,8 @@ async def run_once(
     """One cycle in one database transaction (committed on success, rolled back on error)."""
     from shared.db import get_session
 
+    from strategy.market_dynamics import load_current  # S97: the active model, or None (dynamics variants: no risk)
+
     state = paper_review.load_state()
     async with get_session() as session:
         report = await run_cycle(
@@ -779,6 +814,7 @@ async def run_once(
             suspended=paper_review.suspended_names(state),
             primary=state.get("primary"),
             reference=paper_review.reference_name(state),
+            market_dynamics=load_current(),
         )
     append_log(report, log_path)
     return report
@@ -786,6 +822,7 @@ async def run_once(
 
 __all__ = [
     "Candidate",
+    "DYNAMICS_VARIANTS",
     "DbFeed",
     "PriceCache",
     "build_variants",

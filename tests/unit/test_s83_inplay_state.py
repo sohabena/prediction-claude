@@ -24,7 +24,9 @@ MIN = timedelta(minutes=1)
 START_INPLAY = T0 - timedelta(hours=1)  # already off: in play
 START_PREMATCH = T0 + timedelta(hours=2)  # not off: pre-match
 NEW_RISK = {"enter", "add", "flip"}
-MODEL_VARIANTS = [v for v in pt.build_variants() if not v.market_only]
+# S97: the market-dynamics variants take their probability from the dynamics model, not from ProbabilityService, so
+# the S83 path (the in-play state rule for model probabilities) does not apply to them: they are tested in test_s97.
+MODEL_VARIANTS = [v for v in pt.build_variants() if not v.market_only and v.name not in pt.DYNAMICS_VARIANTS]
 MODEL_NAMES = {v.name for v in MODEL_VARIANTS}
 
 

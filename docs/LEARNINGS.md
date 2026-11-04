@@ -13,6 +13,17 @@ delete an entry; if it turns out wrong, add a later entry that corrects it.
 
 ## 2026-11-04
 
+**The market-dynamics model (S97) has no edge out of sample yet.** Trained on 14 real matches (4,032 in-play
+snapshots, 6 with a scoreboard), it predicts the market probability 10 minutes ahead. Leave-one-match-out: error
+0.067 against 0.058 for "no change" (worse), direction right 49% of the time, simulated CLV no better than the
+placebo. The replay looked excellent in-sample (+145,899 and +246,321, CLV 3 to 4 points above the placebo) and
+collapsed held-out (CLV about 0, P&L -41,763 and -3,819). Rule: never judge a model on the matches it was trained
+on; replay with `--dynamics lomo` (or any held-out scheme) before believing a number. Deployed to paper anyway (era E,
+02:50 UTC) to learn from live matches; weekly retraining keeps a new version only if it is not worse.
+
+**Clipping a model probability to the market band blocks every trade**: inside the band no takeable price has
+positive edge, so a model can only act when it disagrees with the book.
+
 **The site can list one fixture under two event ids** (S96). Otago Volts v Canterbury Kings was recorded as
 `lb_36266991` (score feed, left the listing at 23:53 mid-match, marked unresolved) and `lb_75330686` (no score feed,
 still live, 13 times more match-page rows). Fix: `canonical_match_id` in the registry, linked hourly by the monitor

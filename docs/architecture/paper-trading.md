@@ -107,6 +107,17 @@ signal. Every strategy variant's CLV is reported as an excess over `placebo_rand
 control's mean CLV on that match, with a match-clustered CI over matches. A CI from fewer than 10 matches counts as
 "too few matches", and the daily review states in one sentence when no variant's excess CI lies above zero.
 
+## Market-dynamics variants (S97)
+
+`mkt_dyn` (minimum edge 3%) and `mkt_dyn_e06` (6%) take their probability from `strategy/market_dynamics.py`: the
+band market probability now plus the predicted change over the next 10 minutes, clipped to 0.01..0.99 (not to the
+book's band: inside a band no takeable price has a positive edge, so a band clip would stop every trade). The model
+(`training/market_dynamics.py`, `models/market_dynamics/current.json`) uses only the odds' own movement and the live
+scoreboard, with a no-scoreboard flag. In play only: pre-match they open no new risk. With no model file they open no
+new risk. Source `market_dynamics`. The weekly job (`retrain_weekly.py` step 8) replaces the active model only when
+its simulated CLV on matches it did not train on is not worse than the candidate's. Evidence is the replay and the
+daily review, as for every variant.
+
 ## Measures of success
 
 Per variant, rolling: mean CLV per bet with CI (primary), realised P&L with CI, calibration of `p` vs results,

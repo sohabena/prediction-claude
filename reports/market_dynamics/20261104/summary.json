@@ -1,0 +1,222 @@
+{
+  "date": "20261104",
+  "version": "s97-1",
+  "model_file": "models/market_dynamics/20261104.joblib",
+  "sklearn": "1.6.1",
+  "dataset": {
+    "file": "dataset.parquet",
+    "rows": 4032,
+    "matches": 14,
+    "matches_with_score_rows": 6,
+    "rows_with_scoreboard": 2013,
+    "rows_without_scoreboard": 2019,
+    "dropped": {
+      "snapshots_label_window_gap": 770,
+      "snapshots_no_band": 1493,
+      "snapshots_no_fresh_price": 810
+    }
+  },
+  "evaluation": {
+    "rows": 4032,
+    "matches": 14,
+    "mae_model": 0.06701376334353708,
+    "mae_zero": 0.05809965505417816,
+    "direction_rows_over_spread": 3058,
+    "direction_accuracy_over_spread": 0.49280575539568344,
+    "by_theta": {
+      "0.01": {
+        "trades": 387,
+        "matches_with_trades": 14,
+        "trades_per_match": 27.642857142857142,
+        "back_share": 0.6253229974160207,
+        "clv": {
+          "estimate": -0.024027735481642654,
+          "ci_lower": -0.03717181213962114,
+          "ci_upper": -0.00966835245195902,
+          "matches": 14,
+          "trades": 387,
+          "too_few_matches": false
+        },
+        "placebo_clv": {
+          "estimate": -0.02253371927817713,
+          "ci_lower": -0.03155973078607511,
+          "ci_upper": -0.012711008342810694,
+          "matches": 14,
+          "trades": 387,
+          "too_few_matches": false
+        },
+        "excess_over_placebo": {
+          "estimate": 0.0013809654473601548,
+          "ci_lower": -0.010289257185118644,
+          "ci_upper": 0.014201850059789883,
+          "matches": 14,
+          "too_few_matches": false
+        }
+      },
+      "0.02": {
+        "trades": 380,
+        "matches_with_trades": 14,
+        "trades_per_match": 27.142857142857142,
+        "back_share": 0.6421052631578947,
+        "clv": {
+          "estimate": -0.0269379248428003,
+          "ci_lower": -0.039709950969153446,
+          "ci_upper": -0.013608498642477021,
+          "matches": 14,
+          "trades": 380,
+          "too_few_matches": false
+        },
+        "placebo_clv": {
+          "estimate": -0.024764673029083573,
+          "ci_lower": -0.039379360218852175,
+          "ci_upper": -0.011963838788352011,
+          "matches": 14,
+          "trades": 380,
+          "too_few_matches": false
+        },
+        "excess_over_placebo": {
+          "estimate": 0.0003315020421573162,
+          "ci_lower": -0.011593642534477396,
+          "ci_upper": 0.012734980717778874,
+          "matches": 14,
+          "too_few_matches": false
+        }
+      },
+      "0.03": {
+        "trades": 324,
+        "matches_with_trades": 14,
+        "trades_per_match": 23.142857142857142,
+        "back_share": 0.7222222222222222,
+        "clv": {
+          "estimate": -0.03027832189141041,
+          "ci_lower": -0.044502808413249856,
+          "ci_upper": -0.016111990887278663,
+          "matches": 14,
+          "trades": 324,
+          "too_few_matches": false
+        },
+        "placebo_clv": {
+          "estimate": -0.024123464011320164,
+          "ci_lower": -0.03184916458577422,
+          "ci_upper": -0.016278304168893944,
+          "matches": 14,
+          "trades": 324,
+          "too_few_matches": false
+        },
+        "excess_over_placebo": {
+          "estimate": -0.0035751700965417446,
+          "ci_lower": -0.01655451619582112,
+          "ci_upper": 0.010163956050992122,
+          "matches": 14,
+          "too_few_matches": false
+        }
+      },
+      "0.05": {
+        "trades": 164,
+        "matches_with_trades": 13,
+        "trades_per_match": 12.615384615384615,
+        "back_share": 0.6585365853658537,
+        "clv": {
+          "estimate": -0.03198859362088681,
+          "ci_lower": -0.051596343356961366,
+          "ci_upper": -0.014521029297238154,
+          "matches": 13,
+          "trades": 164,
+          "too_few_matches": false
+        },
+        "placebo_clv": {
+          "estimate": -0.01816201507450747,
+          "ci_lower": -0.028277201428200897,
+          "ci_upper": -0.0060296034616831055,
+          "matches": 13,
+          "trades": 164,
+          "too_few_matches": false
+        },
+        "excess_over_placebo": {
+          "estimate": -0.010912132187635827,
+          "ci_lower": -0.03977983062705209,
+          "ci_upper": 0.01489048851092372,
+          "matches": 13,
+          "too_few_matches": false
+        }
+      }
+    },
+    "by_scoreboard": {
+      "with_scoreboard": {
+        "rows": 2013,
+        "matches": 6,
+        "trades": {
+          "trades": 156,
+          "matches_with_trades": 6,
+          "trades_per_match": 26.0,
+          "back_share": 0.5769230769230769,
+          "clv": {
+            "estimate": -0.012305907479244068,
+            "ci_lower": -0.026967757589239208,
+            "ci_upper": 0.007770796341015225,
+            "matches": 6,
+            "trades": 156,
+            "too_few_matches": true
+          },
+          "placebo_clv": {
+            "estimate": -0.0030369249070230932,
+            "ci_lower": -0.01682589234839117,
+            "ci_upper": 0.010375114046544296,
+            "matches": 6,
+            "trades": 156,
+            "too_few_matches": true
+          },
+          "excess_over_placebo": {
+            "estimate": -0.008985160937449527,
+            "ci_lower": -0.02685471002707458,
+            "ci_upper": 0.01077503598972363,
+            "matches": 6,
+            "too_few_matches": true
+          }
+        }
+      },
+      "no_scoreboard": {
+        "rows": 2019,
+        "matches": 14,
+        "trades": {
+          "trades": 257,
+          "matches_with_trades": 12,
+          "trades_per_match": 21.416666666666668,
+          "back_share": 0.688715953307393,
+          "clv": {
+            "estimate": -0.03299989973139908,
+            "ci_lower": -0.04622868850024175,
+            "ci_upper": -0.021415100097208387,
+            "matches": 12,
+            "trades": 257,
+            "too_few_matches": false
+          },
+          "placebo_clv": {
+            "estimate": -0.029100241330071008,
+            "ci_lower": -0.03316480657737759,
+            "ci_upper": -0.024691630792479324,
+            "matches": 12,
+            "trades": 257,
+            "too_few_matches": false
+          },
+          "excess_over_placebo": {
+            "estimate": -0.002430246398330277,
+            "ci_lower": -0.013663307960680318,
+            "ci_upper": 0.007338955999585504,
+            "matches": 12,
+            "too_few_matches": false
+          }
+        }
+      }
+    },
+    "mae_ratio": 1.1534279038497988
+  },
+  "activation": {
+    "activated": true,
+    "reason": "no active model: the first model is activated",
+    "active_before": null,
+    "compared_matches": null,
+    "candidate_clv": null,
+    "current_clv": null
+  }
+}

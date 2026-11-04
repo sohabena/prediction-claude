@@ -180,13 +180,15 @@ to `odds_ticks_quarantine` (never deletes): post-settlement prices, cross-match 
 2. **CLV counts only as excess over the placebo.** The fill rule and drift can produce CLV on their own; a variant
    is good only if it beats `placebo_random`.
 3. **Pre-match and in-play are reported separately.**
-4. **A big replay P&L is not evidence.** The first replay showed +300k to +418k per variant: 3 settled matches, about
+4. **In-sample numbers are not evidence.** Judge a model only on matches it was not trained on (leave-one-match-out
+   or later matches). The market-dynamics model showed +246k in-sample and about zero held-out (2026-11-04).
+5. **A big replay P&L is not evidence.** The first replay showed +300k to +418k per variant: 3 settled matches, about
    70% from one, most of it from in-play bets priced by the wrong model. After the fixes it was about zero.
-5. **CLV definition (binding):** `shared.metrics.clv_prob`, probability points, side-aware. Pre-match reference = the
+6. **CLV definition (binding):** `shared.metrics.clv_prob`, probability points, side-aware. Pre-match reference = the
    last price before the off; in-play reference = the same side 10 minutes after the fill.
-6. **Edge is not a sanity measure at long odds.** At 23.0, p 0.085 vs 0.043 is an "edge" of 0.95 but a 4-point
+7. **Edge is not a sanity measure at long odds.** At 23.0, p 0.085 vs 0.043 is an "edge" of 0.95 but a 4-point
    probability gap. Sanity checks use the probability gap.
-7. **Metric tiers** (`docs/architecture/value-focused-plan.md`):
+8. **Metric tiers** (`docs/architecture/value-focused-plan.md`):
    - **Tier A, decides money:** clustered CLV excess over placebo; settled real matches with a tradable book; result
      coverage and correctness; fill realism; log loss vs the market.
    - **Tier B, diagnose:** worst case vs cap, trades per match, guard refusals, rated-match share.
@@ -207,7 +209,9 @@ to `odds_ticks_quarantine` (never deletes): post-settlement prices, cross-match 
 
 1. **A better model on slow horizons** (pre-match, toss, in-play states the market under-prices), strongest in
    low-profile competitions with lazy prices. The primary thesis; unproven.
-2. **Market behaviour:** over-reaction after wickets and big overs, drift. Testable on our price histories alone.
+2. **Market behaviour:** over-reaction after wickets and big overs, drift. Tested from 2026-11-04 as the
+   market-dynamics model (S97, variants `mkt_dyn`, `mkt_dyn_e06`: odds movement plus scoreboard, no ratings). First
+   result on 14 matches held out: no edge (CLV about 0). It keeps paper trading and retrains weekly.
 3. **Soft bookmaker vs sharp exchange: tested 2026-11-03, no edge so far** (`scripts/analyse_soft_sharp.py`,
    `reports/soft_sharp/`).
    - The `_BR` match-odds market's runners have **never** been active on a real match: its prices are not bettable.

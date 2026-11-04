@@ -27,6 +27,7 @@ ERAS = [
     ("B", "2026-11-03 10:24", "Band fix; no sanity guards yet; pre-match model priced in-play bets"),
     ("C", "2026-11-03 11:25", "S75 guards; in-play still allowed the pre-match model until S83"),
     ("D", "2026-11-03 12:36", "Current strategy: S83 in-play rule, S90 tickets, corrected price view, placebos"),
+    ("E", "2026-11-04 02:50", "Adds the market-dynamics variants (mkt_dyn, mkt_dyn_e06); twin matches linked (S96)"),
 ]
 CONTROLS = {"market_only", "placebo_random", "placebo_favourite"}
 
