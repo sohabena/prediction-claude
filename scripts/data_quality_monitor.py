@@ -80,7 +80,7 @@ PAPER_SANITY_CONTROL_MAX = 2  # trades by the control in 24 h
 # probability gap, not the edge: at long odds a few points of probability is a large edge (2026-11-03: 0.085 vs
 # 0.043 at 23.0 is an edge of 0.95, a real model-market disagreement, not a pricing bug).
 PAPER_SANITY_PROB_GAP_MAX = 0.20
-PAPER_SANITY_MATCH_TRADES_MAX = 35  # trades by one variant on one match in 24 h (budget 30 tickets, plus reduces)
+PAPER_SANITY_MATCH_TRADES_MAX = 35  # matched bets by one variant on one match in 24 h (budget 30 tickets, plus reduces)
 # Bets decided before the S90 strategy went live (2026-11-03 12:36 UTC, written into the two SQL queries) are not
 # counted: they were placed by code that S75 and S90 replaced (S90 limits a variant to 10 tickets per match).
 # S77: pre-match match pages. Matches that started on or after PREMATCH_PAGES_SINCE are scored. The operator sets
@@ -364,7 +364,8 @@ SQL: dict[str, str] = {
         GROUP BY p.variant, p.match_id
     """,
     "paper_sanity_trades": """
-        SELECT variant, match_id, COUNT(*) AS trades
+        SELECT variant, match_id, COUNT(*) AS orders,
+               COUNT(*) FILTER (WHERE status IN ('filled', 'settled', 'void')) AS trades
         FROM paper_bets
         WHERE decided_at >= GREATEST(CAST(:now AS timestamptz) - INTERVAL '24 hours', TIMESTAMPTZ '2026-11-03 12:36:00+00')
         GROUP BY variant, match_id
@@ -837,7 +838,9 @@ async def check_paper_sanity(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]:
     placed more than 2 trades, when a filled bet's recorded edge at its decision price is above 20% (implausible), or
     when one variant placed more than 15 trades on one match. Trades are recorded paper orders of any status."""
     per_key = await fetch("paper_sanity_trades", p)
-    control = sum(_int(r["trades"]) for r in per_key if r["variant"] == PAPER_SANITY_CONTROL)
+    # The control is judged on every order it placed (any order means it saw an edge); churn on matched bets only:
+    # an order that did not fill within the 60 s delay is not a bet (2026-11-04: 54 orders, 33 bets on a 50-over match).
+    control = sum(_int(r.get("orders", r["trades"])) for r in per_key if r["variant"] == PAPER_SANITY_CONTROL)
     busiest = max((_int(r["trades"]) for r in per_key), default=0)
     problems: list[str] = []
     if control > PAPER_SANITY_CONTROL_MAX:

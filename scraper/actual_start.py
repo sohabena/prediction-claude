@@ -24,6 +24,9 @@ from typing import Iterable, Optional, Sequence
 SOURCE_JSON_IN_PLAY = "json_in_play"
 SOURCE_LISTING_LIVE = "listing_live"
 SOURCE_SCORE_FIRST_BALL = "score_first_ball"
+# A match first seen already in play: the live badge only proves the off was earlier, so its scheduled start is
+# recorded (2026-11-04, Pondicherry v Hyderabad: listed at 04:51, in play since its 03:30 start).
+SOURCE_SCHEDULED_LISTED_LIVE = "scheduled_listed_live"
 SOURCE_LISTING_BACKFILL = "listing_backfill"
 SOURCE_SCORE_BACKFILL = "score_backfill"
 

@@ -382,3 +382,12 @@ def test_paper_sanity_queries_are_selects_over_the_ledger_for_24_hours():
     for name in ("paper_sanity_trades", "paper_sanity_edges"):
         sql = dqm.SQL[name].strip().upper()
         assert sql.startswith("SELECT") and "PAPER_BETS" in sql and "24 HOURS" in sql, name
+
+
+def test_churn_counts_matched_bets_not_unfilled_orders():
+    """2026-11-04, a 50-over match: 54 orders but 33 matched bets (30 tickets plus reduces) is within the limit."""
+    rows = s55.healthy_rows()
+    rows["paper_sanity_trades"] = [{"variant": "w03_e03", "match_id": "m9", "orders": 54, "trades": 33}]
+    assert _sanity(rows)["status"] == "ok"
+    rows["paper_sanity_trades"] = [{"variant": "market_only", "match_id": "m9", "orders": 3, "trades": 0}]
+    assert _sanity(rows)["status"] == "fail"  # the control is judged on every order it placed

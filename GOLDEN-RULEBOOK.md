@@ -96,6 +96,8 @@ user `phoenix`.
 - **`actual_start_time`** (registry) is the real off: set once from the listing's live badge or the first ball.
   In-play decisions, the pre-match CLV reference and dataset snapshots use it. **The match JSON's `"inPlay": true`
   is NOT a start signal**: it means in-play betting is allowed and is true as soon as a pre-match page opens.
+- A match first listed already in play gets its scheduled start as `actual_start_time`
+  (`scheduled_listed_live`): the live badge only bounds the off. Start writes retry until stored.
 - The listing's live badge can come on during a rain delay before any ball (Dolphins v Western Province,
   2026-11-03, abandoned without a ball bowled): `actual_start_time` is when the market went in play.
 - Competitions get renamed (South Africa's T20 Challenge became the **Pro20 Cup** in 2026-27; Western Province play
@@ -256,6 +258,8 @@ once; it must be bought, never scraped, and only on the operator's decision.
 | The first market's openDate was taken as the start | Use the openDate most markets agree on |
 | A match listed for 6 Nov was reported as "missing a result" | Results are expected only for matches that went live |
 | One fixture under two ids would count twice | Link twins; consumers use the canonical match only |
+| Unfilled orders were counted as bets in the churn check | An order that did not fill is not a bet |
+| A write that hit no row was marked done | Mark a write done only once it is stored |
 
 ## 10. Working in this repo with Claude Code
 

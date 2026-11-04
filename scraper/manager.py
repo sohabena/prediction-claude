@@ -19,7 +19,12 @@ from playwright.async_api import Browser, BrowserContext, Playwright, async_play
 from features.data_quality import TickValidator
 from features.extractors.category_features import MatchCategoryClassifier, MatchTier
 from scraper.live_match_tracker import LiveMatchTracker
-from scraper.actual_start import SOURCE_LISTING_LIVE, SOURCE_SCORE_FIRST_BALL, is_first_ball
+from scraper.actual_start import (
+    SOURCE_LISTING_LIVE,
+    SOURCE_SCHEDULED_LISTED_LIVE,
+    SOURCE_SCORE_FIRST_BALL,
+    is_first_ball,
+)
 from scraper.match_filter import MatchClassifier, is_simulated_name
 from scraper.lotus_result_detector import LotusResultDetector
 from scraper.market_pages import (
@@ -456,10 +461,21 @@ class ScraperManager:
 
             accepted_count += 1
             current_batch_ids.add(event.match_id)
+            seen_pre_live: set[str] = self.__dict__.setdefault("_seen_pre_live", set())
+            if not event.is_live:
+                seen_pre_live.add(event.match_id)
             if event.is_live:
                 live_batch_ids.add(event.match_id)
-                # S86: the listing's live badge is a start signal (first one wins; see scraper/actual_start.py)
-                await self._set_actual_start_once(event.match_id, SOURCE_LISTING_LIVE, now)
+                # S86: the listing's live badge is a start signal (first one wins; see scraper/actual_start.py).
+                # A match first seen already in play gets its scheduled start instead (the badge only bounds it).
+                when, source = now, SOURCE_LISTING_LIVE
+                if event.match_id not in seen_pre_live:
+                    start = self._market_store()["json_start"].get(event.match_id) or event.scheduled_time
+                    if start is not None and start.tzinfo is None:
+                        start = start.replace(tzinfo=timezone.utc)
+                    if start is not None and 600 < (now - start).total_seconds() < 12 * 3600:
+                        when, source = start, SOURCE_SCHEDULED_LISTED_LIVE
+                await self._set_actual_start_once(event.match_id, source, when)
 
             # Result detection runs for every recorded match, SRL included; the detector never publishes
             # simulated results (S50).
@@ -1239,6 +1255,16 @@ class ScraperManager:
                     {"when": when, "source": source, "mid": match_id},
                 )
                 written = (getattr(result, "rowcount", 0) or 0) > 0
+                stored = written
+                if not written:
+                    # Nothing updated: either the start is already set (done), or the registry row does not exist yet
+                    # (a match first seen already live; the row is created after this signal). Retry the latter on
+                    # the next signal (2026-11-04: Pondicherry v Hyderabad, listed live at 04:51, never got a start).
+                    row = (await session.execute(
+                        text("SELECT actual_start_time FROM match_training_status WHERE match_id = :mid"),
+                        {"mid": match_id},
+                    )).fetchone()
+                    stored = row is not None and row[0] is not None
         except Exception as e:
             message = str(e)
             if "actual_start" in message and "does not exist" in message:
@@ -1251,7 +1277,8 @@ class ScraperManager:
             else:
                 logger.error("actual_start_db_error", match_id=match_id, source=source, error=message[:200])
             return False
-        done.add(match_id)
+        if stored:
+            done.add(match_id)
         if written:
             logger.info("actual_start_recorded", match_id=match_id, source=source, when=when.isoformat())
         return written

@@ -13,6 +13,18 @@ delete an entry; if it turns out wrong, add a later entry that corrects it.
 
 ## 2026-11-04
 
+**A match first listed already in play never got a start time** (Pondicherry v Hyderabad, Senior Women's T20,
+scheduled 03:30, first listed at 04:51 live). The live-badge write ran before its registry row existed, updated
+nothing, and the match was marked done anyway. Fix: retry until a start is stored; and a match first seen already
+live (no pre-live sighting, scheduled start 10 min to 12 h earlier) records its scheduled start
+(`scheduled_listed_live`), because the badge only proves the off was earlier. The backfill's "first live tick" has the
+same limit for late-listed matches.
+
+**The churn check counted unfilled orders as bets.** On Central Stags v Auckland Aces (Ford Trophy, 50 overs) a
+variant recorded 54 orders but only 33 matched bets (30 tickets plus reduces, which the budget never blocks); 21
+orders lapsed in the 60 s delay. The monitor failed on 54. Fix: churn counts matched bets (filled, settled, void);
+the control is still judged on every order. Rule: an order that did not fill is not a bet.
+
 **The market-dynamics model (S97) has no edge out of sample yet.** Trained on 14 real matches (4,032 in-play
 snapshots, 6 with a scoreboard), it predicts the market probability 10 minutes ahead. Leave-one-match-out: error
 0.067 against 0.058 for "no change" (worse), direction right 49% of the time, simulated CLV no better than the

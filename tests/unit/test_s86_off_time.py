@@ -37,6 +37,7 @@ from scraper.parsers.lotusbook_score import ScoreState
 from scripts import backfill_actual_start as backfill
 from scripts import data_quality_monitor as dqm
 from tests.unit.test_s37_recording import (  # noqa: F401  (manager_env is a fixture)
+    FakeResult,
     FakeSession,
     _new_manager,
     fake_get_session,
@@ -151,21 +152,23 @@ def test_the_update_only_writes_null_columns(monkeypatch, manager_env):
     assert params == {"when": START, "source": SOURCE_JSON_IN_PLAY, "mid": "lb_1"}
 
 
-def test_a_match_is_attempted_once_per_process(monkeypatch, manager_env):
+def test_a_match_without_a_stored_start_is_retried_on_the_next_signal(monkeypatch, manager_env):
+    """2026-11-04, Pondicherry v Hyderabad: first seen already live, the registry row did not exist yet, so the
+    UPDATE wrote nothing; the old code never tried again."""
     mgr = _new_manager(monkeypatch, record_all=None)
-    asyncio.run(mgr._set_actual_start_once("lb_1", SOURCE_JSON_IN_PLAY, START))
+    asyncio.run(mgr._set_actual_start_once("lb_1", SOURCE_LISTING_LIVE, START))
     asyncio.run(mgr._set_actual_start_once("lb_1", SOURCE_LISTING_LIVE, START + timedelta(seconds=9)))
     sources = [params["source"] for _, params in _writes(manager_env.session)]
-    assert sources == [SOURCE_JSON_IN_PLAY]
+    assert sources == [SOURCE_LISTING_LIVE, SOURCE_LISTING_LIVE]
 
 
-def test_a_later_listing_signal_does_not_overwrite_the_json_start(monkeypatch, manager_env):
+def test_once_a_start_is_stored_no_later_signal_writes_again(monkeypatch, manager_env):
     mgr = _new_manager(monkeypatch, record_all=None)
-    asyncio.run(mgr._set_actual_start_once("lb_m1", SOURCE_JSON_IN_PLAY, START))
-    asyncio.run(mgr._on_events([live_event(match_id="lb_m1")]))  # live badge after the JSON flag
+    manager_env.session._handler = lambda sql, params: Rowcount(1) if "SET actual_start_time" in sql else FakeResult()
+    assert asyncio.run(mgr._set_actual_start_once("lb_m1", SOURCE_LISTING_LIVE, START)) is True
+    asyncio.run(mgr._set_actual_start_once("lb_m1", SOURCE_SCORE_FIRST_BALL, START + timedelta(minutes=1)))
     sources = [params["source"] for _, params in _writes(manager_env.session)]
-    assert SOURCE_LISTING_LIVE not in sources
-    assert sources == [SOURCE_JSON_IN_PLAY]
+    assert sources == [SOURCE_LISTING_LIVE]
 
 
 def test_the_listing_live_badge_is_a_start_signal(monkeypatch, manager_env):
@@ -598,3 +601,27 @@ def test_the_market_json_in_play_flag_is_not_a_start_signal():
     source = inspect.getsource(manager.ScraperManager)
     assert "on_in_play=" not in source
     assert "SOURCE_JSON_IN_PLAY" not in source
+
+
+def test_a_match_first_seen_already_live_gets_its_scheduled_start(monkeypatch, manager_env):
+    """2026-11-04, Pondicherry v Hyderabad: listed at 04:51 already in play; scheduled 03:30."""
+    from scraper.actual_start import SOURCE_SCHEDULED_LISTED_LIVE
+
+    mgr = _new_manager(monkeypatch, record_all=None)
+    started = datetime.now(UTC) - timedelta(minutes=81)
+    event = live_event(match_id="lb_late").model_copy(update={"scheduled_time": started})
+    asyncio.run(mgr._on_events([event]))
+    writes = _writes(manager_env.session)
+    assert writes and writes[0][1]["source"] == SOURCE_SCHEDULED_LISTED_LIVE
+    assert writes[0][1]["when"] == started
+
+
+def test_a_match_seen_before_the_off_gets_the_badge_time(monkeypatch, manager_env):
+    mgr = _new_manager(monkeypatch, record_all=None)
+    scheduled = datetime.now(UTC) - timedelta(minutes=30)  # a late start: the badge, not the schedule, is the off
+    pre = live_event(match_id="lb_ontime").model_copy(update={"is_live": False, "scheduled_time": scheduled})
+    asyncio.run(mgr._on_events([pre]))
+    live = live_event(match_id="lb_ontime").model_copy(update={"scheduled_time": scheduled})
+    asyncio.run(mgr._on_events([live]))
+    writes = _writes(manager_env.session)
+    assert writes and writes[-1][1]["source"] == SOURCE_LISTING_LIVE
