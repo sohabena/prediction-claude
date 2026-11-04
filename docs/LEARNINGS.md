@@ -13,6 +13,21 @@ delete an entry; if it turns out wrong, add a later entry that corrects it.
 
 ## 2026-11-04
 
+**The site can list one fixture under two event ids** (S96). Otago Volts v Canterbury Kings was recorded as
+`lb_36266991` (score feed, left the listing at 23:53 mid-match, marked unresolved) and `lb_75330686` (no score feed,
+still live, 13 times more match-page rows). Fix: `canonical_match_id` in the registry, linked hourly by the monitor
+(`scripts/link_twins.py`); consumers (trader, dataset, results checks) skip the non-canonical twin; decided results
+copy across twins (`twin:<id>`, protected from the detector); check `duplicate_fixtures`. Rule: the canonical twin is
+the most complete record, with the score feed only as a tie-break, so the trader follows the live record.
+
+**Change-only match-page rows plus a listing drop left a 6 min 20 s hole** in a quiet live market (`lb_75330686`,
+22:46-22:52). Fix: the match page stores an unchanged match-odds book again every 5 min (heartbeat); the duplicates
+check ignores those rows.
+
+**The operator proposed a model that uses only the odds' movement and the scoreboard** (no ratings), betting both
+sides as the odds change. Written as S97 (market-dynamics model): it predicts the market probability 10 minutes
+ahead and trades predictable moves; profit cannot be ensured and is measured as CLV in excess of the placebo.
+
 **An `openDate` with seconds is a creation stamp, not a start.** New Zealand v India's pre-match page opened at
 00:45 (75 min before 02:00) and closed 3 s later: most of its markets carried `openDate` 2026-11-03 06:29:10, so the
 majority rule still picked a bogus start, the planner saw the window as passed, and the registry took the bad value.

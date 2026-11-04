@@ -154,6 +154,10 @@ MIGRATION_STATEMENTS = [
     """ALTER TABLE paper_bets
        ADD COLUMN IF NOT EXISTS stake_asked DOUBLE PRECISION,
        ADD COLUMN IF NOT EXISTS fill_note TEXT""",
+    # S96: a non-canonical twin (the same fixture under a second event id) names its canonical match id here; the
+    # canonical match and every ordinary match stay NULL. Nullable, so old code keeps working.
+    """ALTER TABLE match_training_status
+       ADD COLUMN IF NOT EXISTS canonical_match_id TEXT""",
 ]
 
 INDEX_STATEMENTS = [

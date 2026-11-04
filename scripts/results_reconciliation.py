@@ -51,6 +51,9 @@ RESULTS_SQL = """
     SELECT l.match_id, n.team_home, n.team_away,
            COALESCE(NULLIF(n.competition, ''), s.competition) AS competition,
            s.is_simulated, s.match_start_time,
+           -- S96: set on a non-canonical twin. Read through to_jsonb, so a database without the column gives NULL
+           -- and nothing is skipped.
+           (to_jsonb(s) ->> 'canonical_match_id') AS canonical_match_id,
            l.last_time,
            EXTRACT(EPOCH FROM (CAST(:now AS timestamptz) - l.last_time)) AS age_s,
            r.match_id IS NOT NULL AS has_result,
@@ -104,6 +107,8 @@ def select_missing(
             continue
         if not is_real(row) or has_decided_result(row):
             continue
+        if row.get("canonical_match_id") is not None:
+            continue  # S96: a twin of another match; its canonical match is the one that needs a result
         if row.get("went_live") is False:
             continue  # never in play: nothing to settle yet
         start = row.get("match_start_time")

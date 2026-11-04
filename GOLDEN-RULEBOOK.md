@@ -116,6 +116,11 @@ user `phoenix`.
   the last 12 h with no result), after two restarts had lost matches. The missing-results list stays the safety net.
   An SRL match has no public scorecard: `unresolved` from prices is its final answer. Public sources that worked: ESPNcricinfo, league sites (nclcricket.com), and CricHeroes for
   Sri Lankan MCA and other domestic leagues (rain and DLS results included). Never invent a result.
+- **One fixture can appear under two event ids.** `canonical_match_id` links them (hourly, `scripts/link_twins.py`);
+  every consumer uses only canonical matches. The canonical is the most complete record (most match-page rows), the
+  score feed only breaks ties.
+- Match-page rows are change-only, but the match-odds book is re-stored every 5 min (heartbeat), so a quiet market
+  never leaves a hole.
 - Markets are classified in `scraper/parsers/lotusbook_markets.py`: `match_odds`, `bookmaker` ("Bookmaker ..."),
   `over_runs` (session lines), `other`.
 
@@ -246,6 +251,7 @@ once; it must be bought, never scraped, and only on the operator's decision.
 | A field's meaning was assumed from its name | Verify a new signal on a real match before anything trades on it |
 | The first market's openDate was taken as the start | Use the openDate most markets agree on |
 | A match listed for 6 Nov was reported as "missing a result" | Results are expected only for matches that went live |
+| One fixture under two ids would count twice | Link twins; consumers use the canonical match only |
 
 ## 10. Working in this repo with Claude Code
 

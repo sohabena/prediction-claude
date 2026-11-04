@@ -41,6 +41,7 @@ COPY scripts/run_scraper_forever.py /app/scripts/run_scraper_forever.py
 COPY scripts/data_quality_monitor.py /app/scripts/data_quality_monitor.py
 COPY scripts/quarantine_ticks.py /app/scripts/quarantine_ticks.py
 COPY scripts/results_reconciliation.py /app/scripts/results_reconciliation.py
+COPY scripts/link_twins.py /app/scripts/link_twins.py
 
 # S65 trainer (profile recording): weekly prematch, dataset, blend and gate, plus the registry. Same image.
 COPY strategy/ /app/strategy/

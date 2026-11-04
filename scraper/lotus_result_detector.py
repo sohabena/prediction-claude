@@ -584,7 +584,8 @@ class LotusResultDetector:
                     closing_lay_away=result.get("closing_lay_away"),
                 )
                 existing = await session.get(MatchResultRecord, result["match_id"])
-                if existing is not None and existing.source in MANUAL_SOURCES:
+                if existing is not None and (existing.source in MANUAL_SOURCES
+                                             or str(existing.source or "").startswith("twin:")):
                     logger.info("result_kept_manual", match_id=result["match_id"], source=existing.source)
                     return
                 # merge: a scoreboard result replaces an earlier price row for the same match

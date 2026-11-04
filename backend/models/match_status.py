@@ -59,6 +59,11 @@ class MatchTrainingStatus(Base):
     ))
     actual_start_source: Mapped[str | None] = deferred(mapped_column(String, nullable=True))
 
+    # S96: a non-canonical twin (the same fixture listed under a second lb_ id) points at its canonical match id.
+    # NULL for the canonical match and for every ordinary match. Deferred, like the S86 columns, so a plain SELECT
+    # of this model works on a database without the S96 migration.
+    canonical_match_id: Mapped[str | None] = deferred(mapped_column(String, nullable=True))
+
     # Total recorded odds/microstructure ticks for this match
     tick_count: Mapped[int] = mapped_column(Integer, default=0)
 

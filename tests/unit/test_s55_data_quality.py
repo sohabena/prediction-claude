@@ -54,6 +54,8 @@ def healthy_rows() -> dict[str, list[dict[str, Any]]]:
         "paper_sanity_edges": [],
         "actual_start_columns": [{"present": True}],  # S86: the columns exist and no real match started in the window
         "start_times": [],
+        "canonical_column": [{"present": True}],  # S96: the column exists and there are no twins
+        "twin_rows": [],
     }
 
 
@@ -145,6 +147,7 @@ def test_healthy_day_is_ok_with_exit_zero():
         "results_missing",  # S76, appended last
         "paper_sanity",  # S75, appended last
         "start_time_consistency",  # S86, appended last
+        "duplicate_fixtures",  # S96, appended last
     ]
 
 

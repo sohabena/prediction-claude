@@ -117,9 +117,15 @@ class ReplayFeed:
             "WHERE table_name = 'match_training_status' AND column_name = 'actual_start_time')"
         ))).scalar())
         actual_expr = "actual_start_time" if has_actual else "NULL::timestamptz AS actual_start_time"
+        # S96: canonical_match_id only when the column exists (migration applied); an old database gets NULL.
+        has_canonical = bool((await session.execute(text(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns "
+            "WHERE table_name = 'match_training_status' AND column_name = 'canonical_match_id')"
+        ))).scalar())
+        canonical_expr = "canonical_match_id" if has_canonical else "NULL::text AS canonical_match_id"
         registry = (await session.execute(text(
             "SELECT match_id, team_home, team_away, competition, match_start_time, is_simulated, toss_winner, "
-            f"toss_decision, {actual_expr} FROM match_training_status WHERE match_id = ANY(:ids)"
+            f"toss_decision, {actual_expr}, {canonical_expr} FROM match_training_status WHERE match_id = ANY(:ids)"
         ), {"ids": ids})).mappings().all() if ids else []
         context = (await session.execute(text(
             "SELECT match_id, time, is_live, score, wickets, overs, innings, balls_remaining, batting_team, "
@@ -212,6 +218,7 @@ class ReplayFeed:
                 "match_start_time": start,
                 "actual_start_time": actual_known,
                 "is_simulated": row.get("is_simulated"),
+                "canonical_match_id": row.get("canonical_match_id"),  # S96: select_candidates skips a twin
                 "toss_winner": row.get("toss_winner") if toss_known else None,
                 "toss_decision": row.get("toss_decision") if toss_known else None,
                 "settled": settled,

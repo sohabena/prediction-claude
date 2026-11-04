@@ -325,7 +325,7 @@ def _sanity(rows):
 
 def test_paper_sanity_is_ok_on_a_quiet_day_and_runs_last():
     assert _sanity(s55.healthy_rows())["status"] == "ok"
-    assert dqm.CHECKS[-2] is dqm.check_paper_sanity  # S86 appended start_time_consistency after it
+    assert dqm.CHECKS[-3] is dqm.check_paper_sanity  # S86 and S96 appended checks after it
 
 
 def test_control_placing_more_than_two_trades_in_a_day_fails():

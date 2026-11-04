@@ -273,6 +273,10 @@ async def open_match_page(context: Any, url: str) -> Any:
     return page
 
 
+# An unchanged match-odds record is stored again after this long (the listing has the same 5-min live heartbeat).
+MATCH_ODDS_HEARTBEAT_S = 300.0
+
+
 def _closed(prev: MarketRecord, now: datetime) -> MarketRecord:
     """A market that left the page: same key, no prices, no lines, status ``closed``."""
     return replace(
@@ -545,8 +549,11 @@ class MarketPageWorker:
     def seed(self, records: list[MarketRecord]) -> None:
         """Start from the last stored state of each market (read from the DB), so a restarted worker does not rewrite
         every unchanged market once."""
+        written_at = self.__dict__.setdefault("_written_at", {})
         for record in records:
-            self._last_by_key[(record.market_type, record.market_name, record.selection)] = record
+            key = (record.market_type, record.market_name, record.selection)
+            self._last_by_key[key] = record
+            written_at[key] = record.time  # the heartbeat counts from the stored row, not from the restart
 
     def _changed_records(self, records: list[MarketRecord], now: datetime) -> list[MarketRecord]:
         """Records whose own content differs from the last stored record of the same key, plus one
@@ -556,11 +563,20 @@ class MarketPageWorker:
             current[(record.market_type, record.market_name, record.selection)] = record
 
         changed: list[MarketRecord] = []
+        written_at = self.__dict__.setdefault("_written_at", {})
         for key, record in current.items():
             previous = self._last_by_key.get(key)
             if previous is None or previous.content_key() != record.content_key():
                 changed.append(record)
                 self._last_by_key[key] = record
+                written_at[key] = now
+            elif record.market_type == "match_odds" and key in written_at and (
+                (now - written_at[key]).total_seconds() >= MATCH_ODDS_HEARTBEAT_S
+            ):
+                # Heartbeat: an unchanged match-odds book is stored again every 5 min, so a quiet market that also
+                # drops off the listing leaves no hole in the record (2026-11-03: 6 min 20 s on lb_75330686).
+                changed.append(record)
+                written_at[key] = now
 
         # A key that left the page is written once as closed and remembered as closed, so a closed market that
         # flickers in and out of the feed is not rewritten on every poll.

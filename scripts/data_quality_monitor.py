@@ -35,6 +35,9 @@ if str(ROOT) not in sys.path:
 
 from scraper.match_filter import is_simulated_name  # noqa: E402
 from scripts.quarantine_ticks import RULES, classify  # noqa: E402
+from scripts.link_twins import (  # noqa: E402
+    CANONICAL_COLUMN_SQL, TWIN_ROWS_SQL, MigrationMissing, build_plan, link_now, unlinked_links,
+)
 from scripts.results_reconciliation import RESULTS_SQL, select_missing  # noqa: E402
 from shared.logging import setup_logging  # noqa: E402
 from training.registry import DEFAULT_ROOT, DRIFT_MIN_SETTLED, Registry, drift_assessment, read_jsonl  # noqa: E402
@@ -138,7 +141,7 @@ SQL: dict[str, str] = {
     """,
     "duplicates": """
         WITH ordered AS (
-            SELECT time, back, lay, status, line_no, rate_no, line_yes, rate_yes,
+            SELECT time, market_type, back, lay, status, line_no, rate_no, line_yes, rate_yes,
                    back_size, lay_size, runner_status,
                    LAG(back_size) OVER w AS p_back_size,
                    LAG(lay_size) OVER w AS p_lay_size,
@@ -166,7 +169,9 @@ SQL: dict[str, str] = {
                    AND rate_yes IS NOT DISTINCT FROM p_rate_yes
                    AND back_size IS NOT DISTINCT FROM p_back_size
                    AND lay_size IS NOT DISTINCT FROM p_lay_size
-                   AND runner_status IS NOT DISTINCT FROM p_runner_status) AS duplicates
+                   AND runner_status IS NOT DISTINCT FROM p_runner_status
+                   -- an unchanged match-odds row 5 min after the last one is the match-page heartbeat, not a duplicate
+                   AND NOT (market_type = 'match_odds' AND time - p_time >= INTERVAL '290 seconds')) AS duplicates
         FROM ordered
     """,
     "live_matches": """
@@ -386,6 +391,8 @@ SQL: dict[str, str] = {
         WHERE s.match_id IN (SELECT match_id FROM odds_ticks WHERE time >= :since)
     """,
     "results": RESULTS_SQL,  # S76: shared with scripts/results_reconciliation.py
+    "canonical_column": CANONICAL_COLUMN_SQL,  # S96: presence of match_training_status.canonical_match_id
+    "twin_rows": TWIN_ROWS_SQL,  # S96: lb_ registry rows with match-page counts and results (scripts/link_twins.py)
 }
 
 _PARAM_RE = re.compile(r"(?<![:\w]):([A-Za-z_]\w*)")
@@ -625,7 +632,9 @@ async def check_registry(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]:
 
 
 async def check_results(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]:
-    real = await fetch("results", p)  # SRL included: its results are recorded too (S50)
+    # SRL included: its results are recorded too (S50). S96: a non-canonical twin is left out; its canonical match
+    # carries the result.
+    real = [r for r in await fetch("results", p) if r.get("canonical_match_id") is None]
     stale = [r for r in real if _num(r["age_s"]) is not None
              and _num(r["age_s"]) > RESULT_STALE_S and not r["has_result"] and r.get("went_live") is not False]
     # An 'unresolved' row for a match that is still being recorded is provisional (it left the listing for a while,
@@ -901,6 +910,27 @@ async def check_start_time_consistency(fetch: Fetch, p: dict[str, Any]) -> dict[
     return _check("start_time_consistency", WARN if value else OK, value, detail)
 
 
+async def check_duplicate_fixtures(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]:
+    """S96: one real fixture listed under two lb_ event ids (same teams, competition and start). A twin pair that is
+    not linked to its canonical match, or whose decided results conflict, is a warning. The hourly harmonise step
+    (--quarantine) links the pairs and copies results, so a warning means that step has not run or has refused.
+    Until the canonical_match_id column exists (S96 migration not applied) nothing is scored."""
+    if not bool((await fetch("canonical_column", p))[0]["present"]):
+        return _check("duplicate_fixtures", OK, None,
+                      "canonical_match_id column not present (S96 migration not applied); not scored")
+    rows = await fetch("twin_rows", p)
+    plan = build_plan(rows)
+    pending = unlinked_links(plan, rows)
+    detail = (f"{len(plan.links)} twin pair(s) found; {len(pending)} not linked to their canonical match; "
+              f"{len(plan.conflicts)} pair(s) with conflicting decided results")
+    if pending:
+        detail += "; e.g. " + ", ".join(f"{link.twin_id} -> {link.canonical_id}" for link in pending[:3])
+    if plan.conflicts:
+        detail += "; conflict: " + "; ".join(c.detail for c in plan.conflicts[:2])
+    value = len(pending) + len(plan.conflicts)
+    return _check("duplicate_fixtures", WARN if value else OK, value, detail)
+
+
 CHECKS: list[Callable[[Fetch, dict[str, Any]], Awaitable[dict[str, Any]]]] = [
     check_freshness,
     check_price_sanity,
@@ -919,6 +949,7 @@ CHECKS: list[Callable[[Fetch, dict[str, Any]], Awaitable[dict[str, Any]]]] = [
     check_results_missing,  # S76, appended last (its logic sits next to check_results)
     check_paper_sanity,  # S75, appended last
     check_start_time_consistency,  # S86, appended last
+    check_duplicate_fixtures,  # S96, appended last
 ]
 
 
@@ -1017,7 +1048,8 @@ HARMONISE_SQL = """
 
 
 async def _harmonise() -> None:
-    """Fill a competition missing on recent ticks (stored before the listing menu arrived) from the registry."""
+    """Fill a competition missing on recent ticks (stored before the listing menu arrived) from the registry, then link
+    twin event ids and copy decided results between them (S96, the same functions as scripts/link_twins.py --apply)."""
     from sqlalchemy import text
 
     from shared.db import get_session
@@ -1028,6 +1060,22 @@ async def _harmonise() -> None:
         logger.info("harmonise_applied", competitions_filled=result.rowcount)
     except Exception as exc:
         logger.error("harmonise_failed", error=str(exc))
+    await _link_twins()
+
+
+async def _link_twins() -> None:
+    """S96: link twins (canonical_match_id only) and copy decided results. Refused, and logged, until the migration."""
+    from shared.db import get_session
+
+    try:
+        async with get_session() as session:
+            summary = await link_now(session, apply=True)
+        applied = summary["applied"] or {}
+        logger.info("twins_linked", pairs=len(summary["plan"].links), **applied)
+    except MigrationMissing as exc:
+        logger.info("twins_link_skipped", reason=str(exc))
+    except Exception as exc:
+        logger.error("twins_link_failed", error=str(exc))
 
 
 async def _quarantine() -> None:

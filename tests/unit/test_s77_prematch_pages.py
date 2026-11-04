@@ -484,3 +484,20 @@ class TestMonitor:
     def test_check_is_registered(self):
         assert dqm.check_prematch_pages in dqm.CHECKS
         assert dqm.PREMATCH_PAGE_WARN == 0.90
+
+
+def test_an_unchanged_match_odds_book_is_stored_again_after_the_heartbeat():
+    """2026-11-03: a quiet market that also left the listing had no rows for 6 min 20 s."""
+    from scraper import market_pages as mp
+    from scraper.parsers.lotusbook_markets import MarketRecord
+
+    worker = mp.MarketPageWorker.__new__(mp.MarketPageWorker)
+    worker._last_by_key = {}
+    rec = MarketRecord(match_id="lb_1", time=T0, market_type="match_odds", market_name="match_odds", selection="A",
+                       back=2.0, lay=2.02)
+    other = MarketRecord(match_id="lb_1", time=T0, market_type="over_runs", market_name="x", selection="Over 6.5",
+                         back=1.9, lay=2.0)
+    assert len(worker._changed_records([rec, other], T0)) == 2
+    assert worker._changed_records([rec, other], T0 + timedelta(seconds=60)) == []
+    beat = worker._changed_records([rec, other], T0 + timedelta(seconds=mp.MATCH_ODDS_HEARTBEAT_S))
+    assert [r.market_type for r in beat] == ["match_odds"]

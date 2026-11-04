@@ -47,20 +47,25 @@ RAW_DIR = ROOT / "data" / "raw"
 TRAINING_DIR = ROOT / "data" / "training"
 CRICSHEET_DIRS = ("ipl", "odis", "t20s", "tests")
 
-REGISTRY_SQL = (
-    "SELECT match_id, team_home, team_away, competition, training_status, match_start_time, is_simulated "
-    "FROM match_training_status"
-)
-# S86: the registry adds actual_start_time when the column exists (migration applied); otherwise the old query runs
-# and every match falls back to match_start_time.
-REGISTRY_ACTUAL_START_SQL = (
-    "SELECT match_id, team_home, team_away, competition, training_status, match_start_time, is_simulated, "
-    "actual_start_time FROM match_training_status"
-)
-ACTUAL_START_COLUMN_SQL = (
-    "SELECT EXISTS (SELECT 1 FROM information_schema.columns "
-    "WHERE table_name = 'match_training_status' AND column_name = 'actual_start_time')"
-)
+def _registry_sql(has_actual_start: bool, has_canonical: bool) -> str:
+    """The registry query. S86 adds actual_start_time and S96 canonical_match_id only when those columns exist
+    (migrations applied); a missing column is left out, so the old query still runs and a match falls back to
+    match_start_time."""
+    columns = "match_id, team_home, team_away, competition, training_status, match_start_time, is_simulated"
+    if has_actual_start:
+        columns += ", actual_start_time"
+    if has_canonical:
+        columns += ", canonical_match_id"
+    return f"SELECT {columns} FROM match_training_status"
+
+
+def _column_sql(column: str) -> str:
+    return (f"SELECT EXISTS (SELECT 1 FROM information_schema.columns "
+            f"WHERE table_name = 'match_training_status' AND column_name = '{column}')")
+
+
+ACTUAL_START_COLUMN_SQL = _column_sql("actual_start_time")
+CANONICAL_COLUMN_SQL = _column_sql("canonical_match_id")
 PRICES_SQL = (
     "SELECT match_id, time, back_home, lay_home, back_away, lay_away, source "
     "FROM v_match_odds ORDER BY match_id, time"
@@ -111,7 +116,8 @@ async def _read_database() -> tuple[list[dict], list[dict], list[dict], Optional
         async with get_session() as session:
             await session.execute(text("SET TRANSACTION READ ONLY"))
             has_actual = bool((await session.execute(text(ACTUAL_START_COLUMN_SQL))).scalar())
-            registry_sql = REGISTRY_ACTUAL_START_SQL if has_actual else REGISTRY_SQL
+            has_canonical = bool((await session.execute(text(CANONICAL_COLUMN_SQL))).scalar())
+            registry_sql = _registry_sql(has_actual, has_canonical)
             registry = [dict(r._mapping) for r in (await session.execute(text(registry_sql))).fetchall()]
             prices = [dict(r._mapping) for r in (await session.execute(text(PRICES_SQL))).fetchall()]
             results = [dict(r._mapping) for r in (await session.execute(text(RESULTS_SQL))).fetchall()]

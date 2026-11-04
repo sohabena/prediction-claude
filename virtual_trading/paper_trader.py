@@ -131,6 +131,9 @@ def select_candidates(
         last = last_price_at.get(mid)
         if last is None:
             continue  # no price in the window: not a candidate, not a skip
+        if row.get("canonical_match_id") is not None:
+            skipped["twin"] += 1  # S96: a second event id of a fixture; its canonical match is the candidate
+            continue
         if now - last > FRESH_PRICE:
             skipped["stale_price"] += 1
             continue
@@ -331,7 +334,8 @@ class DbFeed:
             return []
         stmt = text(
             "SELECT r.match_id, r.team_home, r.team_away, r.competition, r.match_start_time, r.actual_start_time, r.is_simulated, "
-            "r.toss_winner, r.toss_decision, "
+            # S96: read through to_jsonb, so the trader runs on a database without the migration (NULL there)
+            "r.toss_winner, r.toss_decision, (to_jsonb(r) ->> 'canonical_match_id') AS canonical_match_id, "
             f"EXISTS (SELECT 1 FROM match_results m WHERE m.match_id = r.match_id AND m.result_type IN ({_SETTLED_SQL})) "
             "AS settled "
             "FROM match_training_status r WHERE r.match_id = ANY(:ids)"

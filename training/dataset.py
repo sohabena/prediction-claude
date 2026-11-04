@@ -417,6 +417,9 @@ def build_dataset(
     for row in match_rows:
         match_id = str(row["match_id"])
         registry_ids.add(match_id)
+        if row.get("canonical_match_id") is not None:
+            stats["non_canonical_twins"] += 1  # S96: a second event id of a fixture; its canonical match is trained on
+            continue
         prices = list(price_rows_by_match.get(match_id) or [])
         if not prices:
             stats["matches_without_prices"] += 1

@@ -337,7 +337,7 @@ def _row(match_id="lb_1", *, start=START, actual=None, first_live=START, competi
 
 
 def test_consistency_check_is_registered_last_and_is_a_warning():
-    assert dqm.CHECKS[-1] is dqm.check_start_time_consistency
+    assert dqm.CHECKS[-2] is dqm.check_start_time_consistency  # S96 appended duplicate_fixtures after it
     assert dqm.START_GAP_WARN_S == 15 * 60
     assert dqm.ACTUAL_LATE_WARN_S == 60 * 60
 
