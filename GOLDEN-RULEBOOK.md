@@ -87,7 +87,8 @@ user `phoenix`.
 - Site times are IST; the scraper's browser is pinned to `Asia/Kolkata`. Before 2026-11-03 04:15 UTC it was not, and
   listing start times stored before then can be **5.5 h early** (lb_36262294).
 - **The match JSON `openDate` beats the listing's start text**; they can disagree by hours. Take the `openDate` most
-  markets agree on: one market can carry its own creation time (West Indies A v England Lions: 13:28 the day before).
+  markets agree on, and only values on the minute: markets can carry a creation time with seconds (West Indies A:
+  13:28:36 the day before; New Zealand v India: 06:29:10 on most markets, which closed its pre-match page).
 - Registry rows created before the timezone fix can still hold a start 5.5 h early until their match page opens;
   checks that need "did it start" use `actual_start_time` or a live tick, never the scheduled start.
 - Some matches carry only the `_BR` match-odds market (runners always `suspended`) and no score feed: then nothing

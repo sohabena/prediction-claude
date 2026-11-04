@@ -13,6 +13,12 @@ delete an entry; if it turns out wrong, add a later entry that corrects it.
 
 ## 2026-11-04
 
+**An `openDate` with seconds is a creation stamp, not a start.** New Zealand v India's pre-match page opened at
+00:45 (75 min before 02:00) and closed 3 s later: most of its markets carried `openDate` 2026-11-03 06:29:10, so the
+majority rule still picked a bogus start, the planner saw the window as passed, and the registry took the bad value.
+Fix: only on-the-minute `openDate` values count as a start; registry corrected to 02:00; the page reopened at 01:48
+and recorded pre-match rows. Rule: a start time with seconds is never a scheduled start.
+
 **Paper results so far (export `scripts/export_paper_bets.py`, 01:44 UTC).** Strategy variants combined: -177,160
 on 11.23 M staked (-1.6%) over 3 settled real matches; two variants slightly positive (w07_e06 +5,048, w05_e06
 +604). By code era: A -222,614 and B -600,000 (both bugs, fixed the same day), C +46,639, **D (current strategy)

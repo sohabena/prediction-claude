@@ -250,6 +250,13 @@ class TestParserFixtures:
         markets.insert(0, odd)
         assert event_meta(payload).open_date == datetime(2026, 11, 2, 23, 0, tzinfo=timezone.utc)
 
+    def test_an_open_date_with_seconds_is_a_creation_stamp_not_a_start(self):
+        """2026-11-04, New Zealand v India: every market said 06:29:10 the day before a 02:00 start."""
+        payload = copy.deepcopy(REAL_EVENT)
+        for market in payload["result"]:
+            market["event"]["openDate"] = "2026-11-03T11:59:10+05:30"
+        assert event_meta(payload).open_date is None  # no start from the JSON; the listing start stands
+
     def test_no_settlement_while_winner_is_open_or_absent(self):
         assert settlement_of(SRL_EVENT) is None  # Winner is OPEN
         assert settlement_of(REAL_EVENT) is None  # no Winner market on this event

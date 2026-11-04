@@ -128,7 +128,9 @@ def event_meta(payload: Any) -> Optional[EventMeta]:
         if not event_id:
             continue
         opened = _open_date(event.get("openDate"))
-        if opened is not None:
+        # A scheduled start falls on the minute; an openDate with seconds is a creation stamp (2026-11-04, New Zealand
+        # v India: most markets said 06:29:10 the day before a 02:00 start, and the page closed as "out of window").
+        if opened is not None and opened.second == 0 and opened.microsecond == 0:
             votes[opened] = votes.get(opened, 0) + 1
         if meta is None:
             meta = EventMeta(
