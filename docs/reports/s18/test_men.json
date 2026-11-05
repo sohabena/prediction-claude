@@ -1,0 +1,86 @@
+{
+  "key": "test_men",
+  "started_at": "2026-11-02T11:14:06.125704+00:00",
+  "steps": {
+    "backup": {
+      "backed_up": true,
+      "path": "C:\\Users\\sohai\\Downloads\\prediction-claude\\data\\specialists\\_pre_s13\\corpus_test_men.json.gz"
+    },
+    "corpus": {
+      "matches": 350,
+      "noise_mode": "martingale",
+      "path": "data\\specialists\\corpus_test_men.json.gz"
+    },
+    "audits": {
+      "error": "audits failed for test_men: ['audit_outcome_leakage test_men: FAIL max_auc_delta=+0.0492', 'audit_synthetic_edge test_men: PASS excess_r2=+0.0019 hit_rate=0.521']",
+      "enforced": true,
+      "leakage": {
+        "passed": false,
+        "max_delta": 0.04917306369286367,
+        "buckets": [
+          {
+            "bucket_lo": 0.0,
+            "bucket_hi": 0.25,
+            "n": 15173,
+            "auc_state": 0.6702635008780297,
+            "auc_state_odds": 0.6991464282158467,
+            "delta": 0.028882927337817055
+          },
+          {
+            "bucket_lo": 0.25,
+            "bucket_hi": 0.5,
+            "n": 15212,
+            "auc_state": 0.6959674994123589,
+            "auc_state_odds": 0.7166000344510176,
+            "delta": 0.020632535038658695
+          },
+          {
+            "bucket_lo": 0.5,
+            "bucket_hi": 0.75,
+            "n": 15194,
+            "auc_state": 0.7172085830513176,
+            "auc_state_odds": 0.7521626377241059,
+            "delta": 0.034954054672788226
+          },
+          {
+            "bucket_lo": 0.75,
+            "bucket_hi": 1.0,
+            "n": 15231,
+            "auc_state": 0.7746625141883522,
+            "auc_state_odds": 0.8238355778812159,
+            "delta": 0.04917306369286367
+          }
+        ]
+      },
+      "edge": {
+        "passed": true,
+        "n_matches": 350,
+        "n_test_ticks": 75642,
+        "raw": {
+          "r2": 0.0033998518677438305,
+          "hit_rate": 0.5091638837934873
+        },
+        "excess": {
+          "r2": 0.0019011469686758264,
+          "hit_rate": 0.5213109119272362
+        },
+        "reversion": {
+          "slope": -0.0017298953954100501,
+          "t_stat": -4.289991083263312
+        },
+        "r2": 0.0019011469686758264,
+        "hit_rate": 0.5213109119272362
+      },
+      "log_lines": [
+        "audit_outcome_leakage test_men: FAIL max_auc_delta=+0.0492",
+        "audit_synthetic_edge test_men: PASS excess_r2=+0.0019 hit_rate=0.521"
+      ],
+      "passed": false
+    }
+  },
+  "timings_s": {
+    "backup": 0.04,
+    "corpus": 25.81
+  },
+  "failed_step": "audits"
+}

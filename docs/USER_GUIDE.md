@@ -2,134 +2,137 @@
 
 ## What is PHOENIX?
 
-PHOENIX is an automated cricket betting analysis system that uses Reinforcement Learning (RL) to identify profitable betting opportunities. It scrapes live odds from LotusBook, trains an AI agent through virtual betting, and after proving consistent profitability, graduates to advisor mode where it recommends bets for you to place manually.
+PHOENIX is an institutional-grade, AI-driven cricket trading intelligence platform powered by Reinforcement Learning (RL). It tracks live in-play odds from LotusBook (`https://lotusbook.cc/cricket`) and leverages institutional training from **19,494 official cricket matches (over 3.03 million order book ticks)** to identify profitable rate fluctuations.
 
-**Important:** PHOENIX never places real bets automatically. After graduation, it suggests bets with confidence scores. You decide whether to act on them.
+Rather than relying on a single monolithic model that treats all cricket identically, PHOENIX employs a **12 Format, League, and Gender Specialist Model Zoo** (`rl/model_zoo.py`). An IPL men's match has an expected first-innings par of 188 runs, while a Women's T20I averages 136 runs with 1.35x steeper odds depreciation per wicket. By routing each fixture to its specialized policy network, PHOENIX captures market edges tailored specifically to the match format and gender dynamics.
+
+Unlike naive betting systems that place a single static bet and hope for the best, PHOENIX executes **active two-way rate trading (Bhav shifting)**: placing 20 to 30 trades per match, dynamically shifting between Back and Lay positions as rates fluctuate, hedging risk, and locking in guaranteed green profits across all match outcomes.
 
 ---
 
-## Dashboard Pages
+## 1. Dashboard Navigation (`http://localhost:3000`)
 
 ```mermaid
 graph TB
-    subgraph "Main Dashboard"
-        A[localhost:3000]
-        A1[Health Status Bar]
-        A2[Training Progress]
-        A3[Virtual Trading]
-        A4[System Status]
+    subgraph "Next.js 14 Dashboard (:3000)"
+        A[Overview / Home<br/>Health, P&L, Active Matches]
+        B[Live Matches /matches<br/>Scrape & Training Approval]
+        C[Virtual Trading /trading<br/>Live Trades & Two-Way Shifting]
+        D[Training Monitor /training<br/>Loss Curves, Rewards & Cricsheet Sync]
+        E[Advisor Signals /advisor<br/>Real-Time Bets & 12 Specialist Cards]
     end
-    
-    subgraph "Training Monitor"
-        B[/training]
-        B1[Summary Cards]
-        B2[Episode Charts]
-        B3[Win Rate Trend]
-    end
-    
-    subgraph "Virtual Trading"
-        C[/trading]
-        C1[Performance Cards]
-        C2[Bet History Table]
-    end
-    
-    subgraph "Graduation Progress"
-        D[/graduation]
-        D1[Progress Bar]
-        D2[Criteria Cards]
-        D3[Pass/Fail Status]
-    end
-    
-    subgraph "Live Matches"
-        E[/matches]
-        E1[Step 1: Scrape Approval]
-        E2[Step 2: Training Approval]
-        E3[Data Validation]
-        E4[Manual Result Entry]
-    end
-    
-    subgraph "Advisor"
-        F[/advisor]
-        F1[Lifecycle State]
-        F2[Drift Warning]
-        F3[Shadow Trading]
-        F4[Live Signals]
-        F5[Manual Demotion]
-    end
-    
+
     A --> B
     A --> C
     A --> D
     A --> E
-    A --> F
 ```
+
+### Dashboard Pages
+1. **Overview (`/`):**
+   - System health status (API, Redis, TimescaleDB, Scraper).
+   - Real-time aggregate virtual P&L and active in-play match tracker.
+2. **Live Matches (`/matches`):**
+   - **Live LotusBook Matches Tab:** Shows currently active fixtures discovered in real time from `https://lotusbook.cc/cricket`.
+   - **Scraping Ingestion Governance Banner:**
+     - **Auto-Approve Scraping Toggle:** Default is **Manual Approval Only** (giving you 100% control over which matches scrape ticks). When toggled ON, strictly Tier-1 International and Major Franchise matches auto-approve; Simulated Reality League (SRL), virtual, and minor domestic games are **NEVER** auto-approved.
+     - **Strict International Toggle:** When enabled, immediately blocks and hides all SRL, simulated, and non-international matches. When disabled, shows all discovered matches in `Discovered` status so you can selectively approve or skip them.
+   - **Interactive Match Cards:** Display live bookmaker Back (`B`) and Lay (`L`) prices, live scorecard text (e.g. `142/3 (15.2)`), scheduled start time, pulsating `● In-Play Live` badge, and real-time tick counter.
+   - **Approval Controls:** Click **Approve Scraping** (green) to start capturing ticks into TimescaleDB, **Skip** (dark gray) to ignore, or **Stop** / **Watch Live Ticks** on active matches.
+   - **Training Corpus Tab:** Browse the 19,494-match institutional training corpus, inspect data quality metrics ($0.0 - 1.0$), and manage post-match training approvals.
+   - **📝 Result Button:** Submit manual match outcome if a third-party feed is delayed.
+3. **Virtual Trading (`/trading`):**
+   - Chronological log of all virtual trades (`virtual_bets`).
+   - Visual breakdown of two-way rate shifts, Back/Lay odds matched, stake, and net P&L after 2.0% exchange commission.
+4. **Training Monitor (`/training`):**
+   - Episodic training curves (reward, policy loss, value loss, entropy).
+   - **Cricsheet Sync Panel:** Displays automated weekly sync status, last update timestamp, matches processed, and includes a **"Sync Cricsheet"** button to manually trigger delta retraining.
+5. **Advisor (`/advisor`):**
+   - **Live Signals:** Active trade recommendations tagged with target team, odds, stake, confidence, and routed specialist.
+   - **12 Specialist Portfolio Cards:** Grid displaying all 12 specialist models (`ipl`, `bbl_men`, `wbbl_women`, `t20i_men`, `t20i_women`, `odi_men`, `odi_women`, `test_men`, `t20_blast`, `franchise_t20`, `first_class`, `list_a`) with individual holdout P&L, win rates, and training status.
+   - Shadow trader drift monitoring and manual demotion controls.
 
 ---
 
-## Agent Lifecycle
+## 2. Understanding Active Two-Way Rate Trading (Bhav Shifting)
+
+Exchange trading is fundamentally different from traditional fixed-odds betting:
 
 ```mermaid
-stateDiagram-v2
-    [*] --> Accumulating
-    Accumulating --> OfflineTraining: 10+ matches<br/>50+ ticks each
-    OfflineTraining --> OnlineTraining: 500K timesteps<br/>completed
-    OnlineTraining --> VirtualTrading: Curriculum<br/>stages passed
-    VirtualTrading --> Graduated: All criteria met<br/>14 consecutive days
-    Graduated --> VirtualTrading: Performance drift<br/>5 consecutive days
-    VirtualTrading --> OfflineTraining: Nightly retrain<br/>if needed
-    Graduated --> [*]: Manual stop
-    VirtualTrading --> [*]: Manual stop
-    OfflineTraining --> [*]: Manual stop
-    Accumulating --> [*]: Manual stop
-    
-    note right of Graduated: Advisor mode<br/>Generates bet signals<br/>Shadow trading continues
-    
-    note right of VirtualTrading: Places virtual bets<br/>Validates profitability<br/>Must meet graduation criteria
+flowchart LR
+    A["Early Match: Rate drifts high<br/>Back Home @ 3.34 ($2k stake)"] --> B["Middle Overs: Wicket falls & pressure builds<br/>Opponent odds rally"]
+    B --> C["Hedge Position:<br/>Lay Home @ 1.73 ($4k stake)"]
+    C --> D["Guaranteed Green Profit<br/>Locked in regardless of winner!"]
+```
+
+### Key Parameters Per Match
+- **Per-Match Budget:** **$100,000** (or ₹1,00,000) base capital allocation.
+- **20% Opportunity Tolerance Limit:** When base budget ($100k) or bet volume (25 bets) is exhausted, a **+20% tolerance buffer** allows up to **$120,000** budget and **30 bets** if high conviction ($\ge 75\%$) or green-up hedging opportunities occur.
+- **Trade Volume:** **20 to 25 bets base** (up to **30 bets** with tolerance).
+- **Stake Sizing:**
+  - **Small Action (`SM`):** 2% of budget = **$2,000** (₹2,000).
+  - **Large Action (`LG`):** 4% of budget = **$4,000** (₹4,000).
+- **Exchange Commission:** Real Betfair 2.0% commission is deducted automatically from all gross winning returns.
+- **Max Lay Odds Limit:** Lay bets are capped at odds $\le 2.10$ to prevent severe liability exposure.
+
+---
+
+## 3. The 12 Specialist Models & Dynamic Routing
+
+When a match appears in the live feed or ingestion queue, PHOENIX's **Dynamic Format Router** inspects the event's match type, competition name, and gender to route observations to the optimal specialist:
+
+```mermaid
+flowchart TD
+    M[Live Match Event] --> R{Dynamic Format Router}
+    R -->|IPL Competition| S1[IPL Men Specialist<br/>Par: 188 rpo]
+    R -->|Big Bash League & Men| S2[BBL Men Specialist<br/>Par: 168 rpo]
+    R -->|WBBL / Women League| S3[WBBL Women Specialist<br/>Par: 136 rpo, 1.35x decay]
+    R -->|T20 International & Men| S4[T20I Men Specialist<br/>Par: 168 rpo]
+    R -->|T20 International & Women| S5[T20I Women Specialist<br/>Par: 136 rpo, 1.35x decay]
+    R -->|ODI & Men| S6[ODI Men Specialist<br/>Par: 280 rpo]
+    R -->|ODI & Women| S7[ODI Women Specialist<br/>Par: 215 rpo]
+    R -->|Test Matches| S8[Test Men Specialist<br/>Draw horizon, multi-innings]
+    R -->|Vitality Blast| S9[T20 Blast Specialist]
+    R -->|Other Franchise Leagues| S10[Franchise T20 Specialist]
+    R -->|First-Class / Ranji / Shield| S11[First Class Specialist]
+    R -->|Domestic 50-Over| S12[List A Specialist]
 ```
 
 ---
 
-## Reading Bet Signals
+## 4. Reading & Executing Bet Signals
 
-When the agent is graduated, the Advisor page shows signals like:
+When the agent is in **Advisor Mode** (or during live virtual monitoring), signals appear on the Advisor screen:
 
-- **Action:** BACK_HOME_SM (back home team, small stake) or LAY_AWAY_LG (lay away team, large stake)
-- **Confidence:** How certain the agent is (e.g., 72%)
-- **Action Probabilities:** Full distribution across all 9 actions
+### Signal Anatomy
+- **Specialist Tag:** e.g., `[IPL Specialist]` or `[WBBL Women Specialist]`.
+- **Action:** e.g., `BACK_HOME_SM`, `LAY_AWAY_LG`, `HOLD`.
+- **Target Team:** Canonical team name (e.g. `Mumbai Indians`, `Sydney Sixers`).
+- **Rate / Odds:** Decimal exchange rate matched from the live ladder.
+- **Recommended Stake:** Calculated automatically from the $100k budget ($2,000 for Small, $4,000 for Large).
+- **Confidence:** Softmax probability score from the specialist policy network (e.g., $74.2\%$).
 
-**Per-Match Budget:** Each match has a default budget of ₹1,00,000. SM actions use ~10% (₹10,000), LG actions use ~25% (₹25,000) of the per-match budget during live/virtual trading. Stakes are rounded to human-like amounts (100, 500, 1000, etc.) with ±20% noise for anti-detection.
-
-> **Note:** During RL training, stake sizes are 1% (SM) / 3% (LG) of the agent's bankroll — different from live trading which uses the per-match budget.
-
-**Multi-Account Strategy:** Distribute each recommendation to a different account. One account may profit, another may lose, but the portfolio stays net positive. This avoids bookmaker flagging.
-
-**Guidelines:**
-- Only act on signals with confidence > 50%
-- Start with small stakes (SM actions) until you trust the system
-- Place hedging bets on both sides to lock in profit during volatile moments
-- The agent may recommend up to 20 bets per match (`MAX_BETS_PER_MATCH`), with a 15-second minimum cooldown between bets
+### Execution Best Practices
+1. **Multi-Account Distribution:**
+   - In live trading, split recommendations across 3–5 independent accounts.
+   - Because the agent places trades on both sides (Backing and Laying), different accounts will show mixed wins and losses while your overall portfolio captures the net green profit. This prevents bookmaker flagging.
+2. **Minimum Confidence Threshold:**
+   - Only execute signals with confidence $> 50\%$.
+3. **Patience on `HOLD`:**
+   - The model chooses `HOLD` on over 80% of ticks. Disciplined inaction during low-liquidity or efficient-price periods protects capital.
 
 ---
 
-## FAQ
+## 5. Frequently Asked Questions (FAQ)
 
-**Q: How long until the agent graduates?**
-A: Depends on match availability. With 2-3 international matches per day, expect 2-4 weeks for data accumulation, 1-2 days for training, and 2-3 weeks for virtual trading validation.
+**Q: Why do we use 12 separate models instead of a single general model?**  
+A: Cricket format and gender differences are massive:
+- **Scoring Rates:** Women's T20 matches average ~136 runs per innings, while Men's IPL matches average ~188. A general model trained on Men's IPL will systematically underestimate par in Women's cricket and make losing bets.
+- **Wicket Sensitivity:** In Women's matches, wickets carry a 1.35x steeper impact on win probability because lower-order boundary percentage is lower.
+- **Time Horizons:** A Test match takes 5 days with draw risk, whereas a T20 lasts 3 hours. Dedicated specialists ensure that every decision is evaluated against calibrated domain realities.
 
-**Q: What if the agent keeps failing graduation?**
-A: The orchestrator automatically retrains nightly. If criteria are not met after extended periods, consider adjusting the configuration (lower thresholds or more training steps).
+**Q: What is strictly causal zero-lookahead tick simulation?**  
+A: Earlier prototypes generated ticks by interpolating odds towards the known match winner at the end of the game, creating subtle lookahead leakage. PHOENIX generates realistic Betfair market microstructure strictly sequentially from ball 1 to the final ball: calculating current par, run rate pressure, and wickets lost using only the balls that have been bowled so far. The model never has access to future balls.
 
-**Q: Does the agent bet real money?**
-A: Never. PHOENIX only recommends bets. You must place them manually on LotusBook.
-
-**Q: How should I approve matches for training?**
-A: Go to /matches, click **Validate** on each match to see the quality report. Only approve matches with quality score > 85% and sufficient live ticks (30+). The system will block approval if quality is below 50%.
-
-**Q: What is CLV?**
-A: Closing Line Value measures if you got better odds than the market's final price. Positive CLV is the strongest indicator of genuine betting skill. PHOENIX now captures closing odds automatically for accurate CLV calculation.
-
-**Q: What if Cricbuzz doesn't have the match result?**
-A: Use the **📝 Result** button on the /matches page to submit the result manually. Select the winner, result type (win/tie/draw/no_result/abandoned), and optionally the margin.
-
-**Q: How many accounts do I need?**
-A: At least 3-5 accounts for distributing bets. Each recommendation goes to a different account so no single account shows consistently high win rates.
+**Q: How often does PHOENIX update with new matches?**  
+A: Cricsheet publishes newly played matches weekly. PHOENIX features an automated weekly synchronization pipeline (`scripts/weekly_cricsheet_sync_and_retrain.py`) that downloads `recently_added_7_json.zip` every Monday at 03:00 UTC, deduplicates fixtures, appends them to the specialist archives, and runs incremental fine-tuning (4,000 PPO steps per affected specialist). You can also manually trigger a sync anytime from the **Training** page or via `.\phoenix.ps1 sync`.

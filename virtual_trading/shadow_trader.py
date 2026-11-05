@@ -489,16 +489,16 @@ class ShadowTrader:
         ]
 
     def _compute_sharpe(self) -> float:
-        """Compute annualized Sharpe ratio from daily P&L."""
+        """Per-calendar-day Sharpe (not annualised), zero-bet days included."""
+        from shared.metrics import daily_series, sharpe
+
         if len(self._daily_pnl) < 5:
             return 0.0
-
-        daily_returns = list(self._daily_pnl.values())
-        mean_ret = np.mean(daily_returns)
-        std_ret = np.std(daily_returns)
-        if std_ret == 0:
-            return 0.0
-        return float(mean_ret / std_ret * np.sqrt(252))
+        days = sorted(self._daily_pnl)
+        series = daily_series(
+            [(d, p) for d, p in self._daily_pnl.items()], days[0], days[-1],
+        )
+        return sharpe(series)
 
     def _get_daily_history(self, days: int) -> list[dict[str, Any]]:
         """Get daily P&L history for the last N days."""

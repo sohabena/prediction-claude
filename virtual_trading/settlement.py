@@ -5,13 +5,37 @@ Bet settlement: determines outcomes of virtual bets based on match results.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Mapping, Optional, Sequence
 
 from shared.logging import setup_logging
+from shared.metrics import clv_prob, selection_of, side_of
 from shared.schemas import BetOutcome, BettingAction, OddsEvent, VirtualBet
 from virtual_trading.portfolio import PortfolioManager
 
 logger = setup_logging("settlement")
+
+
+def select_closing_price(
+    ticks: Sequence[Mapping[str, Any]], side: str, selection: str
+) -> Optional[float]:
+    """Same-side closing price from the last valid pre-suspension tick.
+
+    ``ticks`` are mappings with ``time``, ``is_live`` and the price fields
+    ``back_home/back_away/lay_home/lay_away``. In-play ticks are skipped, so the
+    result is the last price before the market suspended. A BACK bet reads the
+    back price and a LAY bet the lay price. Returns ``None`` when no valid tick
+    exists (never a fabricated price).
+    """
+    if selection not in ("HOME", "AWAY"):
+        return None
+    field = f"{'lay' if side == 'LAY' else 'back'}_{selection.lower()}"
+    for tick in sorted(ticks, key=lambda t: t["time"], reverse=True):
+        if tick.get("is_live"):
+            continue
+        price = tick.get(field)
+        if price is not None and float(price) > 1.0:
+            return float(price)
+    return None
 
 
 class SettlementEngine:
@@ -28,33 +52,25 @@ class SettlementEngine:
         self.portfolio = portfolio
 
     @staticmethod
-    def compute_clv(placement_odds: float, closing_odds: float) -> float:
+    def compute_clv(placement_odds: float, closing_odds: float, side: str = "BACK") -> float:
         """
-        Compute Closing Line Value.
+        Compute Closing Line Value in probability points (side-aware).
 
-        CLV = (closing_implied_prob / placement_implied_prob) - 1
-
-        Positive CLV means you got better odds than the closing line,
-        which is the industry gold standard for measuring betting skill.
+        BACK: 1/closing - 1/placement; LAY: 1/placement - 1/closing.
+        Positive means the bet beat the closing line. Delegates to
+        ``shared.metrics.clv_prob`` (the canonical definition).
 
         Args:
             placement_odds: Odds when the bet was placed.
             closing_odds: Last odds before the match ended.
-
-        Returns:
-            CLV as a decimal (e.g., 0.05 means 5% positive CLV).
+            side: "BACK" (default, for compatibility) or "LAY".
         """
-        if placement_odds <= 1.0 or closing_odds <= 1.0:
-            return 0.0
-
-        placement_implied = 1.0 / placement_odds
-        closing_implied = 1.0 / closing_odds
-
-        return (closing_implied / placement_implied) - 1.0
+        return clv_prob(side, placement_odds, closing_odds)
 
     def settle_on_match_result(
         self, bet: VirtualBet, winning_team: str,
         closing_odds: float | None = None,
+        closing_ticks: Sequence[Mapping[str, Any]] | None = None,
     ) -> float:
         """
         Settle a bet based on the match result.
@@ -62,6 +78,10 @@ class SettlementEngine:
         Args:
             bet: The virtual bet to settle.
             winning_team: Name of the winning team.
+            closing_odds: Same-side closing price for the bet (back for BACK, lay for LAY).
+            closing_ticks: Optional ticks of the market; used to pick the same-side
+                closing price when ``closing_odds`` is not given (see
+                :func:`select_closing_price`).
 
         Returns:
             P&L amount.
@@ -75,7 +95,7 @@ class SettlementEngine:
             BettingAction.LAY_HOME_LG, BettingAction.LAY_AWAY_LG,
         )
 
-        team_won = bet.team == winning_team
+        team_won = str(bet.team).strip().lower() == str(winning_team).strip().lower()
 
         if is_back:
             if team_won:
@@ -99,10 +119,18 @@ class SettlementEngine:
         bet.profit_loss = pnl
         bet.settled_at = datetime.now(timezone.utc)
 
-        # Compute CLV if closing odds provided
+        # Closing price: explicit same-side value, else the last pre-suspension tick
+        if closing_odds is None and closing_ticks:
+            closing_odds = select_closing_price(
+                closing_ticks, side_of(bet.action), selection_of(bet.action)
+            )
+
+        # Compute CLV if closing odds provided (stored clv = canonical clv_prob)
         if closing_odds is not None and closing_odds > 1.0:
             bet.closing_odds = closing_odds
-            bet.clv = self.compute_clv(bet.odds, closing_odds)
+            bet.clv = self.compute_clv(
+                bet.odds, closing_odds, side="LAY" if is_lay else "BACK"
+            )
 
         # Close position in portfolio
         if bet.id:

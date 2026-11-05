@@ -1,0 +1,174 @@
+{
+ "status": {
+  "statusCode": "1",
+  "statusDesc": "success"
+ },
+ "success": true,
+ "result": {
+  "hasVideo": true,
+  "showVisualisation": false,
+  "stats": {
+   "messageId": null,
+   "eventId": null,
+   "battingTeam": {
+    "name": "Biratnagar Kings",
+    "partnerShipBalls": 2,
+    "partnerShipScore": 0,
+    "runRate": 2.0,
+    "score": "2",
+    "wickets": "1",
+    "overs": "1.0",
+    "balls": "6",
+    "requiredRunRate": 0.0,
+    "requiredRuns": null,
+    "projScr": 0,
+    "target": 0,
+    "trailLead": null
+   },
+   "commentary": "Over",
+   "currentOver": {
+    "bowlerName": "Moeen Ali",
+    "batsNames": [
+     "Imran Sheikh",
+     "Lokesh Bahadur Bam"
+    ],
+    "overNumber": 2,
+    "runs": 0,
+    "score": 0,
+    "wickets": 0,
+    "balls": []
+   },
+   "lastOver": {
+    "bowlerName": null,
+    "batsNames": [],
+    "overNumber": 1,
+    "runs": 2,
+    "score": null,
+    "wickets": 1,
+    "balls": [
+     {
+      "number": "1",
+      "value": "0",
+      "type": "0"
+     },
+     {
+      "number": "2",
+      "value": "1",
+      "type": "1"
+     },
+     {
+      "number": "3",
+      "value": "1",
+      "type": "1"
+     },
+     {
+      "number": "4",
+      "value": "W",
+      "type": "W"
+     },
+     {
+      "number": "5",
+      "value": "0",
+      "type": "0"
+     },
+     {
+      "number": "6",
+      "value": "0",
+      "type": "0"
+     }
+    ]
+   },
+   "lastBatsmanOut": {
+    "name": "Shehan Jayasuriya",
+    "batsManRuns": "1",
+    "balls": "3"
+   },
+   "timeStamp": null,
+   "tossWinner": {
+    "name": "Janakpur Bolts",
+    "decision": "opt to Bowl"
+   },
+   "remainingBalls": 114,
+   "currentInning": 1,
+   "oversPerInning": "20.0",
+   "result": null,
+   "status": null,
+   "batsmen": [
+    {
+     "name": "Imran Sheikh",
+     "isOnStrike": false,
+     "balls": "2",
+     "batsmanRuns": "0",
+     "fours": "0",
+     "sixes": "0",
+     "strikeRate": 0.0
+    },
+    {
+     "name": "Lokesh Bahadur Bam",
+     "isOnStrike": true,
+     "balls": "1",
+     "batsmanRuns": "1",
+     "fours": "0",
+     "sixes": "0",
+     "strikeRate": 100.0
+    }
+   ],
+   "bowler": {
+    "name": "Moeen Ali",
+    "overs": 1.0,
+    "maidens": 0,
+    "wickets": 1,
+    "bowlerRuns": 2,
+    "economy": 2.0
+   },
+   "adjustedOvers": false,
+   "worm": null,
+   "teams": [
+    {
+     "f_key": "PU",
+     "n": "Biratnagar Kings",
+     "sn": "BK",
+     "cc": "0-#6EAFF2",
+     "uc": "#FAE344",
+     "dc": "#0D4C8D"
+    },
+    {
+     "f_key": "PV",
+     "n": "Janakpur Bolts",
+     "sn": "JKB",
+     "cc": "0-#4671D2",
+     "uc": "#E4397E",
+     "dc": "#162B5B"
+    }
+   ],
+   "lwb": 4,
+   "lws": 2,
+   "day": null,
+   "session": "In Play",
+   "matchFormat": "T20",
+   "battingTeamFkey": "PU",
+   "innings": [
+    {
+     "number": 1,
+     "teamFkey": "PU",
+     "teamName": "Biratnagar Kings",
+     "score": "2",
+     "wickets": "1",
+     "overs": "1.0",
+     "balls": "6",
+     "isLive": true
+    }
+   ],
+   "lead": null,
+   "trail": null,
+   "followOnEnforced": false,
+   "runsToAvoidFollowOn": null,
+   "isPowerplay": true,
+   "totalBalls": 120,
+   "updatedAt": "2026-11-03T06:51:36.5655111Z",
+   "source": "livescore-v2",
+   "oversLeftToday": null
+  },
+  "scorePipeline": "livescore-v2"
+ }
+}

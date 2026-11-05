@@ -1,0 +1,39 @@
+{
+  "_provenance": "Winner (match_odds) rows with market status closed, as stored in market_ticks on 2026-11-03. Shown: one real match (lb_76227860, Cdb A v Dpgc, closed at 05:10:10Z) and one SRL match (lb_76111622). Every closed row has runner status SUSPENDED. Across all match_odds rows in market_ticks no runner_status is WINNER, WON, LOSER or LOST (checked 2026-11-03). settlement_of() therefore returns winner None for these rows.",
+  "rows": [
+    {
+      "match_id": "lb_76227860",
+      "is_simulated": false,
+      "time": "2026-11-03T05:10:10.098821+00:00",
+      "selection": "Cdb A",
+      "runner_status": "suspended",
+      "status": "closed"
+    },
+    {
+      "match_id": "lb_76227860",
+      "is_simulated": false,
+      "time": "2026-11-03T05:10:10.098821+00:00",
+      "selection": "Dpgc",
+      "runner_status": "suspended",
+      "status": "closed"
+    },
+    {
+      "match_id": "lb_76111622",
+      "is_simulated": true,
+      "time": "2026-11-03T05:44:52.142800+00:00",
+      "selection": "Kolkata Knight Riders SRL",
+      "runner_status": "suspended",
+      "status": "closed",
+      "market_id": "1.76111622.340._BR"
+    },
+    {
+      "match_id": "lb_76111622",
+      "is_simulated": true,
+      "time": "2026-11-03T05:44:52.142800+00:00",
+      "selection": "Mumbai Indians SRL",
+      "runner_status": "suspended",
+      "status": "closed",
+      "market_id": "1.76111622.340._BR"
+    }
+  ]
+}

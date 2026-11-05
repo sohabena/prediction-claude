@@ -17,6 +17,7 @@ from rl.agent import PhoenixAgent
 from rl.environment import CricketBettingEnv
 from shared.constants import ACTION_SPACE_SIZE, OBSERVATION_SIZE
 from shared.logging import setup_logging
+from shared.metrics import clv_prob, max_drawdown as _max_drawdown, sharpe as _sharpe
 from shared.schemas import BettingAction
 
 logger = setup_logging("backtester")
@@ -58,24 +59,20 @@ class BacktestResult:
 
     @property
     def sharpe_ratio(self) -> float:
+        """Non-annualised per-day Sharpe (shared.metrics); 0 below 5 days."""
         daily = list(self.daily_pnl.values())
         if len(daily) < 5:
             return 0.0
-        arr = np.array(daily)
-        std = float(np.std(arr))
-        if std == 0:
-            return 0.0
-        return float(np.mean(arr) / std * np.sqrt(252))
+        return _sharpe(daily)
 
     @property
     def max_drawdown(self) -> float:
+        """Absolute max drawdown of cumulative daily P&L (starting from 0)."""
         daily = list(self.daily_pnl.values())
         if not daily:
             return 0.0
-        cumulative = np.cumsum(daily)
-        running_max = np.maximum.accumulate(cumulative)
-        drawdowns = running_max - cumulative
-        return float(np.max(drawdowns)) if len(drawdowns) > 0 else 0.0
+        equity = [0.0] + list(np.cumsum(daily))
+        return _max_drawdown(equity)[0]
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -159,20 +156,27 @@ class Backtester:
             obs, info = env.reset()
             episode_pnl = 0.0
             episode_bets = 0
+            placed: list[tuple[str, str, float]] = []
             terminated = False
 
             while not terminated:
                 action, _ = agent.predict(obs, deterministic=True)
+                entry = self._entry_price(env, int(action))
                 obs, reward, terminated, truncated, info = env.step(action)
 
                 step_info = info.get("step_info", {})
+                if step_info.get("bet_placed") and entry:
+                    placed.append(entry)
                 pnl = step_info.get("profit_loss", 0.0)
                 if step_info.get("bet_settled") and pnl != 0:
                     episode_pnl += pnl
                     episode_bets += 1
 
                     # Record bet
-                    self._record_bet(result, action, step_info, episodes, ep_idx)
+                    self._record_bet(
+                        result, action, step_info, episodes, ep_idx,
+                        clv=self._mean_clv(placed, env),
+                    )
 
             result.episode_results.append({
                 "episode": ep_idx,
@@ -213,6 +217,7 @@ class Backtester:
         for ep_idx in range(len(episodes)):
             obs, info = env.reset()
             episode_pnl = 0.0
+            placed: list[tuple[str, str, float]] = []
             terminated = False
 
             while not terminated:
@@ -222,12 +227,18 @@ class Backtester:
                 else:
                     action = rng.integers(1, ACTION_SPACE_SIZE)
 
+                entry = self._entry_price(env, int(action))
                 obs, reward, terminated, truncated, info = env.step(int(action))
                 step_info = info.get("step_info", {})
+                if step_info.get("bet_placed") and entry:
+                    placed.append(entry)
                 pnl = step_info.get("profit_loss", 0.0)
                 if step_info.get("bet_settled") and pnl != 0:
                     episode_pnl += pnl
-                    self._record_bet(result, int(action), step_info, episodes, ep_idx)
+                    self._record_bet(
+                        result, int(action), step_info, episodes, ep_idx,
+                        clv=self._mean_clv(placed, env),
+                    )
 
             result.episode_results.append({
                 "episode": ep_idx, "pnl": round(episode_pnl, 2),
@@ -253,6 +264,7 @@ class Backtester:
             episode_pnl = 0.0
             prev_home_odds = None
             bet_placed = False
+            placed: list[tuple[str, str, float]] = []
             terminated = False
 
             while not terminated:
@@ -276,12 +288,18 @@ class Backtester:
 
                     prev_home_odds = home_odds
 
+                entry = self._entry_price(env, int(action))
                 obs, reward, terminated, truncated, info = env.step(action)
                 step_info = info.get("step_info", {})
+                if step_info.get("bet_placed") and entry:
+                    placed.append(entry)
                 pnl = step_info.get("profit_loss", 0.0)
                 if step_info.get("bet_settled") and pnl != 0:
                     episode_pnl += pnl
-                    self._record_bet(result, action, step_info, episodes, ep_idx)
+                    self._record_bet(
+                        result, action, step_info, episodes, ep_idx,
+                        clv=self._mean_clv(placed, env),
+                    )
 
             result.episode_results.append({
                 "episode": ep_idx, "pnl": round(episode_pnl, 2),
@@ -290,6 +308,40 @@ class Backtester:
         logger.info("momentum_backtest_complete", **result.summary())
         return result
 
+    _PRICE_FIELD = {
+        "BACK_HOME": "back_home", "BACK_AWAY": "back_away",
+        "LAY_HOME": "lay_home", "LAY_AWAY": "lay_away",
+    }
+
+    @classmethod
+    def _entry_price(cls, env: Any, action: int) -> Optional[tuple[str, str, float]]:
+        """(side, price field, entry odds) of the tick the action will trade on."""
+        if action <= 0 or action >= ACTION_SPACE_SIZE:
+            return None
+        parts = BettingAction(action).name.split("_")
+        field = cls._PRICE_FIELD.get("_".join(parts[:2]))
+        data = getattr(env, "_current_episode_data", None)
+        idx = getattr(env, "_step_idx", 0)
+        if field is None or not data or idx >= len(data):
+            return None
+        odds = data[idx].get(field)
+        if not odds or odds <= 1.0:
+            return None
+        return parts[0], field, float(odds)
+
+    @staticmethod
+    def _mean_clv(placed: list[tuple[str, str, float]], env: Any) -> Optional[float]:
+        """Mean clv_prob of the episode's placed bets against the last tick."""
+        data = getattr(env, "_current_episode_data", None)
+        if not placed or not data:
+            return None
+        last = data[-1]
+        vals = [
+            clv_prob(side, odds, last.get(field) or 0.0)
+            for side, field, odds in placed
+        ]
+        return float(np.mean(vals)) if vals else None
+
     def _record_bet(
         self,
         result: BacktestResult,
@@ -297,6 +349,7 @@ class Backtester:
         step_info: dict[str, Any],
         episodes: list[Any],
         ep_idx: int,
+        clv: Optional[float] = None,
     ) -> None:
         """Record a settled bet into the backtest result."""
         pnl = step_info.get("profit_loss", 0.0)
@@ -309,7 +362,7 @@ class Backtester:
             "outcome": outcome,
             "bankroll": step_info.get("bankroll", 0.0),
             "stake": abs(pnl) if pnl < 0 else pnl,  # Approximate
-            "clv": None,  # CLV computed separately
+            "clv": clv,  # side-aware prob-point CLV vs the episode's last tick
         })
 
         # Track daily P&L

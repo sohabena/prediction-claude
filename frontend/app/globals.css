@@ -3,37 +3,65 @@
 @tailwind utilities;
 
 :root {
-  --background: #0a0a0a;
-  --foreground: #ededed;
+  --background: #000000;
+  --foreground: #f3f4f6;
+  --glass-bg: rgba(24, 24, 27, 0.65);
+  --glass-border: rgba(63, 63, 70, 0.4);
 }
 
 body {
-  background: var(--background);
+  background-color: var(--background);
+  background-image: 
+    radial-gradient(circle at 15% 50%, rgba(245, 158, 11, 0.08), transparent 25%),
+    radial-gradient(circle at 85% 30%, rgba(16, 185, 129, 0.05), transparent 25%),
+    radial-gradient(circle at 50% 100%, rgba(59, 130, 246, 0.05), transparent 40%);
+  background-attachment: fixed;
   color: var(--foreground);
-  font-family: system-ui, -apple-system, sans-serif;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  min-height: 100vh;
 }
 
 /* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #1a1a1a;
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #444;
+  background: rgba(82, 82, 91, 0.5);
   border-radius: 3px;
 }
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(113, 113, 122, 0.8);
+}
 
-/* Stat card glow effect */
+/* Glassmorphism Stat card */
 .stat-card {
-  @apply bg-zinc-900 border border-zinc-800 rounded-xl p-5 transition-all duration-200;
+  @apply bg-zinc-900/60 backdrop-blur-md border border-zinc-800/60 rounded-xl p-5 transition-all duration-300;
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
 }
 .stat-card:hover {
-  @apply border-phoenix-600/40 shadow-lg shadow-phoenix-600/10;
+  @apply border-phoenix-500/50 -translate-y-0.5;
+  box-shadow: 0 10px 40px -10px rgba(245, 158, 11, 0.15);
 }
 
-/* Chart container */
+/* Glassmorphism Chart container */
 .chart-container {
-  @apply bg-zinc-900 border border-zinc-800 rounded-xl p-4;
+  @apply bg-zinc-900/60 backdrop-blur-md border border-zinc-800/60 rounded-xl p-4 transition-all duration-300;
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+}
+.chart-container:hover {
+  @apply border-zinc-700/80;
+}
+
+/* Smooth fade-in animation for pages */
+.fade-in {
+  animation: fadeIn 0.4s ease-out forwards;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
 }

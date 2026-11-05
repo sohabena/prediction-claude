@@ -3,8 +3,8 @@ Scraper worker: manages a Playwright page for scraping LotusBook cricket odds.
 Uses DOM polling with optional WebSocket interception.
 
 Tailored to LotusBook's Tailwind CSS grid layout:
-  - .eventHeadName containers group matches by competition
-  - a#inPlayTeamName links contain team names
+  - Listing rows carry no competition; the parser derives it from team names
+  - Match links use a[href*="/cricket/"][href*="vs"] (site dropped id=inPlayTeamName)
   - Odds in sibling col-span-6 divs with back/lay cells
 """
 
@@ -26,13 +26,15 @@ logger = setup_logging("scraper_worker")
 
 # JavaScript to extract all match data from LotusBook's cricket page.
 # This runs in the browser context and returns structured match data.
-LOTUSBOOK_EXTRACT_JS = """
+LOTUSBOOK_EXTRACT_JS = r"""
 () => {
     const results = [];
 
-    // Find every match link on the cricket page.
-    // Each match is an <a id="inPlayTeamName"> with href containing "vs".
-    const matchLinks = document.querySelectorAll('a#inPlayTeamName');
+    // Match links: historically a#inPlayTeamName; current LotusBook uses plain <a> with
+    // href /cricket/{Team%20vs%20Team}/... and no id (verified Mar 2026).
+    const matchLinks = document.querySelectorAll(
+        'a[href*="/cricket/"][href*="vs"]'
+    );
 
     for (const link of matchLinks) {
         try {
@@ -42,180 +44,146 @@ LOTUSBOOK_EXTRACT_JS = """
             if (!href.includes('vs')) continue;
 
             // --- Team names ---
-            // Team names are in span.text-text_color_primary1 with direct text
+            let teams = [];
             const teamSpans = link.querySelectorAll(
-                'span[class*="text-text_color_primary1"]'
+                'span[class*="text_color_primary"], span[class*="text-text_color_primary"]'
             );
-            const teams = [];
             for (const span of teamSpans) {
                 const t = span.textContent.trim();
-                if (t && t.length > 1) teams.push(t);
+                // Exclude the date/time span (primary1) and LIVE badge
+                if (t && t.length > 1 && !/^LIVE$/i.test(t) && !span.className.includes('primary1')) {
+                    teams.push(t);
+                }
+            }
+
+            function parseTeamsFromHref(hrefStr) {
+                try {
+                    const m = hrefStr.match(/\/cricket\/([^/?#]+)/i);
+                    if (!m) return [];
+                    const seg = decodeURIComponent(m[1].replace(/\+/g, ' '));
+                    const parts = seg.split(/\s+vs\s+|-vs-/i);
+                    if (parts.length >= 2) {
+                        return [parts[0].trim(), parts[1].trim()];
+                    }
+                } catch (e) {}
+                return [];
+            }
+            function parseTeamsFromLinkText(el) {
+                const raw = (el.textContent || '').trim().replace(/^LIVE\s*/i, '').trim();
+                const parts = raw.split(/\s+vs\s+|-vs-/i);
+                if (parts.length >= 2) {
+                    return [parts[0].trim(), parts[1].trim()];
+                }
+                return [];
+            }
+            if (teams.length < 2) {
+                const fromHref = parseTeamsFromHref(href);
+                if (fromHref.length >= 2) teams = fromHref;
+            }
+            if (teams.length < 2) {
+                const fromText = parseTeamsFromLinkText(link);
+                if (fromText.length >= 2) teams = fromText;
             }
             if (teams.length < 2) continue;
 
             // --- Match ID from URL ---
-            // URL format: /cricket/{name}%20vs%20{name}/{type}/{matchId}
             const urlParts = href.split('/');
             const lotusId = urlParts[urlParts.length - 1] || '';
 
             // --- Live / time detection ---
-            // The parent row div contains an #inPlayTime span sibling
-            const rowDiv = link.parentElement;  // col-span-6 grid grid-cols-7
             let isLive = false;
             let timeText = '';
             let scoreText = '';
             let scheduledTime = '';
 
-            if (rowDiv) {
-                const timeEl = rowDiv.querySelector('#inPlayTime, [id="inPlayTime"]');
-                if (timeEl) {
-                    const raw = timeEl.textContent.trim();
-                    timeText = raw;
+            // 1. Check for explicit inPlay badge inside link or child elements
+            const inPlayEl = link.querySelector('#inPlay, [id="inPlay"], [class*="inPlay"], [class*="in_play"]');
+            if (inPlayEl) {
+                isLive = true;
+                timeText = inPlayEl.textContent.trim();
+            } else if (/LIVE/i.test(link.textContent || '')) {
+                isLive = true;
+            }
 
-                    // === PRIORITY 1: Definitive LIVE indicators ===
-                    // These ALWAYS win, even if the text also contains a date.
-                    // On LotusBook, #inPlayTime textContent can include both
-                    // a date AND a nested #inPlay "LIVE" badge, so we must
-                    // check live signals BEFORE scheduled patterns.
-
-                    // Check for #inPlay LIVE badge element
-                    let hasLiveBadge = false;
-                    const liveEl = timeEl.querySelector('#inPlay, [id="inPlay"]');
-                    if (liveEl) {
-                        const liveText = liveEl.textContent.trim().toUpperCase();
-                        if (liveText.includes('LIVE') || liveEl.querySelector('[class*="animate"]') || liveEl.querySelector('[class*="pulse"]') || liveEl.querySelector('[class*="blink"]')) {
-                            hasLiveBadge = true;
-                        }
-                    }
-
-                    // Score pattern like "45/2" or "123/5" — definitive live signal
-                    const hasScorePattern = /\\d+\\/\\d/.test(raw);
-                    if (hasScorePattern) {
-                        scoreText = raw;
-                    }
-
-                    if (hasLiveBadge || hasScorePattern) {
-                        // Definitive live signal found — mark live regardless of date text
-                        isLive = true;
-                    } else {
-                        // === PRIORITY 2: Section-aware detection (fallback) ===
-                        // No live signal found — check if scheduled/upcoming.
-
-                        // Walk up DOM to find section header ("In Play" vs "Upcoming Events")
-                        let inUpcomingSection = false;
-                        let ancestor = link.closest('.eventHeadName') || link.parentElement;
-                        while (ancestor && ancestor !== document.body) {
-                            const headerText = ancestor.textContent || '';
-                            if (/upcoming\\s*events?/i.test(headerText.substring(0, 200))) {
-                                const sectionHeaders = ancestor.querySelectorAll('h1, h2, h3, h4, h5, h6, [class*="header"], [class*="title"], [class*="heading"]');
-                                for (const hdr of sectionHeaders) {
-                                    if (/upcoming/i.test(hdr.textContent)) {
-                                        inUpcomingSection = true;
-                                        break;
-                                    }
-                                }
-                                if (!inUpcomingSection) {
-                                    const directText = Array.from(ancestor.childNodes)
-                                        .filter(n => n.nodeType === 3)
-                                        .map(n => n.textContent.trim())
-                                        .join('');
-                                    if (/upcoming/i.test(directText)) {
-                                        inUpcomingSection = true;
-                                    }
-                                }
-                            }
-                            if (inUpcomingSection) break;
-                            ancestor = ancestor.parentElement;
-                        }
-
-                        // Date/time patterns for SCHEDULED matches
-                        const scheduledPattern = /tomorrow|\\d{1,2}[-/]\\d{1,2}[-/]\\d{2,4}/i;
-                        const hasScheduledTime = scheduledPattern.test(raw);
-
-                        if (inUpcomingSection || hasScheduledTime) {
-                            isLive = false;
-                            scheduledTime = raw;
-                        }
-                    }
+            // 2. Check for scheduled time in spans (e.g. "Today at 10:00 PM", "Tomorrow 12:15 PM")
+            const spans = link.querySelectorAll('span');
+            for (const span of spans) {
+                const raw = span.textContent.trim();
+                if (/today|tomorrow|\d{1,2}[-/]\d{1,2}/i.test(raw)) {
+                    scheduledTime = raw;
+                    break;
                 }
             }
 
-            // --- Enhanced score extraction ---
-            // Search multiple DOM locations for score data if not found above.
-            // LotusBook can show scores in various elements near the match row.
-            if (!scoreText && rowDiv) {
-                // Strategy 1: Look for score-related elements in the match row area
-                const searchAreas = [
-                    rowDiv,
-                    rowDiv.parentElement,
-                    link,
-                ];
-                const scorePattern = /(\\d{1,3})\\/(\\d{1,2})(?:\\s*\\(?([\\d.]+)\\)?)?/;
-                for (const area of searchAreas) {
-                    if (!area || scoreText) break;
-                    // Check all text-containing elements for score patterns
-                    const allEls = area.querySelectorAll(
-                        'span, div, p, [class*="score"], [class*="Score"], [class*="run"], [class*="inning"]'
-                    );
-                    for (const el of allEls) {
-                        const t = el.textContent.trim();
-                        if (scorePattern.test(t) && t.length < 50) {
-                            scoreText = t;
-                            isLive = true;
-                            break;
-                        }
-                    }
+            // If scheduled time exists and no inPlay badge, it's upcoming (not live)
+            if (scheduledTime && !inPlayEl) {
+                isLive = false;
+            }
+
+            // 3. Score extraction (e.g. 142/3 (18.2))
+            const scorePattern = /(\d{1,3})\/(\d{1,2})(?:\s*\(?([\d.]+)\)?)?/;
+            for (const span of spans) {
+                const t = span.textContent.trim();
+                if (scorePattern.test(t)) {
+                    scoreText = t;
+                    isLive = true;
+                    break;
                 }
             }
 
             // --- Competition name ---
-            // Walk up to the .eventHeadName parent to find competition
+            // The 2026-11 listing has no per-row competition element (verified against
+            // tests/fixtures/lotusbook/listing_page_20261103.html: the left-menu competition names are
+            // not linked to rows, and the In Play / Upcoming Events headings are not competitions).
+            // An explicit data attribute is used if LotusBook adds one; otherwise the parser maps the
+            // competition from the team names (scraper/parsers/lotusbook_parser.py COMPETITION_BY_TEAM).
             let competition = '';
-            let container = link.closest('.eventHeadName');
-            if (container) {
-                // The first link in the container that has a competition icon
-                const compLink = container.querySelector(
-                    'a#inPlayTeamName[href*="/cricket/"]:not([href*="vs"])'
-                );
-                if (compLink) {
-                    // Clean: remove emoji prefix
-                    competition = compLink.textContent.trim().replace(/^[\\u{1F300}-\\u{1FAFF}\\u{2600}-\\u{27BF}]+/u, '').trim();
-                }
+            const compEl = link.closest('[data-competition]');
+            if (compEl) {
+                competition = (compEl.getAttribute('data-competition') || '').trim();
             }
 
             // --- Odds extraction ---
-            // The odds are in the nextElementSibling of the parent row div
+            // On lotusbook.cc, odds sit directly in link.nextElementSibling (col-span-6 lg:col-span-7 div).
+            // The odds must belong to THIS match's row. A suspended row has no price buttons; walking further up the
+            // page then finds the next match's odds and records them under this match (seen 2026-11-02:
+            // Oman v Netherlands carried Melbourne Stars W prices). So only look inside ancestors that contain no
+            // other match link; otherwise the row has no prices (stored as null).
+            const ODDS_SEL = 'button[data-odd-type], [class*="backBtnBg"], [class*="layBtnBg"]';
+            function ownsOnlyThisMatch(el) {
+                const others = Array.from(el.querySelectorAll('a[href*="/cricket/"][href*="vs"]'))
+                    .filter(a => a.getAttribute('href') !== href);
+                return others.length === 0;
+            }
+            let oddsDiv = link.nextElementSibling;
+            if (!oddsDiv || !oddsDiv.querySelector(ODDS_SEL) || !ownsOnlyThisMatch(oddsDiv)) {
+                let w = link;
+                oddsDiv = null;
+                for (let depth = 0; depth < 10 && w; depth++) {
+                    const sib = w.nextElementSibling;
+                    if (sib && sib.querySelector && sib.querySelector(ODDS_SEL)) {
+                        if (ownsOnlyThisMatch(sib) && (!w.parentElement || ownsOnlyThisMatch(w.parentElement))) {
+                            oddsDiv = sib;
+                        }
+                        break;
+                    }
+                    w = w.parentElement;
+                    if (w && !ownsOnlyThisMatch(w)) break;  // left this match's row
+                }
+            }
+
             let back_home = null, lay_home = null;
             let back_draw = null, lay_draw = null;
             let back_away = null, lay_away = null;
             let volume_back_home = null, volume_lay_home = null;
             let volume_back_away = null, volume_lay_away = null;
 
-            if (rowDiv && rowDiv.nextElementSibling) {
-                const oddsDiv = rowDiv.nextElementSibling;
-
-                // Inside the odds div, find all individual cells.
-                // Structure: 3 x col-span-4 groups (Home/1, Draw/X, Away/2)
-                // Each col-span-4 has 2 cells (back, lay) with odds + volume spans.
-                //
-                // The cells have classes like bg-bg_color_backBtnBg / bg-bg_color_layBtnBg
-                // OR they might just be divs inside col-span-4 groups.
-                //
-                // Strategy: Get all leaf-level clickable cells in DOM order.
-                // They appear in order: back_1, lay_1, back_X, lay_X, back_2, lay_2
-                const cells = oddsDiv.querySelectorAll(
-                    '[class*="backBtnBg"], [class*="layBtnBg"]'
-                );
-
-                // Parse a cell: first span/div with a decimal number is the odds,
-                // second is the volume. Volume may have currency/abbreviation
-                // suffixes like '₹1.2L', '50K', '1,200', '$500'.
+            if (oddsDiv) {
                 function parseVolume(txt) {
                     if (!txt) return null;
-                    const cleaned = txt.replace(/[₹$,\\s]/g, '').trim();
+                    const cleaned = txt.replace(/[₹$,\s]/g, '').trim();
                     if (!cleaned || cleaned === '-') return null;
-                    // Handle abbreviations: K=1000, L/Lac=100000, Cr=10000000
-                    const abbrevMatch = cleaned.match(/^([\\d.]+)\\s*(K|L|Lac|Cr|M)?$/i);
+                    const abbrevMatch = cleaned.match(/^([\d.]+)\s*(K|L|Lac|Cr|M)?$/i);
                     if (abbrevMatch) {
                         let val = parseFloat(abbrevMatch[1]);
                         const suffix = (abbrevMatch[2] || '').toUpperCase();
@@ -229,76 +197,84 @@ LOTUSBOOK_EXTRACT_JS = """
                     return isNaN(num) ? null : num;
                 }
 
-                function parseCell(cell) {
-                    if (!cell) return { odds: null, volume: null };
-                    const spans = cell.querySelectorAll('span');
+                function parseBtn(btn) {
+                    if (!btn) return { odds: null, volume: null };
+                    // 1. Try explicit data attributes (lotusbook.cc)
+                    const dataPrice = btn.getAttribute('data-price');
+                    const dataSize = btn.getAttribute('data-size');
+                    if (dataPrice !== null && dataPrice !== undefined) {
+                        let odds = parseFloat(dataPrice);
+                        let vol = dataSize ? parseFloat(dataSize) : null;
+                        if (!isNaN(odds) && odds > 0) {
+                            return { odds: odds, volume: (!isNaN(vol) && vol > 0) ? vol : null };
+                        }
+                    }
+                    // 2. Fallback: Parse spans or text
+                    const spans = btn.querySelectorAll('span');
                     let odds = null;
                     let volume = null;
                     for (const span of spans) {
                         const txt = span.textContent.trim();
                         if (!txt || txt === '-') continue;
                         const num = parseFloat(txt.replace(/,/g, ''));
-                        if (!isNaN(num)) {
-                            if (odds === null) {
-                                odds = num;
-                            } else if (volume === null) {
-                                volume = parseVolume(txt);
-                            }
+                        if (!isNaN(num) && num > 0) {
+                            if (odds === null) odds = num;
+                            else if (volume === null) volume = parseVolume(txt);
                         }
                     }
-                    // If spans didn't work, try parsing the full text
                     if (odds === null) {
-                        const fullText = cell.textContent.trim();
-                        const match = fullText.match(/^([\\d.]+)/);
-                        if (match) odds = parseFloat(match[1]);
-                    }
-                    // If still no volume, try finding it in a deeper child
-                    if (volume === null) {
-                        const volEls = cell.querySelectorAll(
-                            '[class*="vol"], [class*="Vol"], [class*="amount"], [class*="size"]'
-                        );
-                        for (const ve of volEls) {
-                            volume = parseVolume(ve.textContent.trim());
-                            if (volume !== null) break;
+                        const fullText = btn.textContent.trim();
+                        const match = fullText.match(/^([\d.]+)/);
+                        if (match) {
+                            const val = parseFloat(match[1]);
+                            if (!isNaN(val) && val > 0) odds = val;
                         }
                     }
                     return { odds, volume };
                 }
 
-                // Map cells: 0=back_1, 1=lay_1, 2=back_X, 3=lay_X, 4=back_2, 5=lay_2
-                if (cells.length >= 2) {
-                    const c0 = parseCell(cells[0]);
-                    const c1 = parseCell(cells[1]);
-                    back_home = c0.odds;
-                    volume_back_home = c0.volume;
-                    lay_home = c1.odds;
-                    volume_lay_home = c1.volume;
-                }
-                if (cells.length >= 4) {
-                    const c2 = parseCell(cells[2]);
-                    const c3 = parseCell(cells[3]);
-                    back_draw = c2.odds;
-                    lay_draw = c3.odds;
-                }
-                if (cells.length >= 6) {
-                    const c4 = parseCell(cells[4]);
-                    const c5 = parseCell(cells[5]);
-                    back_away = c4.odds;
-                    volume_back_away = c4.volume;
-                    lay_away = c5.odds;
-                    volume_lay_away = c5.volume;
-                }
-                // If only 4 cells (no draw market, common in cricket):
-                // cells are: back_1, lay_1, back_2, lay_2
-                if (cells.length === 4) {
-                    const c2 = parseCell(cells[2]);
-                    const c3 = parseCell(cells[3]);
-                    back_away = c2.odds;
-                    volume_back_away = c2.volume;
-                    lay_away = c3.odds;
-                    volume_lay_away = c3.volume;
-                    back_draw = null;
-                    lay_draw = null;
+                // Check buttons inside oddsDiv
+                const buttons = Array.from(oddsDiv.querySelectorAll('button[data-odd-type]'));
+                if (buttons.length >= 6) {
+                    // Modern lotusbook.cc grid:
+                    // buttons[0..2] = Back Home, Back Draw, Back Away
+                    // buttons[3..5] = Lay Home, Lay Draw, Lay Away
+                    const bH = parseBtn(buttons[0]);
+                    const bD = parseBtn(buttons[1]);
+                    const bA = parseBtn(buttons[2]);
+                    const lH = parseBtn(buttons[3]);
+                    const lD = parseBtn(buttons[4]);
+                    const lA = parseBtn(buttons[5]);
+
+                    back_home = bH.odds; volume_back_home = bH.volume;
+                    back_draw = bD.odds;
+                    back_away = bA.odds; volume_back_away = bA.volume;
+
+                    lay_home = lH.odds; volume_lay_home = lH.volume;
+                    lay_draw = lD.odds;
+                    lay_away = lA.odds; volume_lay_away = lA.volume;
+                } else {
+                    // Fallback to class-based query
+                    const backs = Array.from(oddsDiv.querySelectorAll('[class*="backBtnBg"]'));
+                    const lays = Array.from(oddsDiv.querySelectorAll('[class*="layBtnBg"]'));
+                    if (backs.length > 0 && lays.length > 0) {
+                        const homeB = parseBtn(backs[0]);
+                        const homeL = parseBtn(lays[0]);
+                        back_home = homeB.odds; volume_back_home = homeB.volume;
+                        lay_home = homeL.odds; volume_lay_home = homeL.volume;
+
+                        const awayB = parseBtn(backs[backs.length - 1]);
+                        const awayL = parseBtn(lays[lays.length - 1]);
+                        back_away = awayB.odds; volume_back_away = awayB.volume;
+                        lay_away = awayL.odds; volume_lay_away = awayL.volume;
+
+                        if (backs.length >= 3 && lays.length >= 3) {
+                            const drawB = parseBtn(backs[1]);
+                            const drawL = parseBtn(lays[1]);
+                            back_draw = drawB.odds;
+                            lay_draw = drawL.odds;
+                        }
+                    }
                 }
             }
 
@@ -383,7 +359,7 @@ class ScraperWorker:
         Extract match data from LotusBook's DOM using targeted JS evaluation.
 
         LotusBook uses a Tailwind CSS grid layout:
-          - .eventHeadName containers group matches by competition
+          - Listing rows carry no competition; the parser derives it from team names
           - a#inPlayTeamName links hold team names (span.text-text_color_primary1)
           - Odds in the next sibling col-span-6 div with backBtnBg/layBtnBg cells
           - Live indicator via #inPlay element or score pattern in #inPlayTime
@@ -442,17 +418,35 @@ class ScraperWorker:
         """
         self._running = True
         logger.info("poll_loop_started", interval=self.poll_interval)
+        poll_count = 0
+        zero_count = 0
 
         while self._running:
             try:
+                poll_count += 1
                 events = await self.scrape_once()
 
                 # Also check WebSocket buffer
                 ws_events = self.get_ws_events()
                 events.extend(ws_events)
 
-                if events and callback:
-                    await callback(events)
+                if events:
+                    zero_count = 0
+                    if callback:
+                        await callback(events)
+                else:
+                    zero_count += 1
+
+                # Periodically reload page (every ~5 min) or if DOM extraction returned 0 events repeatedly
+                if poll_count >= 100 or zero_count >= 5:
+                    logger.info("refreshing_live_page", poll_count=poll_count, zero_count=zero_count)
+                    poll_count = 0
+                    zero_count = 0
+                    try:
+                        await self.page.reload(wait_until="domcontentloaded", timeout=20000)
+                        await asyncio.sleep(2)
+                    except Exception as re:
+                        logger.warning("page_reload_failed", error=str(re))
 
             except Exception as e:
                 logger.error("poll_error", error=str(e))

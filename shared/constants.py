@@ -3,6 +3,8 @@ PHOENIX Shared Constants
 Central definition for Redis channels, keys, and system-wide constants.
 """
 
+import os
+
 # ============================================================
 # Redis Pub/Sub Channels
 # ============================================================
@@ -42,28 +44,46 @@ CIRCUIT_BREAKER_CONSECUTIVE = 5 # Consecutive losses to trigger halt
 # RL Agent Configuration
 # ============================================================
 
-OBSERVATION_SIZE = 48           # Feature vector dimension (lean expert trading set)
+OBSERVATION_SIZE = 50           # Feature vector dimension (lean expert trading set)
                                 # Groups: odds(7) + momentum(6) + market(5) +
                                 #   match_stats(7) + portfolio(5) + position(4) +
-                                #   volume(4) + bookmaker(4) + format(4) + timing(2)
+                                #   volume(4) + bookmaker(4) + format(4) + timing(2) + match_momentum(2)
 ACTION_SPACE_SIZE = 9           # Number of discrete actions (HOLD + 4 BACK + 4 LAY)
-SMALL_STAKE_PERCENT = 0.01     # 1% of bankroll
-LARGE_STAKE_PERCENT = 0.03     # 3% of bankroll
+SMALL_STAKE_PERCENT = 0.02     # 2% of bankroll ($2,000 on 100k budget)
+LARGE_STAKE_PERCENT = 0.04     # 4% of bankroll ($4,000 on 100k budget)
 
 # ============================================================
 # Graduation Criteria
 # ============================================================
 
+# "op" is the comparison of metric vs threshold: ge (>=), gt (>), le (<=).
+# win_rate is deliberately absent: it is meaningless for a back/lay trading book.
+# sharpe_ratio is a NON-annualised per-calendar-day Sharpe (zero days included).
+# The 0.10 Sharpe threshold is a PLACEHOLDER: calibrate from the S18 report before real money.
 GRADUATION_CRITERIA = {
-    "win_rate": {"threshold": 0.55, "window": 200},
-    "roi": {"threshold": 0.08, "window": 200},
-    "sharpe_ratio": {"threshold": 1.5, "window_days": 30},
-    "max_drawdown": {"threshold": 0.15, "window_days": 30},
-    "profitable_days": {"threshold": 10, "window_days": 14},
-    "bet_volume": {"threshold": 100, "window_days": 30},
-    "avg_clv": {"threshold": 0.0, "window": 200},  # Average CLV must be positive
+    "roi_on_turnover": {"threshold": 0.02, "op": "ge", "window_days": 30},
+    "sharpe_ratio": {"threshold": 0.10, "op": "ge", "window_days": 30},
+    "max_drawdown": {"threshold": 0.15, "op": "le", "window_days": 30},
+    "profitable_days": {"threshold": 10, "op": "ge", "window_days": 14},
+    "bet_volume": {"threshold": 100, "op": "ge", "window_days": 30},
+    "min_matches": {"threshold": 30, "op": "ge", "window_days": 30},
+    "avg_clv": {"threshold": 0.0, "op": "gt", "window_days": 30},  # mean CLV (prob points) > 0
+    "clv_ci_lower": {"threshold": 0.0, "op": "gt", "window_days": 30},  # bootstrap 95% CI lower bound > 0
 }
 GRADUATION_REQUIRED_DAYS = 14  # All criteria met for N consecutive days
+
+# S42 trust gate (rung R3) for manual-bet signals, per strategy version. Measured on paper bets from
+# signals that have a Betfair price; LotusBook-only CLV is reported separately and never counts toward
+# trust. GRADUATION_CRITERIA above stays for the legacy PPO path (its tests pin those thresholds).
+# No Sharpe criterion. Sample-size thresholds are the profit-architecture R3 rung.
+TRUST_CRITERIA = {
+    "bet_volume": {"threshold": 300, "op": "ge"},                # settled paper bets from signals
+    "min_matches": {"threshold": 30, "op": "ge"},                # distinct real matches
+    "clv_ci_lower": {"threshold": 0.0, "op": "gt"},              # Betfair CLV, bootstrap 95% CI lower bound
+    "pnl_per_match_ci_upper": {"threshold": 0.0, "op": "ge"},    # P&L/match CI not entirely below 0
+    "max_drawdown": {"threshold": 0.15, "op": "le"},             # fraction of the allocated bankroll
+    "missed_rate": {"threshold": 0.40, "op": "le"},              # missed / (missed + placed) signals
+}
 
 # ============================================================
 # Orchestrator States
@@ -115,10 +135,31 @@ SCRAPER_TARGET_LATENCY_MS = 500  # p95 target
 BET_DELAY_MIN_SECONDS = 5      # Min random delay before bet placement
 BET_DELAY_MAX_SECONDS = 15     # Max random delay before bet placement
 STAKE_NOISE_PERCENT = 0.20     # +/-20% random noise on stake (avoids robotic pattern)
-MAX_BETS_PER_MATCH = 20        # Reasonable limit per match (prevents runaway betting)
+
+# Bet volume constraints & 20% opportunity tolerance buffer
+MAX_BETS_PER_MATCH = 25        # Base target: 20 to 25 bets per match
+BETS_TOLERANCE_PERCENT = 0.20  # +20% opportunity tolerance buffer (+5 bets)
+MAX_BETS_WITH_TOLERANCE = int(MAX_BETS_PER_MATCH * (1.0 + BETS_TOLERANCE_PERCENT))  # 30 bets ceiling
 MIN_BET_INTERVAL_SECONDS = 15  # Baseline cooldown (shortened during high-volatility events)
 STAKE_ROUND_BUCKETS = [50, 100, 200, 500, 1000, 2000, 5000]  # Human-like round amounts
-PER_MATCH_BUDGET = 100_000     # Default budget per match (1,00,000)
+
+# Capital commitment & 20% opportunity tolerance buffer.
+# The per-match budget is a percentage of the CURRENT bankroll (not an absolute amount) and
+# is measured in worst-case LIABILITY. The tolerance buffer is usable only by bets that
+# reduce the match's worst-case loss (hedges / green-ups).
+PER_MATCH_BUDGET_PCT = 0.10    # Per-match budget = 10% of current bankroll
+BUDGET_TOLERANCE_PERCENT = 0.20  # +20% tolerance, liability-reducing bets only
+SMALL_STAKE_BUDGET_FRACTION = 0.15  # SM action targets 15% of match budget as liability
+LARGE_STAKE_BUDGET_FRACTION = 0.30  # LG action targets 30% of match budget as liability
+
+# Liability-based risk limits (fractions of current bankroll)
+MAX_BET_LIABILITY_PCT = 0.03    # Max liability of any single bet
+MAX_MATCH_LIABILITY_PCT = 0.10  # Max worst-case loss on one match
+MAX_TOTAL_LIABILITY_PCT = 0.30  # Max worst-case loss summed over all open matches
+MAX_TEAM_LIABILITY_PCT = 0.12   # Max summed worst-case loss over matches involving one team
+KELLY_FRACTION = 0.25           # Fractional-Kelly multiplier (used only with a calibrated p)
+CIRCUIT_BREAKER_COOLDOWN_MINUTES = 60  # Breaker clears this long after the last loss
+RESERVATION_TTL_SECONDS = 120   # Un-committed liability reservations expire after this
 PAYOUT_HEADROOM_FACTOR = 1.5   # Allow up to 150% of budget if potential payouts justify it
 
 # ============================================================
@@ -224,3 +265,47 @@ FRANCHISE_TEAMS: dict[str, set[str]] = {
         "washington freedom",
     },
 }
+
+# ---------------------------------------------------------------------------
+# S40 signal engine: manual-bet signals from the backtested strategy. No code
+# path places a real bet; signals are paper-tracked only.
+# ---------------------------------------------------------------------------
+MANUAL_LATENCY_SECONDS = 60.0            # a person reads a signal and places the bet by hand
+STRATEGY_MODE_ENV = "PHOENIX_STRATEGY"   # "value" (signals, default) or "ppo" (legacy paper path)
+STRATEGY_DEFAULT_MODE = "value"
+STRATEGY_MIN_EDGE = 0.02                 # net edge (fraction of stake) an entry must clear at its price limit
+STRATEGY_COMMISSION = 0.05               # commission on net market winnings; conservative default = Betfair base rate.
+                                         # Set to your venue's actual rate. Backtests use ExecutionModel.commission.
+STRATEGY_GREEN_UP_AT = 0.5               # exit once locked profit reaches this share of the entry edge
+STRATEGY_MAX_BETS_PER_MATCH = 25
+STRATEGY_PRICE_TICK = 0.01               # price rounding for limits (conservative direction)
+STRATEGY_QUIET_AFTER_CHANGE_SECONDS = 30.0   # no signals this long after an innings, wicket or over change
+STRATEGY_NO_SIGNAL_LAST_OVERS = 0.0      # 0 disables; enable only if backtests show edges fail under manual latency
+SIGNAL_VALID_SECONDS = 120.0             # valid_until = created_at + this
+SIGNAL_MIN_STAKE = 10.0                  # suggested stakes below this are not signalled
+SIGNAL_CHANNEL = "signals"               # Redis channel for the UI
+SIGNAL_WEBHOOK_ENV = "SIGNAL_WEBHOOK_URL"    # optional; never hard-coded
+SIGNAL_LOG_PATH = "logs/signals.jsonl"
+
+# ---------------------------------------------------------------------------
+# S42 trust gate and signal kill switch. Trust labels only mark signals for manual betting;
+# the kill switch suspends signal emission. Nothing here places a bet.
+# ---------------------------------------------------------------------------
+TRUST_STATE_PATH = "models/trust_state.json"   # per-version streaks; written at runtime only
+KEY_TRUST_PREFIX = "trust:"                    # trust:<strategy>:<version> status (JSON)
+KEY_KILL_PREFIX = "kill:"                      # kill:<strategy>:<version>; kill:__all__ is global
+KILL_ALL_SCOPE = "__all__"
+CLV_HORIZON_SECONDS = 600.0                    # in-play CLV horizon (same as scripts/audit_clv.HORIZON_SECONDS)
+KILL_DAILY_LOSS = 0.05                         # realised paper loss today, fraction of allocated bankroll (placeholder)
+KILL_CLV_WINDOW_BETS = 100                     # rolling window of paper bets that have a Betfair price
+KILL_STALE_SECONDS = 300.0                     # no Betfair tick this long on a match with open paper positions
+
+# S45: reference price for CLV and trust. Betfair is blocked in the operator's country (architecture section 7),
+# so the default is LotusBook match odds. LotusBook match odds are an exchange mirror: its lag behind the exchange
+# is unmeasured, so CLV against it only shows that we beat the price the site shows later.
+CLV_REFERENCE_SOURCES = ("lotusbook", "betfair")
+CLV_REFERENCE_SOURCE = os.getenv("CLV_REFERENCE_SOURCE", "lotusbook").strip().lower()
+if CLV_REFERENCE_SOURCE not in CLV_REFERENCE_SOURCES:
+    raise ValueError(
+        f"CLV_REFERENCE_SOURCE must be one of {CLV_REFERENCE_SOURCES}, got {CLV_REFERENCE_SOURCE!r}"
+    )

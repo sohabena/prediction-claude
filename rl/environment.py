@@ -18,9 +18,7 @@ from features.pipeline import FeaturePipeline
 from rl.reward import RewardFunction
 from shared.constants import (
     ACTION_SPACE_SIZE,
-    LARGE_STAKE_PERCENT,
     OBSERVATION_SIZE,
-    SMALL_STAKE_PERCENT,
 )
 from shared.logging import setup_logging
 from shared.schemas import (
@@ -35,16 +33,77 @@ from shared.schemas import (
 logger = setup_logging("rl_environment")
 
 
+# Betfair price ladder: (upper bound exclusive-ish, step)
+_TICK_LADDER: tuple[tuple[float, float], ...] = (
+    (2.0, 0.01),
+    (3.0, 0.02),
+    (4.0, 0.05),
+    (6.0, 0.1),
+    (10.0, 0.2),
+    (20.0, 0.5),
+    (30.0, 1.0),
+    (50.0, 2.0),
+    (100.0, 5.0),
+    (1000.0, 10.0),
+)
+
+_BACK_ACTIONS = (
+    BettingAction.BACK_HOME_SM, BettingAction.BACK_HOME_LG,
+    BettingAction.BACK_AWAY_SM, BettingAction.BACK_AWAY_LG,
+)
+_HOME_ACTIONS = (
+    BettingAction.BACK_HOME_SM, BettingAction.BACK_HOME_LG,
+    BettingAction.LAY_HOME_SM, BettingAction.LAY_HOME_LG,
+)
+_SMALL_ACTIONS = (
+    BettingAction.BACK_HOME_SM, BettingAction.BACK_AWAY_SM,
+    BettingAction.LAY_HOME_SM, BettingAction.LAY_AWAY_SM,
+)
+
+_VOID_RESULTS = ("tie", "no_result", "draw", "abandoned")
+_EPS = 1e-9
+
+
+def betfair_tick_size(price: float) -> float:
+    """Return the Betfair ladder increment applying to prices at/above ``price``."""
+    for upper, step in _TICK_LADDER:
+        if price < upper - _EPS:
+            return step
+    return _TICK_LADDER[-1][1]
+
+
+def shift_price(price: float, ticks: int) -> float:
+    """Move ``price`` by ``ticks`` ladder increments (negative = down), clamped to 1.01..1000."""
+    out = price
+    for _ in range(abs(int(ticks))):
+        if ticks > 0:
+            out = out + betfair_tick_size(out)
+        else:
+            out = out - betfair_tick_size(out - 1e-6)
+        out = round(min(max(out, 1.01), 1000.0), 2)
+    return out
+
+
+def _action_parts(action: BettingAction) -> tuple[bool, bool, bool]:
+    """Return (is_back, on_home, is_small) for a bet action."""
+    return action in _BACK_ACTIONS, action in _HOME_ACTIONS, action in _SMALL_ACTIONS
+
+
 class CricketBettingEnv(gym.Env):
     """
     Custom Gymnasium environment for cricket betting RL.
 
-    Observation: 48-dim float vector (data-only features)
+    Observation: 50-dim float vector (data-only features)
         Groups: odds(7) + momentum(6) + market(5) + match_stats(7)
               + portfolio(5) + position(4) + volume(4) + bookmaker(4)
-              + format(4) + timing(2)
+              + format(4) + timing(2) + match_momentum(2)
     Action: 9 discrete actions (HOLD + 4 BACK + 4 LAY)
-    Reward: Multi-component (P&L, patience, risk penalties, Sharpe bonus)
+    Reward: see ``rl/reward.py``
+
+    Execution model (exchange style): bets are filled ``fill_delay_ticks`` after the
+    decision on the correct side of the book, worsened by ``slippage_ticks`` ladder
+    increments; LAY bets are sized and capped by *liability*; a per-outcome book
+    (P&L if home wins / if away wins) drives exposure, equity and drawdown.
     """
 
     metadata = {"render_modes": ["human", "ansi"]}
@@ -55,27 +114,50 @@ class CricketBettingEnv(gym.Env):
         initial_bankroll: float = 100_000.0,
         render_mode: Optional[str] = None,
         settlement_mode: str = "real",
-        max_bets_per_episode: int = 10,
+        max_bets_per_episode: int = 30,
+        exchange_commission: float = 0.0,
+        small_stake_pct: float = 0.01,
+        large_stake_pct: float = 0.03,
+        max_liability_pct_per_bet: float = 0.05,
+        max_total_liability_pct: float = 0.20,
+        slippage_ticks: int = 1,
+        fill_delay_ticks: int = 1,
+        episode_sampling: str = "random",
+        bet_budget_tolerance_pct: float = 0.20,
     ) -> None:
         """
         Args:
-            data: List of episodes. Each episode is a list of tick dicts.
-                  Each episode may have metadata at index 0 containing
-                  '_meta' key with 'winner', 'team_home', 'team_away'.
+            data: List of episodes (list of tick dicts, or dict with 'ticks' and '_meta').
             initial_bankroll: Starting bankroll.
             render_mode: Rendering mode.
-            settlement_mode: "real" uses actual match result, "simulated"
-                           uses random outcome based on implied probability
-                           (legacy mode for unit tests / curriculum stage 1).
-            max_bets_per_episode: Hard cap on bets per episode. Forces the
-                                 agent to be selective. Expert bettors make
-                                 only 3-10 bets per match.
+            settlement_mode: "real" uses the actual result; "simulated" draws a random
+                outcome from implied probability (legacy / curriculum stage 1).
+            max_bets_per_episode: Base bet cap. Up to ``bet_budget_tolerance_pct`` extra
+                bets are allowed only if they strictly reduce total liability.
+            exchange_commission: Commission on net positive market P&L (e.g. 0.02).
+            small_stake_pct / large_stake_pct: Per-bet budget as a fraction of bankroll
+                (stake for BACK, liability for LAY).
+            max_liability_pct_per_bet: Hard cap on one bet's liability.
+            max_total_liability_pct: Worst-case book loss limit as a fraction of bankroll.
+            slippage_ticks: Ladder increments by which fills are worsened.
+            fill_delay_ticks: Ticks between decision and fill.
+            episode_sampling: "random" (training) or "sequential" (evaluation).
         """
         super().__init__()
+        if episode_sampling not in ("random", "sequential"):
+            raise ValueError("episode_sampling must be 'random' or 'sequential'")
 
         self.render_mode = render_mode
         self.initial_bankroll = initial_bankroll
         self.settlement_mode = settlement_mode
+        self.exchange_commission = exchange_commission
+        self.small_stake_pct = small_stake_pct
+        self.large_stake_pct = large_stake_pct
+        self.max_liability_pct_per_bet = max_liability_pct_per_bet
+        self.max_total_liability_pct = max_total_liability_pct
+        self.slippage_ticks = int(slippage_ticks)
+        self.fill_delay_ticks = max(0, int(fill_delay_ticks))
+        self.episode_sampling = episode_sampling
 
         # Spaces
         self.action_space = spaces.Discrete(ACTION_SPACE_SIZE)
@@ -90,6 +172,7 @@ class CricketBettingEnv(gym.Env):
         self._current_episode_data: list[dict[str, Any]] = []
         self._step_idx = 0
         self._episode_idx = 0
+        self._data_index = -1
 
         # Match result metadata for current episode
         self._match_winner: str = ""
@@ -101,73 +184,86 @@ class CricketBettingEnv(gym.Env):
         self.feature_pipeline = FeaturePipeline()
 
         # Reward function
-        self.reward_fn = RewardFunction()
+        self.reward_fn = RewardFunction(initial_bankroll=self.initial_bankroll)
 
         # State
         self._portfolio: Optional[PortfolioState] = None
         self._open_bets: list[VirtualBet] = []
+        self._settled_bets_history: list[VirtualBet] = []
         self._episode_returns: list[float] = []
-        self._bets_this_hour: int = 0
         self._bets_this_episode: int = 0
         self.max_bets_per_episode = max_bets_per_episode
-        self._peak_balance: float = initial_bankroll
-        self._prev_unrealized_pnl: float = 0.0  # For mark-to-market delta
+        self.max_bets_tolerance_pct = bet_budget_tolerance_pct
+        self.max_bets_with_tolerance = int(
+            self.max_bets_per_episode * (1.0 + self.max_bets_tolerance_pct)
+        )
 
-        # Position tracking for hedging/trading strategy
-        # Net exposure per team: positive = long (backed), negative = short (laid)
-        self._net_exposure_home: float = 0.0
-        self._net_exposure_away: float = 0.0
-        # Best entry odds for hedge profit calculation
-        self._best_back_entry_home: float = 0.0  # lowest back odds on home
-        self._best_back_entry_away: float = 0.0  # lowest back odds on away
-        self._best_lay_entry_home: float = 0.0   # highest lay odds on home
-        self._best_lay_entry_away: float = 0.0   # highest lay odds on away
+        # Book: realised P&L (gross, before commission) per match outcome
+        self._pnl_home: float = 0.0
+        self._pnl_away: float = 0.0
+        self._pending: list[tuple[int, BettingAction]] = []
+        self._peak_equity: float = initial_bankroll
+        self._prev_equity: float = initial_bankroll
+        self._prev_clv: float = 0.0
 
         # Action masking for curriculum (None = all actions allowed)
         self._allowed_actions: Optional[list[int]] = None
+
+    # ------------------------------------------------------------------ props
+    @property
+    def _net_exposure_home(self) -> float:
+        """Book P&L if home wins (kept for external readers)."""
+        return self._pnl_home
+
+    @property
+    def _net_exposure_away(self) -> float:
+        """Book P&L if away wins (kept for external readers)."""
+        return self._pnl_away
 
     def set_allowed_actions(self, allowed: Optional[list[int]]) -> None:
         """Set allowed actions for curriculum stage (None = all allowed)."""
         self._allowed_actions = allowed
 
+    # ------------------------------------------------------------------ reset
     def reset(
         self, seed: Optional[int] = None, options: Optional[dict[str, Any]] = None
     ) -> tuple[np.ndarray, dict[str, Any]]:
         """Start a new episode (new match)."""
         super().reset(seed=seed)
 
-        # Initialize portfolio
         self._portfolio = PortfolioState(
             initial_balance=self.initial_bankroll,
             current_balance=self.initial_bankroll,
         )
+        self.reward_fn.reset()
         self._open_bets = []
+        self._pending = []
         self._episode_returns = []
-        self._bets_this_hour = 0
         self._bets_this_episode = 0
-        self._peak_balance = self.initial_bankroll
-        self._prev_unrealized_pnl = 0.0
-        self._net_exposure_home = 0.0
-        self._net_exposure_away = 0.0
-        self._best_back_entry_home = 0.0
-        self._best_back_entry_away = 0.0
-        self._best_lay_entry_home = 0.0
-        self._best_lay_entry_away = 0.0
+        self._pnl_home = 0.0
+        self._pnl_away = 0.0
+        self._peak_equity = self.initial_bankroll
+        self._prev_equity = self.initial_bankroll
+        self._prev_clv = 0.0
         self._step_idx = 0
 
-        # Select episode data
         if self._data:
-            raw_episode = self._data[self._episode_idx % len(self._data)]
+            if options and options.get("episode_index") is not None:
+                idx = int(options["episode_index"]) % len(self._data)
+            elif self.episode_sampling == "random":
+                idx = int(self.np_random.integers(len(self._data)))
+            else:
+                idx = self._episode_idx % len(self._data)
+            self._data_index = idx
+            raw_episode = self._data[idx]
             self._episode_idx += 1
 
-            # Extract episode metadata (match result) if present
             self._match_winner = ""
             self._match_home_team = ""
             self._match_away_team = ""
             self._match_result_type = ""
 
             if isinstance(raw_episode, dict):
-                # Episode is a dict with 'ticks' and 'meta' keys
                 meta = raw_episode.get("_meta", {})
                 self._match_winner = meta.get("winner", "")
                 self._match_home_team = meta.get("team_home", "")
@@ -175,314 +271,364 @@ class CricketBettingEnv(gym.Env):
                 self._match_result_type = meta.get("result_type", "win")
                 self._current_episode_data = raw_episode.get("ticks", [])
             elif isinstance(raw_episode, list) and raw_episode:
-                # Legacy format: list of tick dicts, check first tick for _meta
-                if "_meta" in raw_episode[0]:
-                    meta = raw_episode[0]["_meta"]
-                    self._match_winner = meta.get("winner", "")
-                    self._match_home_team = meta.get("team_home", "")
-                    self._match_away_team = meta.get("team_away", "")
-                    self._match_result_type = meta.get("result_type", "win")
-                else:
-                    # Infer home/away from first tick
-                    self._match_home_team = raw_episode[0].get("team_home", "")
-                    self._match_away_team = raw_episode[0].get("team_away", "")
+                first_tick = raw_episode[0]
+                meta = first_tick.get("_meta", {})
+                self._match_winner = meta.get("winner") or first_tick.get("winner", "")
+                self._match_home_team = meta.get("team_home") or first_tick.get("team_home", "")
+                self._match_away_team = meta.get("team_away") or first_tick.get("team_away", "")
+                self._match_result_type = meta.get("result_type", "win")
                 self._current_episode_data = raw_episode
             else:
                 self._current_episode_data = raw_episode if isinstance(raw_episode, list) else []
         else:
             self._current_episode_data = []
 
-        # Get initial observation
         obs = self._get_observation()
         info = self._get_info()
-
         return obs, info
 
+    # ------------------------------------------------------------------- step
     def step(
         self, action: int
     ) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
         """
         Execute one timestep.
 
-        1. Apply action (place bet or hold)
-        2. Advance to next odds tick
-        3. Settle any completed bets
-        4. Compute reward
-        5. Check if episode done
+        1. Validate the action (curriculum mask, budget, liability) -> queue an order
+        2. Fill due orders (decision + fill_delay_ticks), advance to the next tick
+        3. Settle at episode end from the book
+        4. Mark the book to market, compute reward
         """
         assert self._portfolio is not None
 
-        # Apply curriculum action mask: invalid actions become HOLD
+        action = int(action)
         if self._allowed_actions is not None and action not in self._allowed_actions:
             action = 0
 
-        # Enforce bet budget: once exhausted, all bets become HOLD
-        if action != 0 and self._bets_this_episode >= self.max_bets_per_episode:
-            action = 0
+        # 1. Decision: queue an order for a future tick if it is currently valid
+        if action != 0:
+            fill_idx = self._step_idx + self.fill_delay_ticks
+            if self._plan_fill(BettingAction(action), fill_idx, len(self._pending)) is None:
+                action = 0
+            else:
+                self._pending.append((fill_idx, BettingAction(action)))
 
-        betting_action = BettingAction(action)
-        step_info: dict[str, Any] = {}
+        prev_worst = self._worst_case()
+        had_bets = bool(self._open_bets)
 
-        # 1. Apply action — track potential profit/loss and hedging
-        bet_potential_profit = 0.0
-        bet_potential_loss = 0.0
-        bet_placed = False
-        hedge_locked_pnl = 0.0  # P&L locked by hedging (both sides covered)
-        is_hedge = False
-        if betting_action != BettingAction.HOLD:
-            bet = self._place_bet(betting_action)
-            if bet:
-                self._open_bets.append(bet)
-                self._bets_this_hour += 1
-                self._bets_this_episode += 1
-                bet_placed = True
-                is_back = bet.action in (
-                    BettingAction.BACK_HOME_SM, BettingAction.BACK_HOME_LG,
-                    BettingAction.BACK_AWAY_SM, BettingAction.BACK_AWAY_LG,
-                )
-                bet_on_home = bet.action in (
-                    BettingAction.BACK_HOME_SM, BettingAction.BACK_HOME_LG,
-                    BettingAction.LAY_HOME_SM, BettingAction.LAY_HOME_LG,
-                )
-                if is_back:
-                    bet_potential_profit = bet.stake * (bet.odds - 1.0)
-                    bet_potential_loss = bet.stake
-                else:  # LAY
-                    bet_potential_profit = bet.stake
-                    bet_potential_loss = bet.stake * (bet.odds - 1.0)
-
-                # Update position tracking and detect hedges
-                hedge_locked_pnl, is_hedge = self._update_position(
-                    bet, is_back, bet_on_home
-                )
-
-        # 2. Advance to next tick
+        # 2. Fill zero-delay orders, advance, fill delayed orders
+        fills = self._process_fills(self._step_idx)
         self._step_idx += 1
         terminated = self._step_idx >= len(self._current_episode_data)
         truncated = False
+        if not terminated:
+            fills += self._process_fills(self._step_idx)
+        else:
+            self._pending = []
 
-        # 3. Mark-to-market: compute unrealized P&L change for open bets
-        current_unrealized = self._compute_unrealized_pnl()
-        unrealized_pnl_delta = current_unrealized - self._prev_unrealized_pnl
-        self._prev_unrealized_pnl = current_unrealized
-
-        # 4. Compute CLV for open bets (before settlement)
-        clv_improvement = self._compute_open_bets_clv()
-
-        # 5. Settle bets (simplified: settle when match ends or after N steps)
-        settled_pnl = self._settle_bets()
-
-        # Update portfolio
-        self._portfolio.current_balance += settled_pnl
-        self._portfolio.session_pnl += settled_pnl
-        self._portfolio.daily_pnl += settled_pnl
-        if settled_pnl != 0:
+        # 3. Settle from the book at episode end
+        settled_pnl, commission, settled_any = self._settle_bets()
+        if settled_any:
+            self._portfolio.current_balance += settled_pnl
+            self._portfolio.session_pnl += settled_pnl
+            self._portfolio.daily_pnl += settled_pnl
             self._episode_returns.append(settled_pnl / self.initial_bankroll)
-            # Reset unrealized tracking after settlement
-            self._prev_unrealized_pnl = self._compute_unrealized_pnl()
 
-        # Track peak for drawdown
-        self._peak_balance = max(self._peak_balance, self._portfolio.current_balance)
+        # 4. Equity (bankroll + spread-aware green-up value) and drawdown
+        equity = self._compute_equity()
+        equity_delta = equity - self._prev_equity
+        self._prev_equity = equity
+        self._peak_equity = max(self._peak_equity, equity)
+        drawdown = 1.0 - equity / self._peak_equity if self._peak_equity > 0 else 0.0
 
-        # 6. Compute reward
-        current_odds_change = self._get_odds_change()
-        drawdown = 1.0 - (self._portfolio.current_balance / self._peak_balance)
+        clv_now = self._compute_open_bets_clv()
+        clv_delta = (clv_now - self._prev_clv) / max(self._portfolio.current_balance, 1.0)
+        self._prev_clv = clv_now
+
+        worst = self._worst_case()
+        best = self._best_case()
+        bet_stake = sum(b.stake for b in fills)
+        bet_liability = sum(self._bet_liability(b) for b in fills)
+        is_hedge = bool(fills) and had_bets and worst > prev_worst + _EPS
 
         step_info = {
             "action": action,
+            "bet_placed": bool(fills),
+            "bet_stake": bet_stake,
+            "bet_liability": bet_liability,
             "bankroll": self._portfolio.current_balance,
-            "odds_change": current_odds_change,
-            "bets_last_hour": self._bets_this_hour,
-            "exposure_pct": self._portfolio.exposure_pct,
+            "equity": equity,
+            "equity_delta": equity_delta,
+            "peak_equity": self._peak_equity,
             "current_drawdown": drawdown,
+            "total_liability": self._total_liability(),
+            "worst_case_pnl": worst,
+            "best_case_pnl": best,
+            "clv_delta": clv_delta,
             "profit_loss": settled_pnl,
-            "bet_settled": settled_pnl != 0,
+            "bet_settled": settled_any,
+            "commission_paid": commission,
+            "bets_this_episode": self._bets_this_episode,
             "episode_done": terminated,
-            "episode_returns": self._episode_returns,
-            "portfolio": self._portfolio if terminated else None,
-            "clv_improvement": clv_improvement,
-            # Potential profit/loss signals
-            "bet_placed": bet_placed,
-            "bet_potential_profit": bet_potential_profit,
-            "bet_potential_loss": bet_potential_loss,
-            # Mark-to-market unrealized P&L delta
-            "unrealized_pnl_delta": unrealized_pnl_delta,
-            "unrealized_pnl_total": current_unrealized,
+            "win_rate": self._portfolio.win_rate if self._portfolio.total_bets > 0 else 0.0,
+            "roi": self._portfolio.roi,
+            # Extras
+            "gross_liability": sum(self._bet_liability(b) for b in self._open_bets),
             "open_bet_count": len(self._open_bets),
-            # Hedging signals
+            "portfolio": self._portfolio if terminated else None,
+            "episode_returns": self._episode_returns,
+            "odds_change": self._get_odds_change(),
+            "exposure_pct": self._portfolio.exposure_pct,
+            # Legacy keys still read by scripts/benchmark_offline_improvements.py and iterative_tuning (is_hedge)
             "is_hedge": is_hedge,
-            "hedge_locked_pnl": hedge_locked_pnl,
-            "net_exposure_home": self._net_exposure_home,
-            "net_exposure_away": self._net_exposure_away,
+            "net_exposure_home": self._pnl_home,
+            "net_exposure_away": self._pnl_away,
         }
 
         reward = self.reward_fn.compute(action, step_info)
 
-        # 6. Get observation
         obs = self._get_observation()
         info = self._get_info()
         info["step_info"] = step_info
 
         return obs, float(reward), terminated, truncated, info
 
-    def _place_bet(self, action: BettingAction) -> Optional[VirtualBet]:
-        """Create a virtual bet based on the action."""
+    # ------------------------------------------------------------ book / fills
+    @staticmethod
+    def _bet_liability(bet: VirtualBet) -> float:
+        """Max loss of a bet: stake for BACK, stake*(odds-1) for LAY."""
+        if bet.action in _BACK_ACTIONS:
+            return bet.stake
+        return bet.stake * (bet.odds - 1.0)
+
+    @staticmethod
+    def _book_delta(
+        is_back: bool, on_home: bool, stake: float, odds: float
+    ) -> tuple[float, float]:
+        """P&L change (if home wins, if away wins) of one bet."""
+        win = stake * (odds - 1.0) if is_back else -stake * (odds - 1.0)
+        lose = -stake if is_back else stake
+        return (win, lose) if on_home else (lose, win)
+
+    def _worst_case(self) -> float:
+        return min(self._pnl_home, self._pnl_away)
+
+    def _best_case(self) -> float:
+        return max(self._pnl_home, self._pnl_away)
+
+    def _total_liability(self) -> float:
+        """Net liability of the book: the worst-case loss (>= 0)."""
+        return max(0.0, -self._worst_case())
+
+    def _plan_fill(
+        self, action: BettingAction, idx: int, extra_count: int = 0
+    ) -> Optional[dict[str, Any]]:
+        """Validate and size a bet filled at tick ``idx``; None if it cannot be placed."""
         assert self._portfolio is not None
-
-        if self._step_idx >= len(self._current_episode_data):
+        if action == BettingAction.HOLD or idx >= len(self._current_episode_data):
+            return None
+        tick = self._current_episode_data[idx]
+        is_back, on_home, is_small = _action_parts(action)
+        side = "home" if on_home else "away"
+        raw = tick.get(f"{'back' if is_back else 'lay'}_{side}") or 0.0
+        if raw <= 1.0:
+            return None
+        odds = shift_price(raw, -self.slippage_ticks if is_back else self.slippage_ticks)
+        if odds <= 1.0:
             return None
 
-        tick = self._current_episode_data[self._step_idx]
+        bankroll = self._portfolio.current_balance
+        pct = self.small_stake_pct if is_small else self.large_stake_pct
+        budget = min(pct, self.max_liability_pct_per_bet) * bankroll
+        if budget <= 0:
+            return None
+        stake = budget if is_back else budget / (odds - 1.0)
+        liability = budget
+
+        d_home, d_away = self._book_delta(is_back, on_home, stake, odds)
+        new_home, new_away = self._pnl_home + d_home, self._pnl_away + d_away
+        new_worst = min(new_home, new_away)
+        if (
+            new_worst < -self.max_total_liability_pct * bankroll
+            and new_worst < self._worst_case() - _EPS
+        ):
+            return None
+
+        count = self._bets_this_episode + extra_count
+        if count >= self.max_bets_with_tolerance:
+            return None
+        if count >= self.max_bets_per_episode:
+            if max(0.0, -new_worst) >= self._total_liability() - _EPS:
+                return None
+
+        return {
+            "tick": tick, "stake": stake, "odds": odds, "liability": liability,
+            "is_back": is_back, "on_home": on_home,
+        }
+
+    def _process_fills(self, upto_idx: int) -> list[VirtualBet]:
+        """Fill queued orders whose fill tick has been reached."""
+        filled: list[VirtualBet] = []
+        remaining: list[tuple[int, BettingAction]] = []
+        for fill_idx, act in self._pending:
+            if fill_idx > upto_idx:
+                remaining.append((fill_idx, act))
+                continue
+            plan = self._plan_fill(act, fill_idx, 0)
+            if plan is None:
+                continue
+            filled.append(self._apply_fill(
+                act, plan["stake"], plan["odds"], plan["tick"],
+            ))
+        self._pending = remaining
+        return filled
+
+    def _apply_fill(
+        self, action: BettingAction, stake: float, odds: float, tick: dict[str, Any]
+    ) -> VirtualBet:
+        """Record a filled bet in the book and portfolio."""
+        assert self._portfolio is not None
+        is_back, on_home, _ = _action_parts(action)
         event = self._tick_to_event(tick)
-
-        # Determine stake
-        if action in (BettingAction.BACK_HOME_SM, BettingAction.BACK_AWAY_SM,
-                       BettingAction.LAY_HOME_SM, BettingAction.LAY_AWAY_SM):
-            stake_pct = SMALL_STAKE_PERCENT
-        else:  # LG actions
-            stake_pct = LARGE_STAKE_PERCENT
-
-        stake = self._portfolio.current_balance * stake_pct
-
-        # Determine team and odds
-        if action in (BettingAction.BACK_HOME_SM, BettingAction.BACK_HOME_LG):
-            team = event.team_home
-            odds = event.back_home or 0.0
-        elif action in (BettingAction.BACK_AWAY_SM, BettingAction.BACK_AWAY_LG):
-            team = event.team_away
-            odds = event.back_away or 0.0
-        elif action in (BettingAction.LAY_HOME_SM, BettingAction.LAY_HOME_LG):
-            team = event.team_home
-            odds = event.lay_home or 0.0
-        elif action in (BettingAction.LAY_AWAY_SM, BettingAction.LAY_AWAY_LG):
-            team = event.team_away
-            odds = event.lay_away or 0.0
-        else:
-            return None
-
-        if odds <= 1.0 or stake <= 0:
-            return None
-
-        # Update exposure
-        self._portfolio.open_positions += 1
-        self._portfolio.total_exposure += stake
-        self._portfolio.total_bets += 1
-        self._portfolio.time_since_last_bet = 0.0
-
-        return VirtualBet(
+        bet = VirtualBet(
             match_id=event.match_id,
-            placed_at=datetime.now(timezone.utc),
+            placed_at=event.timestamp,
             action=action,
-            team=team,
+            team=event.team_home if on_home else event.team_away,
             odds=odds,
             stake=stake,
         )
+        d_home, d_away = self._book_delta(is_back, on_home, stake, odds)
+        self._pnl_home += d_home
+        self._pnl_away += d_away
+        self._open_bets.append(bet)
+        self._bets_this_episode += 1
+        self._portfolio.open_positions += 1
+        self._portfolio.total_bets += 1
+        self._portfolio.time_since_last_bet = 0.0
+        self._portfolio.total_exposure = self._total_liability()
+        return bet
 
-    def _settle_bets(self) -> float:
+    def _green_up_value(self, tick: dict[str, Any]) -> float:
+        """Guaranteed P&L if the book were closed now at the prices available."""
+        ph, pa = self._pnl_home, self._pnl_away
+        d = ph - pa
+        if abs(d) < _EPS:
+            return ph
+
+        def px(key: str) -> float:
+            v = tick.get(key) or 0.0
+            return v if v > 1.0 else 0.0
+
+        options: list[float] = []
+        if d > 0:
+            if px("lay_home"):
+                options.append(pa + d / px("lay_home"))
+            if px("back_away"):
+                options.append(ph - d / px("back_away"))
+        else:
+            e = -d
+            if px("back_home"):
+                options.append(pa - e / px("back_home"))
+            if px("lay_away"):
+                options.append(ph + e / px("lay_away"))
+        return max(options) if options else min(ph, pa)
+
+    def _compute_equity(self) -> float:
+        """Bankroll plus spread-aware green-up value of the book, net of commission."""
+        assert self._portfolio is not None
+        bankroll = self._portfolio.current_balance
+        if not self._open_bets or not self._current_episode_data:
+            return bankroll
+        tick = self._current_episode_data[min(self._step_idx, len(self._current_episode_data) - 1)]
+        locked = self._green_up_value(tick)
+        if locked > 0:
+            locked *= 1.0 - self.exchange_commission
+        return bankroll + locked
+
+    def action_masks(self) -> np.ndarray:
+        """Boolean mask over actions (HOLD always valid) for MaskablePPO-style use."""
+        mask = np.zeros(ACTION_SPACE_SIZE, dtype=bool)
+        mask[0] = True
+        if self._portfolio is None:
+            return mask
+        fill_idx = self._step_idx + self.fill_delay_ticks
+        for a in range(1, ACTION_SPACE_SIZE):
+            if self._allowed_actions is not None and a not in self._allowed_actions:
+                continue
+            mask[a] = self._plan_fill(BettingAction(a), fill_idx, len(self._pending)) is not None
+        return mask
+
+    # ------------------------------------------------------------- settlement
+    def _settle_bets(self) -> tuple[float, float, bool]:
         """
-        Settle open bets.
+        Settle the book at episode end.
 
-        settlement_mode="real": Uses actual match result (who won) from episode
-            metadata. The bet is only settled when the episode ends (match over).
-            This is the correct mode for training on historical data.
-        settlement_mode="simulated": Legacy mode using random outcome based on
-            implied probability. Used for unit tests and curriculum stage 1.
+        Returns (net_profit_loss, commission_paid, any_settled). Commission is charged
+        on net positive market P&L. Void results (tie/no_result/...) return stakes.
         """
-        # In "real" mode, only settle at episode end (match completion)
-        is_episode_end = self._step_idx >= len(self._current_episode_data)
+        assert self._portfolio is not None
+        if self._step_idx < len(self._current_episode_data) or not self._open_bets:
+            return 0.0, 0.0, False
 
-        if self.settlement_mode == "real" and not is_episode_end:
-            return 0.0  # Hold bets open until match completes
-
-        # For ties/no_result/abandoned, void all bets
-        if (
-            self.settlement_mode == "real"
-            and self._match_result_type in ("tie", "no_result", "draw", "abandoned")
-        ):
+        now_ts = self._current_tick_time()
+        if self.settlement_mode == "real" and self._match_result_type in _VOID_RESULTS:
             for bet in self._open_bets:
                 bet.outcome = BetOutcome.VOID
                 bet.profit_loss = 0.0
-                bet.settled_at = datetime.now(timezone.utc)
-                self._portfolio.open_positions -= 1  # type: ignore[union-attr]
-                self._portfolio.total_exposure -= bet.stake  # type: ignore[union-attr]
-            self._open_bets.clear()
-            return 0.0
+                bet.settled_at = now_ts
+            self._clear_book()
+            self._settled_bets_history = []
+            return 0.0, 0.0, True
 
-        total_pnl = 0.0
-        settled: list[int] = []
-
-        for i, bet in enumerate(self._open_bets):
-            won = self._determine_bet_outcome(bet)
-
-            is_back_bet = bet.action in (
-                BettingAction.BACK_HOME_SM, BettingAction.BACK_HOME_LG,
-                BettingAction.BACK_AWAY_SM, BettingAction.BACK_AWAY_LG,
-            )
-
+        home_won = self._determine_home_won()
+        gross = 0.0
+        for bet in self._open_bets:
+            is_back = bet.action in _BACK_ACTIONS
+            on_home = bet.action in _HOME_ACTIONS
+            won = (on_home == home_won) if is_back else (on_home != home_won)
             if won:
-                # Win
-                if is_back_bet:
-                    pnl = bet.stake * (bet.odds - 1.0)
-                else:
-                    pnl = bet.stake  # Lay win = keep stake
+                pnl = bet.stake * (bet.odds - 1.0) if is_back else bet.stake
                 bet.outcome = BetOutcome.WIN
-                self._portfolio.total_wins += 1  # type: ignore[union-attr]
-                self._portfolio.consecutive_streak = max(1, self._portfolio.consecutive_streak + 1)  # type: ignore[union-attr]
+                self._portfolio.total_wins += 1
+                self._portfolio.consecutive_streak = max(1, self._portfolio.consecutive_streak + 1)
             else:
-                # Loss
-                if is_back_bet:
-                    pnl = -bet.stake
-                else:
-                    pnl = -bet.stake * (bet.odds - 1.0)  # Lay loss
+                pnl = -bet.stake if is_back else -bet.stake * (bet.odds - 1.0)
                 bet.outcome = BetOutcome.LOSS
-                self._portfolio.consecutive_streak = min(-1, self._portfolio.consecutive_streak - 1)  # type: ignore[union-attr]
-
+                self._portfolio.consecutive_streak = min(-1, self._portfolio.consecutive_streak - 1)
             bet.profit_loss = pnl
-            bet.settled_at = datetime.now(timezone.utc)
-            total_pnl += pnl
-            settled.append(i)
+            bet.settled_at = now_ts
+            gross += pnl
 
-            # Update exposure
-            self._portfolio.open_positions -= 1  # type: ignore[union-attr]
-            self._portfolio.total_exposure -= bet.stake  # type: ignore[union-attr]
+        commission = self.exchange_commission * gross if gross > 0 else 0.0
+        self._settled_bets_history.extend(self._open_bets)
+        self._clear_book()
+        return gross - commission, commission, True
 
-        # Remove settled bets
-        for i in reversed(settled):
-            self._open_bets.pop(i)
+    def _clear_book(self) -> None:
+        assert self._portfolio is not None
+        self._portfolio.open_positions = 0
+        self._portfolio.total_exposure = 0.0
+        self._open_bets = []
+        self._pnl_home = 0.0
+        self._pnl_away = 0.0
 
-        return total_pnl
+    def _current_tick_time(self) -> datetime:
+        if not self._current_episode_data:
+            return datetime.now(timezone.utc)
+        tick = self._current_episode_data[min(self._step_idx, len(self._current_episode_data) - 1)]
+        return self._tick_to_event(tick).timestamp
 
-    def _determine_bet_outcome(self, bet: VirtualBet) -> bool:
-        """
-        Determine if a bet won, using real match result or simulation.
-
-        Returns True if the bet won, False if it lost.
-        """
+    def _determine_home_won(self) -> bool:
+        """Did the home side win? Real result if known, else a random draw from implied odds."""
         if self.settlement_mode == "real" and self._match_winner:
-            # Real outcome: use actual match winner
-            is_back = bet.action in (
-                BettingAction.BACK_HOME_SM, BettingAction.BACK_HOME_LG,
-                BettingAction.BACK_AWAY_SM, BettingAction.BACK_AWAY_LG,
-            )
-            bet_on_home = bet.action in (
-                BettingAction.BACK_HOME_SM, BettingAction.BACK_HOME_LG,
-                BettingAction.LAY_HOME_SM, BettingAction.LAY_HOME_LG,
-            )
+            return self._match_winner == self._match_home_team
+        tick = self._current_episode_data[-1] if self._current_episode_data else {}
+        bh, ba = tick.get("back_home") or 0.0, tick.get("back_away") or 0.0
+        p_home = (1.0 / bh) / ((1.0 / bh) + (1.0 / ba)) if bh > 1.0 and ba > 1.0 else 0.5
+        return bool(self.np_random.random() < p_home)
 
-            # Did home team win?
-            home_won = self._match_winner == self._match_home_team
-
-            if is_back:
-                # BACK bet wins if the backed team won
-                return (bet_on_home and home_won) or (not bet_on_home and not home_won)
-            else:
-                # LAY bet wins if the laid team LOST
-                return (bet_on_home and not home_won) or (not bet_on_home and home_won)
-        else:
-            # Simulated outcome: random based on implied probability (legacy)
-            win_prob = 1.0 / bet.odds if bet.odds > 1.0 else 0.5
-            return bool(self.np_random.random() < win_prob)
-
+    # ------------------------------------------------------------ observation
     def _get_observation(self) -> np.ndarray:
         """Get current observation vector."""
         if self._step_idx >= len(self._current_episode_data):
@@ -490,19 +636,16 @@ class CricketBettingEnv(gym.Env):
 
         tick = self._current_episode_data[self._step_idx]
         event = self._tick_to_event(tick)
-
         context = self._tick_to_context(tick)
-
         position_state = self._build_position_state(tick)
 
-        obs = self.feature_pipeline.compute(
+        return self.feature_pipeline.compute(
             match_id=event.match_id,
             event=event,
             context=context,
             portfolio=self._portfolio,
             position_state=position_state,
         )
-        return obs
 
     def _get_info(self) -> dict[str, Any]:
         """Get auxiliary info dict. Use 'episode_idx' not 'episode' to avoid
@@ -510,182 +653,60 @@ class CricketBettingEnv(gym.Env):
         return {
             "step": self._step_idx,
             "episode_idx": self._episode_idx,
+            "data_index": self._data_index,
             "balance": self._portfolio.current_balance if self._portfolio else 0.0,
             "open_bets": len(self._open_bets),
         }
 
+    def _avg_entry(self, back: bool, home: bool) -> float:
+        """Stake-weighted average entry odds of open bets on one side (0 if none)."""
+        total = weighted = 0.0
+        for b in self._open_bets:
+            is_back, on_home, _ = _action_parts(b.action)
+            if is_back == back and on_home == home:
+                total += b.stake
+                weighted += b.stake * b.odds
+        return weighted / total if total > 0 else 0.0
+
     def _build_position_state(self, tick: dict[str, Any]) -> dict:
-        """Build position state dict for the feature pipeline."""
+        """Build position state dict for the feature pipeline (fed from the book)."""
         bankroll = self._portfolio.current_balance if self._portfolio else self.initial_bankroll
         return {
-            "net_home_exposure": self._net_exposure_home,
-            "net_away_exposure": self._net_exposure_away,
+            "net_home_exposure": self._pnl_home,
+            "net_away_exposure": self._pnl_away,
             "bankroll": bankroll,
             "back_home_odds": tick.get("back_home") or 0.0,
             "lay_home_odds": tick.get("lay_home") or 0.0,
             "back_away_odds": tick.get("back_away") or 0.0,
             "lay_away_odds": tick.get("lay_away") or 0.0,
-            "best_entry_home": self._best_back_entry_home,
-            "best_entry_away": self._best_back_entry_away,
-            "best_entry_lay_home": self._best_lay_entry_home,
-            "best_entry_lay_away": self._best_lay_entry_away,
+            "best_entry_home": self._avg_entry(True, True),
+            "best_entry_away": self._avg_entry(True, False),
+            "best_entry_lay_home": self._avg_entry(False, True),
+            "best_entry_lay_away": self._avg_entry(False, False),
         }
-
-    def _update_position(
-        self, bet: VirtualBet, is_back: bool, bet_on_home: bool
-    ) -> tuple[float, bool]:
-        """
-        Update net position tracking when a bet is placed.
-        Detects hedges: when a new bet REDUCES net exposure on a team.
-
-        Returns:
-            (locked_pnl, is_hedge) -- locked_pnl > 0 means guaranteed profit
-            was locked by this hedge, regardless of match outcome.
-        """
-        stake = bet.stake
-        odds = bet.odds
-        locked_pnl = 0.0
-        is_hedge = False
-
-        if bet_on_home:
-            old_exposure = self._net_exposure_home
-            if is_back:
-                # BACK home: increase long exposure
-                self._net_exposure_home += stake
-                # Track best (lowest) back entry odds
-                if self._best_back_entry_home <= 1.0 or odds < self._best_back_entry_home:
-                    self._best_back_entry_home = odds
-            else:
-                # LAY home: decrease long exposure (or go short)
-                self._net_exposure_home -= stake
-                if self._best_lay_entry_home <= 1.0 or odds > self._best_lay_entry_home:
-                    self._best_lay_entry_home = odds
-
-            # Did this bet reduce exposure? That's a hedge.
-            if abs(self._net_exposure_home) < abs(old_exposure) and old_exposure != 0:
-                is_hedge = True
-                # Compute locked profit from the hedged portion
-                hedged_amount = abs(old_exposure) - abs(self._net_exposure_home)
-                if is_back and self._best_lay_entry_home > 1.0:
-                    # Was short (laid), now backing to hedge
-                    # Profit if back odds > lay entry odds
-                    if odds > self._best_lay_entry_home:
-                        locked_pnl = hedged_amount * (odds - self._best_lay_entry_home) / odds
-                elif not is_back and self._best_back_entry_home > 1.0:
-                    # Was long (backed), now laying to hedge
-                    # Profit if lay odds < back entry odds
-                    if odds < self._best_back_entry_home:
-                        locked_pnl = hedged_amount * (self._best_back_entry_home - odds) / odds
-        else:
-            # Away team
-            old_exposure = self._net_exposure_away
-            if is_back:
-                self._net_exposure_away += stake
-                if self._best_back_entry_away <= 1.0 or odds < self._best_back_entry_away:
-                    self._best_back_entry_away = odds
-            else:
-                self._net_exposure_away -= stake
-                if self._best_lay_entry_away <= 1.0 or odds > self._best_lay_entry_away:
-                    self._best_lay_entry_away = odds
-
-            if abs(self._net_exposure_away) < abs(old_exposure) and old_exposure != 0:
-                is_hedge = True
-                hedged_amount = abs(old_exposure) - abs(self._net_exposure_away)
-                if is_back and self._best_lay_entry_away > 1.0:
-                    if odds > self._best_lay_entry_away:
-                        locked_pnl = hedged_amount * (odds - self._best_lay_entry_away) / odds
-                elif not is_back and self._best_back_entry_away > 1.0:
-                    if odds < self._best_back_entry_away:
-                        locked_pnl = hedged_amount * (self._best_back_entry_away - odds) / odds
-
-        return locked_pnl, is_hedge
-
-    def _compute_unrealized_pnl(self) -> float:
-        """
-        Mark-to-market: compute unrealized P&L of all open bets using current odds.
-
-        For BACK bets: if current odds < entry odds, implied probability increased
-            → the market now agrees more with our bet → positive unrealized value.
-        For LAY bets: if current odds > entry odds, implied probability decreased
-            → the selection is less likely to win → positive unrealized value.
-        """
-        if not self._open_bets or self._step_idx >= len(self._current_episode_data):
-            return 0.0
-
-        tick = self._current_episode_data[min(self._step_idx, len(self._current_episode_data) - 1)]
-        total_unrealized = 0.0
-
-        for bet in self._open_bets:
-            entry = bet.odds
-            if entry <= 1.0:
-                continue
-
-            is_back = bet.action in (
-                BettingAction.BACK_HOME_SM, BettingAction.BACK_HOME_LG,
-                BettingAction.BACK_AWAY_SM, BettingAction.BACK_AWAY_LG,
-            )
-            # Get current market odds for this bet's side
-            if bet.action in (BettingAction.BACK_HOME_SM, BettingAction.BACK_HOME_LG):
-                current = tick.get("back_home") or 0.0
-            elif bet.action in (BettingAction.BACK_AWAY_SM, BettingAction.BACK_AWAY_LG):
-                current = tick.get("back_away") or 0.0
-            elif bet.action in (BettingAction.LAY_HOME_SM, BettingAction.LAY_HOME_LG):
-                current = tick.get("lay_home") or 0.0
-            else:  # LAY_AWAY
-                current = tick.get("lay_away") or 0.0
-
-            if current <= 1.0:
-                continue
-
-            if is_back:
-                # BACK bet unrealized: edge = (1/current - 1/entry) * stake * entry
-                # Positive when current < entry (odds shortened in our favor)
-                unrealized = ((1.0 / current) - (1.0 / entry)) * bet.stake * entry
-            else:
-                # LAY bet unrealized: edge = (1/entry - 1/current) * stake * entry
-                # Positive when current > entry (odds drifted, selection less likely)
-                unrealized = ((1.0 / entry) - (1.0 / current)) * bet.stake * entry
-
-            total_unrealized += unrealized
-
-        return total_unrealized
 
     def _compute_open_bets_clv(self) -> float:
         """
-        Compute total CLV improvement for open bets (odds moved in our favor).
-        BACK: positive when current < entry. LAY: positive when current > entry.
+        Stake-weighted CLV of open bets versus the current market (signed, positive =
+        price moved in our favour). BACK: stake*(1/close - 1/entry); LAY is mirrored:
+        stake*(1/entry - 1/close). Close price = current back price of the selection
+        (lay price if back is missing).
         """
-        if not self._open_bets or self._step_idx >= len(self._current_episode_data):
+        if not self._open_bets or not self._current_episode_data:
             return 0.0
-
         tick = self._current_episode_data[min(self._step_idx, len(self._current_episode_data) - 1)]
-        total_clv = 0.0
-
+        total = 0.0
         for bet in self._open_bets:
-            entry = bet.odds
-            if entry <= 1.0:
+            is_back, on_home, _ = _action_parts(bet.action)
+            side = "home" if on_home else "away"
+            close = tick.get(f"back_{side}") or tick.get(f"lay_{side}") or 0.0
+            if close <= 1.0 or bet.odds <= 1.0:
                 continue
-
-            is_back = bet.action in (
-                BettingAction.BACK_HOME_SM, BettingAction.BACK_HOME_LG,
-                BettingAction.BACK_AWAY_SM, BettingAction.BACK_AWAY_LG,
-            )
             if is_back:
-                if bet.action in (BettingAction.BACK_HOME_SM, BettingAction.BACK_HOME_LG):
-                    current = tick.get("back_home") or 0.0
-                else:
-                    current = tick.get("back_away") or 0.0
-                if current > 1.0 and current < entry:
-                    total_clv += (1.0 / entry) - (1.0 / current)
+                total += bet.stake * (1.0 / close - 1.0 / bet.odds)
             else:
-                if bet.action in (BettingAction.LAY_HOME_SM, BettingAction.LAY_HOME_LG):
-                    current = tick.get("lay_home") or 0.0
-                else:
-                    current = tick.get("lay_away") or 0.0
-                if current > 1.0 and current > entry:
-                    total_clv += (1.0 / current) - (1.0 / entry)
-
-        return total_clv
+                total += bet.stake * (1.0 / bet.odds - 1.0 / close)
+        return total
 
     def _get_odds_change(self) -> float:
         """Get the magnitude of odds change from previous tick."""
@@ -702,9 +723,20 @@ class CricketBettingEnv(gym.Env):
 
     def _tick_to_event(self, tick: dict[str, Any]) -> OddsEvent:
         """Convert a raw tick dict to OddsEvent."""
+        raw_ts = tick.get("timestamp") or tick.get("time")
+        if isinstance(raw_ts, str):
+            try:
+                ts = datetime.fromisoformat(raw_ts)
+            except Exception:
+                ts = datetime.now(timezone.utc)
+        elif isinstance(raw_ts, datetime):
+            ts = raw_ts
+        else:
+            ts = datetime.now(timezone.utc)
+
         return OddsEvent(
             match_id=tick.get("match_id", "unknown"),
-            timestamp=tick.get("timestamp", datetime.now(timezone.utc)),
+            timestamp=ts,
             team_home=tick.get("team_home", "Home"),
             team_away=tick.get("team_away", "Away"),
             competition=tick.get("competition", ""),
@@ -721,9 +753,21 @@ class CricketBettingEnv(gym.Env):
         """Convert tick dict to MatchContext if data available."""
         if "overs" not in tick:
             return None
+
+        raw_ts = tick.get("timestamp") or tick.get("time")
+        if isinstance(raw_ts, str):
+            try:
+                ts = datetime.fromisoformat(raw_ts)
+            except Exception:
+                ts = datetime.now(timezone.utc)
+        elif isinstance(raw_ts, datetime):
+            ts = raw_ts
+        else:
+            ts = datetime.now(timezone.utc)
+
         return MatchContext(
             match_id=tick.get("match_id", "unknown"),
-            timestamp=tick.get("timestamp", datetime.now(timezone.utc)),
+            timestamp=ts,
             is_live=tick.get("is_live", True),
             score=tick.get("score", 0),
             wickets=tick.get("wickets", 0),

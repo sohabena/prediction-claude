@@ -1,0 +1,14 @@
+{"op": "mcm", "pt": 1700000000000, "mc": [{"id": "1.300001", "marketDefinition": {"eventName": "India v Australia", "competitionName": "T20 International", "marketType": "MATCH_ODDS", "status": "OPEN", "inPlay": false, "runners": [{"id": 101, "name": "India", "status": "ACTIVE"}, {"id": 102, "name": "Australia", "status": "ACTIVE"}]}, "rc": [{"id": 101, "ltp": 1.9}, {"id": 102, "ltp": 2.0}]}]}
+{"op": "mcm", "pt": 1700000004000, "mc": [{"id": "1.300001", "rc": [{"id": 101, "ltp": 1.92}, {"id": 102, "ltp": 1.98}]}]}
+{"op": "mcm", "pt": 1700000008000, "mc": [{"id": "1.300001", "marketDefinition": {"inPlay": true}, "rc": [{"id": 101, "ltp": 1.95}, {"id": 102, "ltp": 1.97}]}]}
+{"op": "mcm", "pt": 1700000012000, "mc": [{"id": "1.300001", "rc": [{"id": 101, "ltp": 2.05}, {"id": 102, "ltp": 1.9}]}]}
+{"op": "mcm", "pt": 1700000016000, "mc": [{"id": "1.300001", "rc": [{"id": 101, "ltp": 2.1}, {"id": 102, "ltp": 1.85}]}]}
+{"op": "mcm", "pt": 1700000020000, "mc": [{"id": "1.300001", "rc": [{"id": 101, "ltp": 2.2}, {"id": 102, "ltp": 1.75}]}]}
+{"op": "mcm", "pt": 1700000024000, "mc": [{"id": "1.300001", "rc": [{"id": 101, "ltp": 2.4}, {"id": 102, "ltp": 1.6}]}]}
+{"op": "mcm", "pt": 1700000028000, "mc": [{"id": "1.300001", "rc": [{"id": 101, "ltp": 2.6}, {"id": 102, "ltp": 1.5}]}]}
+{"op": "mcm", "pt": 1700000032000, "mc": [{"id": "1.300001", "rc": [{"id": 101, "ltp": 2.9}, {"id": 102, "ltp": 1.4}]}]}
+{"op": "mcm", "pt": 1700000036000, "mc": [{"id": "1.300001", "rc": [{"id": 101, "ltp": 3.1}, {"id": 102, "ltp": 1.35}]}]}
+{"op": "mcm", "pt": 1700000040000, "mc": [{"id": "1.300001", "rc": [{"id": 101, "ltp": 3.4}, {"id": 102, "ltp": 1.3}]}]}
+{"op": "mcm", "pt": 1700000044000, "mc": [{"id": "1.300001", "rc": [{"id": 101, "ltp": 3.8}, {"id": 102, "ltp": 1.25}]}]}
+{"op": "mcm", "pt": 1700000048000, "mc": [{"id": "1.300001", "rc": [{"id": 101, "ltp": 4.0}, {"id": 102, "ltp": 1.22}]}]}
+{"op": "mcm", "pt": 1700000052000, "mc": [{"id": "1.300001", "marketDefinition": {"status": "CLOSED", "runners": [{"id": 101, "name": "India", "status": "WINNER"}, {"id": 102, "name": "Australia", "status": "LOSER"}]}}]}

@@ -39,6 +39,7 @@ class MatchDataLoader:
         self,
         min_ticks: int | None = None,
         days_back: int | None = None,
+        include_simulated: bool = False,
     ) -> list[list[dict[str, Any]]]:
         """
         Load completed matches as training episodes.
@@ -46,6 +47,7 @@ class MatchDataLoader:
         Args:
             min_ticks: Minimum ticks per match (default from config).
             days_back: How many days of data to load (default from config).
+            include_simulated: S50 opt-in. Simulated (SRL) matches are excluded unless True.
 
         Returns:
             List of episodes. Each episode is a list of tick dicts
@@ -57,7 +59,7 @@ class MatchDataLoader:
         logger.info("loading_matches", min_ticks=min_ticks, days_back=days_back)
 
         # Step 1: Find match_ids with enough ticks
-        match_ids = await self._get_qualifying_match_ids(min_ticks, days_back)
+        match_ids = await self._get_qualifying_match_ids(min_ticks, days_back, include_simulated=include_simulated)
         logger.info("qualifying_matches_found", count=len(match_ids))
 
         if not match_ids:
@@ -130,9 +132,12 @@ class MatchDataLoader:
         return self._quality_reports
 
     async def _get_qualifying_match_ids(
-        self, min_ticks: int, days_back: int
+        self, min_ticks: int, days_back: int, include_simulated: bool = False
     ) -> list[str]:
-        """Get match_ids that have enough data points AND are approved for training."""
+        """Get match_ids that have enough data points AND are approved for training.
+
+        Simulated (SRL) matches are excluded unless ``include_simulated`` (S50).
+        """
         try:
             async with get_session() as session:
                 result = await session.execute(
@@ -143,11 +148,12 @@ class MatchDataLoader:
                             ON ot.match_id = mts.match_id
                         WHERE ot.time > NOW() - MAKE_INTERVAL(days => :days_back)
                           AND mts.training_status = 'approved'
+                          AND (CAST(:include_simulated AS BOOLEAN) OR NOT mts.is_simulated)
                         GROUP BY ot.match_id
                         HAVING COUNT(*) >= :min_ticks
                         ORDER BY MIN(ot.time) ASC
                     """),
-                    {"min_ticks": min_ticks, "days_back": days_back},
+                    {"min_ticks": min_ticks, "days_back": days_back, "include_simulated": include_simulated},
                 )
                 rows = result.fetchall()
                 return [row[0] for row in rows]
@@ -168,10 +174,17 @@ class MatchDataLoader:
                             o.back_draw, o.lay_draw, o.back_away, o.lay_away,
                             o.implied_prob_home, o.implied_prob_away,
                             o.overround, o.is_live,
-                            c.score, c.wickets, c.overs, c.run_rate,
-                            c.req_run_rate, c.innings, c.balls_remaining,
-                            c.batting_team, c.bowling_team, c.status,
-                            c.match_format
+                            COALESCE(c.score, o.score, 0) AS score,
+                            COALESCE(c.wickets, o.wickets, 0) AS wickets,
+                            COALESCE(c.overs, o.overs, 0.0) AS overs,
+                            COALESCE(c.run_rate, 0.0) AS run_rate,
+                            COALESCE(c.req_run_rate, 0.0) AS req_run_rate,
+                            COALESCE(c.innings, o.innings, 1) AS innings,
+                            COALESCE(c.balls_remaining, 0) AS balls_remaining,
+                            COALESCE(c.batting_team, '') AS batting_team,
+                            COALESCE(c.bowling_team, '') AS bowling_team,
+                            COALESCE(c.status, 'in_play') AS status,
+                            COALESCE(c.match_format, 'T20') AS match_format
                         FROM odds_ticks o
                         LEFT JOIN LATERAL (
                             SELECT * FROM match_context mc

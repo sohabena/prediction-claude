@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, String
+from sqlalchemy import DateTime, Float, String, text
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.models.base import Base
@@ -16,7 +18,10 @@ class VirtualBetRecord(Base):
     __tablename__ = "virtual_bets"
 
     placed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
-    match_id: Mapped[str] = mapped_column(String, primary_key=True)
+    bet_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    match_id: Mapped[str] = mapped_column(String, nullable=False)
     action: Mapped[str] = mapped_column(String, nullable=False)
     team: Mapped[str] = mapped_column(String, nullable=False)
     odds: Mapped[float] = mapped_column(Float, nullable=False)

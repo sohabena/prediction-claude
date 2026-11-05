@@ -99,8 +99,8 @@ class TestLotusBookParser:
                 "lay_away": 2.15,
             }
         ]
-        events1 = self.parser.parse_dom_data(raw)
-        events2 = self.parser.parse_dom_data(raw)  # Same data again
+        events1 = self.parser.parse_dom_data(raw, dedup=True)
+        events2 = self.parser.parse_dom_data(raw, dedup=True)  # Same data again
         assert len(events1) == 1
         assert len(events2) == 0  # Deduped
 

@@ -92,7 +92,7 @@ class PhoenixDQNAgent:
         self,
         total_timesteps: int,
         callback: Optional[BaseCallback] = None,
-        progress_bar: bool = True,
+        progress_bar: bool = False,
     ) -> None:
         """Train the agent."""
         logger.info("dqn_training_started", total_timesteps=total_timesteps)

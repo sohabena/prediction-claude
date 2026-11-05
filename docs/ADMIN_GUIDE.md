@@ -1,228 +1,186 @@
-# PHOENIX Admin Guide
+# PHOENIX Admin & Operations Guide
 
-## Architecture Overview
+## Overview
+
+This guide provides system administrators and quant engineers with full operational documentation for running, monitoring, tuning, and maintaining the PHOENIX cricket prediction and active two-way rate trading platform.
+
+---
+
+## 1. System Architecture & Topology
 
 ```mermaid
 flowchart TD
-    A[LotusBook.site] --> B[Playwright<br/>every 3s]
-    B --> C[Scraper]
-    C --> D[MatchClassifier<br/>filters international matches]
-    D --> E[Result Collector]
-    E --> F[Cricbuzz<br/>final outcomes]
-    
-    C --> G[Redis PubSub]
-    G --> H[Frontend Dashboard]
-    
-    C --> I[TimescaleDB]
-    I --> J[odds_ticks]
-    I --> K[match_context]
-    I --> L[match_results]
-    I --> M[virtual_bets]
-    
-    I --> N[Orchestrator]
-    N --> O[manages lifecycle]
-    N --> P[trains PPO/DQN agent]
-    
-    N --> Q[Backend API]
-    Q --> H
+    subgraph "External Feeds"
+        A[LotusBook Live: lotusbook.cc/cricket]
+        B[Official Cricsheet Archives: 19k+ Matches]
+        C[Weekly Cricsheet Delta Sync: recently_added_7_json.zip]
+    end
+
+    subgraph "Core Daemons"
+        D[Scraper Manager<br/>python -m scraper.manager]
+        E[RL Orchestrator<br/>python -m rl.orchestrator]
+        F[FastAPI Backend<br/>port 8001]
+        G[Next.js Dashboard<br/>port 3000]
+    end
+
+    subgraph "Infrastructure"
+        H[(TimescaleDB :5432<br/>Database: phoenix_betting)]
+        I[(Redis :6379<br/>Broker & Shared State)]
+    end
+
+    subgraph "12-Specialist Model Zoo"
+        J[Format & Gender Router<br/>rl/model_zoo.py]
+        K[12 PPO Specialists<br/>models/specialists/*.zip]
+    end
+
+    A --> D
+    B -->|scripts/batch_cricsheet_historical_importer.py| H
+    C -->|scripts/weekly_cricsheet_sync_and_retrain.py| K
+    D --> I
+    D --> H
+    I --> E
+    H --> E
+    E --> J
+    J --> K
+    F --> H
+    F --> I
+    F --> J
+    G --> F
 ```
 
 ---
 
-## CLI Reference
+## 2. Infrastructure & Credentials
 
-All management is done through `phoenix.ps1`:
+| Component | Default Host & Port | Credentials / Target | Notes |
+|---|---|---|---|
+| **TimescaleDB** | `localhost:5432` | `user=phoenix`<br/>`password=phoenix_secure_2026`<br/>`database=phoenix_betting` | Hypertable partitioned time-series storage. |
+| **Redis** | `localhost:6379` | `db=0` (no auth by default) | Pub/Sub message broker & real-time state. |
+| **Backend API** | `localhost:8001` | — | FastAPI application gateway (`backend.main:app`). |
+| **Frontend UI** | `localhost:3000` | — | Next.js 14 reactive dashboard. |
+| **Target Bookmaker** | Web | `https://lotusbook.cc/cricket` | CDP WebSocket interception + DOM polling. |
+| **Model Zoo Storage** | Filesystem | `models/specialists/` | 12 dedicated PPO checkpoints for format/gender. |
+
+---
+
+## 3. PowerShell CLI (`phoenix.ps1`) Reference
+
+All operational tasks can be managed using the root PowerShell harness:
 
 | Command | Description |
-|---------|-------------|
-| `.\phoenix.ps1 start` | Start all services |
-| `.\phoenix.ps1 start -InfraOnly` | Start only Redis + TimescaleDB |
-| `.\phoenix.ps1 start -Dev` | Include PgAdmin + Redis Commander |
-| `.\phoenix.ps1 stop` | Stop all services |
-| `.\phoenix.ps1 stop -KeepInfra` | Stop apps but keep DB running |
-| `.\phoenix.ps1 status` | Health check all services |
-| `.\phoenix.ps1 logs` | Recent logs from all services |
-| `.\phoenix.ps1 logs -Service scraper` | Logs for a specific service |
-| `.\phoenix.ps1 restart -Service backend` | Restart a specific service |
-| `.\phoenix.ps1 test` | Run all test suites |
-| `.\phoenix.ps1 test -Suite unit` | Run only unit tests |
-| `.\phoenix.ps1 db-init` | Initialize database schema |
-| `.\phoenix.ps1 orch` | Show orchestrator lifecycle state |
-| `.\phoenix.ps1 backup` | Backup TimescaleDB to file |
-| `.\phoenix.ps1 restore` | Restore from latest backup |
-| `.\phoenix.ps1 open` | Open dashboard in browser |
+|---|---|
+| `.\phoenix.ps1 start` | Start all infrastructure and application daemons. |
+| `.\phoenix.ps1 start -InfraOnly` | Start only TimescaleDB and Redis containers. |
+| `.\phoenix.ps1 start -Dev` | Start services with developer UI tools (pgAdmin, Redis Commander). |
+| `.\phoenix.ps1 stop` | Gracefully shut down all background processes and containers. |
+| `.\phoenix.ps1 stop -KeepInfra` | Stop application processes while keeping TimescaleDB and Redis running. |
+| `.\phoenix.ps1 status` | Health check all services, ports, and background tasks. |
+| `.\phoenix.ps1 logs` | Aggregate tail of recent logs across all running components. |
+| `.\phoenix.ps1 logs -Service scraper` | Tail logs specifically for the Scraper Manager. |
+| `.\phoenix.ps1 orch` | Print current RL Orchestrator lifecycle state from Redis. |
+| `.\phoenix.ps1 sync` | Download latest Cricsheet matches and fine-tune specialist models. |
+| `.\phoenix.ps1 db-init` | Run database schema initialization and migrations. |
+| `.\phoenix.ps1 backup` | Dump `phoenix_betting` database to a timestamped `.sql` archive. |
+| `.\phoenix.ps1 restore` | Restore database from the most recent backup archive. |
 
 ---
 
-## API Endpoints
+## 4. Key Configuration Parameters (`shared/config.py` & `.env`)
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/health` | System health |
-| GET | `/api/matches/active` | Live matches |
-| GET | `/api/matches/odds/{id}` | Odds history |
-| GET | `/api/training/metrics` | Training metrics |
-| GET | `/api/training/summary` | Training summary |
-| GET | `/api/agent/state` | Agent state |
-| GET | `/api/agent/bets` | Virtual bet history |
-| GET | `/api/agent/performance` | Performance summary |
-| GET | `/api/graduation/status` | Graduation progress |
-| GET | `/api/advisor/state` | Orchestrator state |
-| GET | `/api/advisor/stats` | Orchestrator stats |
-| GET | `/api/advisor/signals` | Bet signals |
-| GET | `/api/advisor/shadow/performance` | Shadow trading metrics |
-| GET | `/api/advisor/shadow/drift` | Drift detection status |
-| POST | `/api/advisor/demote` | Manually demote agent |
-| GET | `/api/matches/training-status` | List all matches with training status |
-| GET | `/api/matches/{id}/validate` | Run data quality validation on a match |
-| PATCH | `/api/matches/{id}/approve` | Approve match for training (runs validation first) |
-| PATCH | `/api/matches/{id}/reject` | Reject match from training |
-| DELETE | `/api/matches/{id}` | Delete rejected match and all its data |
-| POST | `/api/matches/{id}/result` | **NEW:** Submit manual match result (fallback when Cricbuzz fails) |
-| GET | `/api/matches/{id}/closing_odds` | **NEW:** Get closing odds for CLV calculation |
-| PATCH | `/api/matches/{id}/approve-scrape` | Approve match for scraping |
-| PATCH | `/api/matches/{id}/reject-scrape` | Reject match from scraping |
-| GET | `/api/training/data-quality` | Episode quality gate report for all matches |
-| POST | `/api/agent/settle-pending` | Retroactively settle pending bets with match results |
-| GET | `/api/matches/context/{id}` | Match context history |
-| GET | `/api/training/steps` | Current training progress |
+| Parameter | Environment Variable | Default Value | Description |
+|---|---|---|---|
+| **Per-Match Budget** | `PER_MATCH_BUDGET` | `100_000` | Base capital commitment per match ($100k / ₹1,00,000). |
+| **Budget Tolerance** | `BUDGET_TOLERANCE_PERCENT` | `0.20` | +20% opportunity buffer (extends budget up to $120,000). |
+| **Max Bets Per Match** | `MAX_BETS_PER_MATCH` | `25` | Base target trades executed per match (20–25). |
+| **Bet Volume Tolerance**| `BETS_TOLERANCE_PERCENT` | `0.20` | +20% opportunity buffer (extends cap up to 30 trades). |
+| **Tolerance Min Confidence**| `TOLERANCE_MIN_CONFIDENCE` | `0.75` | Minimum model confidence required to access tolerance buffer. |
+| **Max Bets Per Hour** | `MAX_BETS_PER_HOUR` | `30` | Rate-limiting ceiling to prevent high-frequency churn. |
+| **Small Stake %** | `SMALL_STAKE_PERCENT`| `0.02` | Small bet stake: 2% of budget ($2,000). |
+| **Large Stake %** | `LARGE_STAKE_PERCENT`| `0.04` | Large bet stake: 4% of budget ($4,000). |
+| **Observation Size** | `OBSERVATION_SIZE` | `50` | Exact feature vector dimension. |
+| **Scraper Target URL**| `SCRAPER_BETTING_SITE_URL` | `https://lotusbook.cc/cricket` | Live exchange scraping target. |
+| **Auto-Approve Matches**| `SCRAPER_AUTO_APPROVE_MATCHES` | `false` | Controls whether Tier-1 matches auto-approve (`false` = manual approval). |
+| **International Only** | `SCRAPER_INTERNATIONAL_ONLY` | `true` | Restricts discovery strictly to verified international & Tier-1 matches. |
+| **Min Quality Score** | `DATA_QUALITY_MIN_SCORE` | `0.70` | Threshold for approving matches into training. |
+| **Exchange Commission**| `EXCHANGE_COMMISSION`| `0.02` | 2.0% Betfair commission on gross winnings. |
+| **Max Lay Odds** | `MAX_LAY_ODDS` | `2.10` | Hard cap on Lay execution to eliminate catastrophic tail risk. |
+
+> [!NOTE]
+> Scraper auto-approval and international filtering can be dynamically toggled at runtime via Redis keys `config:scraper:auto_approve` and `config:scraper:international_only`, or via `GET/POST /api/matches/settings` without restarting daemons.
 
 ---
 
-## Configuration
+## 5. REST API Endpoint Reference (Backend Gateway `:8001`)
 
-All configuration is in `shared/config.py` with environment variable overrides.
+### Health & System Status
+- `GET /api/health` — Checks database, Redis, and worker connectivity.
+- `GET /api/advisor/state` — Returns current RL Orchestrator lifecycle state.
+- `GET /api/advisor/stats` — Returns match accumulation and training statistics.
 
-### Key Settings
+### 12-Specialist Model Zoo & Advisor
+- `GET /api/advisor/specialists` — Returns detailed catalog of all 12 specialist models, including active status, holdout P&L, win rate, Sharpe ratio, and training date.
+- `GET /api/advisor/signals` — Broadcasts real-time trading recommendations tagged with the specific routed specialist.
+- `POST /api/advisor/demote` — Manually demotes an agent back to `VIRTUAL_TRADING` for retraining.
 
-| Setting | Env Var | Default | Description |
-|---------|---------|---------|-------------|
-| DB Password | `POSTGRES_PASSWORD` | - | Set in `.env` |
-| Scraper URL | `SCRAPER_BETTING_SITE_URL` | lotusbook.site/cricket | Target site |
-| International Only | `SCRAPER_INTERNATIONAL_ONLY` | true | Filter for ICC + major franchise matches |
-| Poll Interval | `SCRAPER_POLL_INTERVAL` | 3 seconds | Scraping frequency |
-| Auto-approve Matches | `SCRAPER_AUTO_APPROVE_MATCHES` | false | If false, all matches require manual approval on /matches |
-| RL Algorithm | `RL_ALGORITHM` | ppo | ppo or dqn |
-| Training Steps | `RL_TOTAL_TIMESTEPS` | 500,000 | Initial training steps |
-| Min Matches | `RL_MIN_MATCHES_TO_TRAIN` | 10 | Required before training |
-| Starting Bankroll | `RL_STARTING_BANKROLL` | 100,000 | Virtual bankroll |
+### Automated Weekly Cricsheet Synchronization
+- `GET /api/training/cricsheet-sync/status` — Returns synchronization status (last sync timestamp, matches processed, specialists updated, status: `idle` or `running`).
+- `POST /api/training/cricsheet-sync/trigger` — Manually triggers background download of `recently_added_7_json.zip` and incremental specialist fine-tuning.
 
-### Betting & Anti-Detection Constants (`shared/constants.py`)
+### Matches & Data Validation
+- `GET /api/matches/settings` — Returns runtime scraper governance settings (`auto_approve`, `international_only`).
+- `POST /api/matches/settings` — Updates runtime scraper settings with instant propagation across scraper workers.
+- `GET /api/matches/active` — Lists all currently live cricket matches, enriched with real-time Back/Lay odds, scorecard text, and tick counts.
+- `GET /api/matches/training-status` — Lists all matches with two-phase scrape/training status.
+- `PATCH /api/matches/{id}/approve-scrape` — Approves a discovered match for live odds tick collection.
+- `PATCH /api/matches/{id}/reject-scrape` — Skips/rejects a match from live scraping.
+- `GET /api/matches/{id}/validate` — Executes `EpisodeQualityGate` validation and returns a diagnostic report.
+- `PATCH /api/matches/{id}/approve` — Approves a match for RL training (validates automatically).
+- `PATCH /api/matches/{id}/reject` — Rejects a match from training.
+- `DELETE /api/matches/{id}` — Deletes a rejected match and its associated data.
+- `POST /api/matches/{id}/result` — Manually submits a match result (winner, margin, result type).
+- `GET /api/matches/{id}/closing_odds` — Retrieves closing odds and calculates Closing Line Value (CLV).
 
-| Constant | Value | Description |
-|----------|-------|-------------|
-| `PER_MATCH_BUDGET` | 1,00,000 | Default budget per match |
-| `PAYOUT_HEADROOM_FACTOR` | 1.5 | Budget extends by 1.5× potential payouts |
-| `MAX_BETS_PER_MATCH` | 20 | Reasonable limit per match (prevents runaway betting) |
-| `MIN_BET_INTERVAL_SECONDS` | 15 | Baseline cooldown between bets on same match |
-| Stake Percent (RL env) | SM=1%, LG=3% of bankroll | During RL training episodes |
-| Stake Percent (Live) | SM=10%, LG=25% of per-match budget | During virtual/live trading |
-| `STAKE_ROUND_BUCKETS` | [50..5000] | Human-like stake rounding amounts |
-| `STAKE_NOISE_PERCENT` | 0.20 | +/-20% random noise on stakes |
-| `BET_DELAY_MIN_SECONDS` | 5 | Min random delay before bet placement |
-| `BET_DELAY_MAX_SECONDS` | 15 | Max random delay before bet placement |
-
-### Graduation Criteria
-
-All must be met for 14 consecutive days:
-
-| Criterion | Threshold | Window |
-|-----------|-----------|--------|
-| Win Rate | >= 55% | Last 200 bets |
-| ROI | >= 8% | Last 200 bets |
-| Sharpe Ratio | >= 1.5 | Last 30 days |
-| Max Drawdown | <= 15% | Last 30 days |
-| Profitable Days | >= 10 | Last 14 days |
-| Bet Volume | >= 100 | Last 30 days |
-| Average CLV | > 0 | Last 200 bets |
-
-### Drift Detection (Post-Graduation)
-
-| Threshold | Value | Action |
-|-----------|-------|--------|
-| Win Rate Floor | 50% | Warning |
-| ROI Floor | -2% | Warning |
-| Sharpe Floor | 0.50 | Warning |
-| Max Drawdown | 20% | Warning |
-| Consecutive Drift Days | 5 | Auto-demotion |
+### Virtual Trading & RL Performance
+- `GET /api/agent/bets` — Retrieves historical virtual trades from `virtual_bets`.
+- `GET /api/agent/performance` — Returns aggregate P&L, win rate, Sharpe ratio, and profit factor.
+- `GET /api/training/metrics` — Returns episodic training curves (reward, loss, entropy).
+- `GET /api/graduation/status` — Returns rolling 14-day graduation evaluation status.
 
 ---
 
-## Match Result Pipeline
+## 6. Model Training & Harmonization Runbook
 
-```mermaid
-sequenceDiagram
-    participant M as Match
-    participant RC as ResultCollector
-    participant CB as Cricbuzz API
-    participant UI as Dashboard UI
-    participant DB as TimescaleDB
-    participant RL as RL Environment
-    participant ST as Shadow Trader
-    participant SE as Settlement Engine
-    participant BT as Backtesting
-    
-    Note over M: Match completes
-    RC->>RC: Detect 30+ min<br/>no new ticks
-    RC->>CB: Query verified result
-    
-    alt Cricbuzz available
-        CB-->>RC: Return result
-    else Cricbuzz unavailable
-        RC->>RC: Infer from<br/>match_context
-        UI->>RC: Manual result submission<br/>(NEW)
-    end
-    
-    RC->>DB: Store result +<br/>closing odds (NEW)
-    RC->>RL: Real-outcome training
-    RC->>ST: Verified settlement
-    RC->>SE: CLV calculation<br/>using closing odds
-    RC->>BT: Historical replay<br/>with true outcomes
-    
-    RC->>DB: Publish to<br/>match_results channel
-```
-
----
-
-## Backtesting
-
-Run backtests via the `backtesting/` module:
-
-```python
-from backtesting.backtester import Backtester
-bt = Backtester(model_path="models/best_model.zip")
-results = bt.compare_strategies(episodes)
-# Returns: {"agent": {...}, "hold": {...}, "random": {...}, "momentum": {...}}
-```
-
-Statistical significance is computed via bootstrap 95% CI on Sharpe ratio and mean P&L.
-
----
-
-## Database Backup
-
+### 1. Bulk Historical Harmonization (19,494 Matches)
+To re-process raw Cricsheet JSON archives into the 12 specialist datasets in `data/specialists/`:
 ```powershell
-# Create backup
-.\phoenix.ps1 backup
-
-# Restore from latest
-.\phoenix.ps1 restore
-
-# Restore from specific file
-.\phoenix.ps1 restore -Service "backups\phoenix_backup_20260207.sql"
+$env:PYTHONPATH = "c:\Users\sohai\Downloads\prediction-claude"
+$env:PYTHONHOME = "C:\Users\sohai\AppData\Local\Programs\Python\Python313"
+& "C:\Python313\python.exe" scripts/batch_cricsheet_historical_importer.py
 ```
 
-Backups are stored in the `backups/` directory (auto-cleaned to last 10).
+### 2. Training the 12 Specialist Models
+To train or re-evaluate all 12 specialist models with holdout validation:
+```powershell
+$env:PYTHONPATH = "c:\Users\sohai\Downloads\prediction-claude"
+$env:PYTHONHOME = "C:\Users\sohai\AppData\Local\Programs\Python\Python313"
+& "C:\Python313\python.exe" scripts/train_and_evaluate_all_specialists.py
+```
 
----
+### 3. Executing Weekly Cricsheet Sync & Retraining
+To manually pull recent matches from Cricsheet and incrementally update models:
+```powershell
+.\phoenix.ps1 sync
+```
+Or execute directly via Python:
+```powershell
+$env:PYTHONPATH = "c:\Users\sohai\Downloads\prediction-claude"
+$env:PYTHONHOME = "C:\Users\sohai\AppData\Local\Programs\Python\Python313"
+& "C:\Python313\python.exe" scripts/weekly_cricsheet_sync_and_retrain.py
+```
 
-## Troubleshooting
-
-| Problem | Solution |
-|---------|----------|
-| Backend won't start (port 8001 in use) | Kill stale process: `Get-NetTCPConnection -LocalPort 8001 | Stop-Process` |
-| Scraper failing | Check LotusBook is accessible. Run `.\phoenix.ps1 logs -Service scraper` |
-| Agent stuck in ACCUMULATING | Check scraper is running and collecting matches. Need 10+ with 50+ ticks |
-| Agent demoted after graduation | Performance drift detected. Check shadow trading metrics on Advisor page |
-| No match results being collected | Check `.\phoenix.ps1 logs -Service scraper` for result_collector errors |
-| Database connection issues | Verify `POSTGRES_PASSWORD` in `.env` matches Docker Compose |
+### 4. Background Scheduled Automation
+The RL Orchestrator daemon (`rl/orchestrator.py`) includes a weekly cron schedule that runs `weekly_cricsheet_sync_and_retrain.py` every Monday at 03:00 UTC. When new matches are detected, it:
+1. Deduplicates against previously seen match signatures (`team1_vs_team2_date`).
+2. Appends new matches to the relevant specialist archive in `data/specialists/`.
+3. Performs 4,000 steps of incremental PPO fine-tuning on the affected specialist.
+4. Updates `models/specialists/catalog.json` and notifies the running Model Zoo.

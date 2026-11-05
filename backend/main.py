@@ -12,7 +12,7 @@ from typing import AsyncGenerator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.routers import advisor, agent, demo, graduation, health, matches, training, websocket_router
+from backend.routers import advisor, agent, data, demo, graduation, health, matches, paper, training, websocket_router
 from shared.config import get_settings
 from shared.db import close_database
 from shared.logging import setup_logging
@@ -62,6 +62,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Prometheus metrics (graceful no-op if prometheus_client not installed)
+from backend.observability.metrics import add_metrics_middleware
+add_metrics_middleware(app)
+
 # Include routers
 app.include_router(health.router, prefix="/api", tags=["Health"])
 app.include_router(matches.router, prefix="/api/matches", tags=["Matches"])
@@ -70,6 +74,8 @@ app.include_router(agent.router, prefix="/api/agent", tags=["Agent"])
 app.include_router(graduation.router, prefix="/api/graduation", tags=["Graduation"])
 app.include_router(advisor.router, prefix="/api/advisor", tags=["Advisor"])
 app.include_router(demo.router, prefix="/api/demo", tags=["Demo"])
+app.include_router(paper.router, prefix="/api/paper", tags=["Paper"])
+app.include_router(data.router, prefix="/api/data", tags=["Data"])
 app.include_router(websocket_router.router, tags=["WebSocket"])
 
 

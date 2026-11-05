@@ -1,0 +1,45 @@
+{
+  "run_id": "20261103T065411Z",
+  "git_sha": "307a18052d043dce1891f592cdfe52c618d4532e",
+  "family": "t20",
+  "data_window": {
+    "labelled_matches": 6894,
+    "folds": [
+      2012,
+      2013,
+      2014,
+      2015,
+      2016,
+      2017,
+      2018,
+      2019,
+      2020,
+      2021,
+      2022,
+      2023,
+      2024,
+      2025,
+      2026
+    ],
+    "trained_through": "2026-10-25"
+  },
+  "metrics": {
+    "walk_forward_pooled_v3": {
+      "log_loss": 0.6284987006837356,
+      "brier": 0.22034676181993515,
+      "ece": 0.017424911790565146,
+      "n": 6459
+    }
+  },
+  "gate_status": "not_gated",
+  "gate_note": "promoted only together with the blend version it was fitted for",
+  "name": "prematch_t20",
+  "version": "v0002",
+  "status": "candidate",
+  "parent": null,
+  "registered_at": "2026-11-03T06:55:18.930031+00:00",
+  "artefacts": {
+    "model.joblib": "32b13a4f70548220c2664b986ad42242936ed1aed33f8adb4a012fe6d06617af",
+    "walkforward.json": "a2cdd359a2f820e1a11c018749ed499e160f2d30edd500467efb65c5cc17bd81"
+  }
+}

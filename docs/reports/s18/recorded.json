@@ -1,0 +1,10 @@
+{
+  "export": {
+    "returncode": 1,
+    "stdout_tail": "{\"service\": \"database\", \"host\": \"localhost\", \"event\": \"database_engine_created\", \"level\": \"info\", \"timestamp\": \"2026-11-02T11:15:43.997914Z\"}\n",
+    "stderr_tail": "kfra8p0\\LocalCache\\local-packages\\Python313\\site-packages\\sqlalchemy\\dialects\\postgresql\\asyncpg.py\", line 792, in _handle_exception\n    raise translated_error from error\nsqlalchemy.exc.ProgrammingError: (sqlalchemy.dialects.postgresql.asyncpg.ProgrammingError) <class 'asyncpg.exceptions.UndefinedTableError'>: relation \"odds_ticks_historical\" does not exist\n[SQL: SELECT time, match_id, team_home, team_away, competition, back_home, lay_home, back_draw, lay_draw, back_away, lay_away, volume_back_home, volume_lay_home, volume_back_away, volume_lay_away, implied_prob_home, implied_prob_away, overround, score, wickets, overs, innings, is_live FROM odds_ticks_historical WHERE match_id = $1 ORDER BY time]\n[parameters: ('lb_35178547',)]\n(Background on this error at: https://sqlalche.me/e/20/f405)\n"
+  },
+  "manifest_matches": 0,
+  "manifest_rejected": 0,
+  "keys": {}
+}

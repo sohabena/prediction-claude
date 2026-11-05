@@ -1,262 +1,187 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { StatCard } from "@/components/StatCard";
-import { HealthStatus } from "@/components/HealthStatus";
+import { useApi } from "@/hooks/useApi";
 import { API_BASE } from "@/lib/api";
+import type {
+  DataMatchesResponse,
+  PaperEvidence,
+  PaperLive,
+  TraderCycle,
+} from "@/app/today/types";
+import { MatchCard } from "@/components/today/MatchCard";
+import {
+  fmtDuration,
+  fmtStartsIn,
+  fmtUtcHMS,
+  fmtUtcStamp,
+  parseTs,
+} from "@/components/today/format";
 
-interface Summary {
-  total_timesteps: number;
-  total_episodes: number;
-  recent_win_rate: number;
-  recent_roi: number;
-  recent_sharpe: number;
-  latest_version: string;
-}
+const LIVE_REFRESH_MS = 15_000;
+const EVIDENCE_REFRESH_MS = 300_000;
+const MATCHES_REFRESH_MS = 60_000;
+/** Same threshold as the backend (FRESH_CYCLE = 5 minutes). */
+const STALE_CYCLE_SECONDS = 300;
 
-interface Performance {
-  total_bets: number;
-  settled_bets: number;
-  pending_bets: number;
-  wins: number;
-  losses: number;
-  win_rate: number;
-  total_pnl: number;
-  avg_odds: number;
-  avg_stake: number;
-}
-
-interface OrchestratorState {
-  state: string;
-  model_version: number;
-  curriculum_stage: string;
-  updated_at: string | null;
-}
-
-interface OrchestratorStats {
-  accumulation?: {
-    total_matches: number;
-    total_ticks: number;
-    qualifying_matches: number;
-    min_required: number;
-    ready_to_train: boolean;
-  };
-  training_runs: number;
-}
-
-interface ActiveMatchesResponse {
-  matches: Array<{ match_id: string; is_live: boolean }>;
-}
-
-const STATE_LABELS: Record<string, string> = {
-  accumulating: "Accumulating Data",
-  offline_training: "Offline Training",
-  online_training: "Online Training",
-  virtual_trading: "Virtual Trading",
-  graduated: "Graduated",
-};
-
-const STATE_COLORS: Record<string, string> = {
-  accumulating: "bg-amber-500/20 text-amber-400 border-amber-500/30",
-  offline_training: "bg-cyan-500/20 text-cyan-400 border-cyan-500/30",
-  online_training: "bg-blue-500/20 text-blue-400 border-blue-500/30",
-  virtual_trading: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
-  graduated: "bg-phoenix-500/20 text-phoenix-400 border-phoenix-500/30",
-};
-
-export default function DashboardPage() {
-  const [summary, setSummary] = useState<Summary | null>(null);
-  const [perf, setPerf] = useState<Performance | null>(null);
-  const [orchState, setOrchState] = useState<OrchestratorState | null>(null);
-  const [orchStats, setOrchStats] = useState<OrchestratorStats | null>(null);
-  const [activeMatches, setActiveMatches] = useState<ActiveMatchesResponse | null>(null);
-
+/** Current time in ms, ticking every second so ages and countdowns stay live. */
+function useNow(intervalMs: number): number {
+  const [now, setNow] = useState<number>(() => Date.now());
   useEffect(() => {
-    const load = async () => {
-      try {
-        const [summaryRes, perfRes, stateRes, statsRes, matchesRes] = await Promise.all([
-          fetch(`${API_BASE}/training/summary`),
-          fetch(`${API_BASE}/agent/performance`),
-          fetch(`${API_BASE}/advisor/state`),
-          fetch(`${API_BASE}/advisor/stats`),
-          fetch(`${API_BASE}/matches/active`),
-        ]);
-        setSummary(await summaryRes.json());
-        setPerf(await perfRes.json());
-        setOrchState(await stateRes.json());
-        setOrchStats(await statsRes.json());
-        setActiveMatches(await matchesRes.json());
-      } catch (err) {
-        console.error("Failed to load dashboard data", err);
-      }
-    };
-    load();
-    const interval = setInterval(load, 10000);
-    return () => clearInterval(interval);
-  }, []);
+    const id = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+  return now;
+}
 
-  const currentState = orchState?.state ?? "accumulating";
-  const liveCount = activeMatches?.matches?.filter((m) => m.is_live).length ?? 0;
-  const totalMatches = activeMatches?.matches?.length ?? 0;
-  const accum = orchStats?.accumulation;
+function CycleLine({ cycle, nowMs }: { cycle: TraderCycle | null; nowMs: number }) {
+  if (!cycle || !cycle.cycle_at) {
+    return (
+      <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+        No trader cycle has been recorded yet, so the trader may not be running.
+      </div>
+    );
+  }
+  const cycleMs = parseTs(cycle.cycle_at);
+  const ageSec = cycleMs === null ? null : (nowMs - cycleMs) / 1000;
+  const stale = cycle.stale || ageSec === null || ageSec > STALE_CYCLE_SECONDS;
+  const ageText = ageSec === null ? "age unknown" : `${fmtDuration(ageSec)} ago`;
+
+  if (stale) {
+    return (
+      <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+        <strong>Stale trader cycle:</strong> the last cycle was {ageText} ({fmtUtcHMS(cycle.cycle_at)} UTC). The
+        trader may have stopped.
+      </div>
+    );
+  }
+  return (
+    <p className="text-sm text-zinc-400 tabular-nums">
+      Last trader cycle: <span className="text-zinc-200">{fmtUtcHMS(cycle.cycle_at)} UTC</span>, {ageText}
+      {cycle.reference ? <span className="text-zinc-500"> · reference {cycle.reference}</span> : null}
+    </p>
+  );
+}
+
+function EmptyState({
+  matches,
+  nowMs,
+}: {
+  matches: { data: DataMatchesResponse | null; loading: boolean; error: string | null };
+  nowMs: number;
+}) {
+  const upcoming = (matches.data?.matches ?? [])
+    .flatMap((m) => {
+      const startMs = parseTs(m.start);
+      return m.state === "pre-match" && startMs !== null && startMs > nowMs ? [{ m, startMs }] : [];
+    })
+    .sort((a, b) => a.startMs - b.startMs)[0];
+
+  let next: string;
+  if (upcoming) {
+    const { m, startMs } = upcoming;
+    const comp = m.competition ? ` · ${m.competition}` : "";
+    next = `Next match: ${m.team_home} v ${m.team_away}${comp}, starts ${fmtUtcStamp(m.start)} (${fmtStartsIn(startMs, nowMs)}).`;
+  } else if (!matches.data && matches.loading) {
+    next = "Looking up the next match start…";
+  } else if (!matches.data && matches.error) {
+    next = `Could not load the next match start (${matches.error}).`;
+  } else {
+    next = "No pre-match is listed in the next 3 days.";
+  }
 
   return (
-    <div>
-      <div className="flex items-start justify-between mb-2">
-        <h1 className="text-3xl font-bold">PHOENIX Dashboard</h1>
-        <HealthStatus />
-      </div>
-      <p className="text-zinc-400 mb-8">
-        Cricket Betting RL System — Real-time Overview
-      </p>
+    <div className="rounded-xl border border-zinc-800/60 bg-zinc-900/60 p-6 backdrop-blur-md">
+      <p className="text-lg font-semibold text-zinc-100">No match is being traded right now</p>
+      <p className="mt-2 text-sm text-zinc-400">{next}</p>
+    </div>
+  );
+}
 
-      {/* Lifecycle State Banner */}
-      <div className={`mb-6 p-4 rounded-xl border flex items-center justify-between ${STATE_COLORS[currentState] ?? "bg-zinc-800 text-zinc-300 border-zinc-700"}`}>
-        <div>
-          <span className="text-xs uppercase tracking-wider opacity-70">Lifecycle State</span>
-          <p className="text-lg font-bold">{STATE_LABELS[currentState] ?? currentState}</p>
-        </div>
-        <div className="flex items-center gap-6 text-sm">
-          <div className="text-center">
-            <p className="text-xs opacity-70">Live</p>
-            <p className="font-bold">{liveCount}</p>
-          </div>
-          <div className="text-center">
-            <p className="text-xs opacity-70">Tracked</p>
-            <p className="font-bold">{totalMatches}</p>
-          </div>
-          {orchState?.model_version != null && orchState.model_version > 0 && (
-            <div className="text-center">
-              <p className="text-xs opacity-70">Model</p>
-              <p className="font-bold">v{orchState.model_version}</p>
-            </div>
-          )}
-        </div>
-      </div>
+function LoadingState() {
+  return (
+    <div className="space-y-4" aria-busy="true" aria-label="Loading">
+      {[0, 1].map((i) => (
+        <div key={i} className="h-56 animate-pulse rounded-xl border border-zinc-800/60 bg-zinc-900/60" />
+      ))}
+    </div>
+  );
+}
 
-      {/* Data Accumulation (shown when accumulating) */}
-      {accum && currentState === "accumulating" && (
-        <div className="mb-6 p-4 rounded-xl bg-zinc-800/50 border border-zinc-700">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium text-zinc-300">Data Accumulation</span>
-            <span className="text-xs text-zinc-500">
-              {accum.qualifying_matches} / {accum.min_required} qualifying matches
+export default function TodayPage() {
+  const live = useApi<PaperLive>("/paper/live", LIVE_REFRESH_MS);
+  const evidence = useApi<PaperEvidence>("/paper/evidence", EVIDENCE_REFRESH_MS);
+  const matches = useApi<DataMatchesResponse>("/data/matches?days=3", MATCHES_REFRESH_MS);
+  const nowMs = useNow(1000);
+
+  const data = live.data;
+  // Show the banner unless R3 is known to have passed (unknown counts as not passed).
+  const r3Passed = evidence.data?.r3_passed === true;
+
+  return (
+    <div className="w-full min-w-0 space-y-6">
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="mb-2 text-3xl font-bold">Today</h1>
+          <p className="text-zinc-400">
+            What the paper trader holds right now: each match traded, its prices and P&amp;L by variant against the cap,
+            and the last trades.
+          </p>
+        </div>
+        {data ? (
+          <p className="text-xs tabular-nums text-zinc-500">
+            Updated {fmtUtcHMS(data.generated_at)} UTC · refreshes every 15 s
+          </p>
+        ) : null}
+      </header>
+
+      {!r3Passed ? (
+        <div role="status" className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+          <strong>No real-money signals:</strong> no variant has passed R3 yet. Everything here is paper (virtual)
+          betting.
+          {evidence.error && !evidence.data ? (
+            <span className="mt-1 block text-xs text-amber-300/80">
+              The R3 status could not be loaded ({evidence.error}); retrying every 5 minutes.
             </span>
-          </div>
-          <div className="h-2.5 bg-zinc-700 rounded-full overflow-hidden mb-2">
-            <div
-              className="h-full bg-phoenix-500 rounded-full transition-all duration-700"
-              style={{ width: `${Math.min(100, (accum.qualifying_matches / Math.max(accum.min_required, 1)) * 100)}%` }}
-            />
-          </div>
-          <div className="flex justify-between text-xs text-zinc-500">
-            <span>{accum.total_ticks.toLocaleString()} total ticks</span>
-            <span>{accum.ready_to_train ? "Ready to train" : `Need ${accum.min_required - accum.qualifying_matches} more`}</span>
-          </div>
+          ) : null}
         </div>
+      ) : null}
+
+      {data ? (
+        <>
+          <CycleLine cycle={data.cycle} nowMs={nowMs} />
+
+          {live.error ? (
+            <div role="alert" className="rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+              The last refresh failed ({live.error}). Showing data from {fmtUtcHMS(data.generated_at)} UTC; retrying
+              every 15 s.
+            </div>
+          ) : null}
+
+          {data.matches.length === 0 ? (
+            <EmptyState matches={matches} nowMs={nowMs} />
+          ) : (
+            <section className="space-y-4" aria-label="Matches being traded">
+              <h2 className="text-sm font-semibold uppercase tracking-widest text-zinc-400">
+                {data.matches.length} match{data.matches.length === 1 ? "" : "es"} being traded
+              </h2>
+              {data.matches.map((m) => (
+                <MatchCard key={m.match_id} match={m} nowMs={nowMs} />
+              ))}
+            </section>
+          )}
+        </>
+      ) : live.error ? (
+        <div role="alert" className="rounded-xl border border-red-500/40 bg-red-500/10 p-5">
+          <p className="font-semibold text-red-300">The paper trader API is not responding.</p>
+          <p className="mt-1 text-sm text-zinc-300">
+            Could not load {API_BASE}/paper/live ({live.error}). The page retries every 15 s. Check that the backend is
+            running.
+          </p>
+        </div>
+      ) : (
+        <LoadingState />
       )}
-
-      {/* Training Stats */}
-      <h2 className="text-xl font-semibold mb-4 text-zinc-300">
-        Training Progress
-      </h2>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <StatCard
-          label="Total Timesteps"
-          value={summary?.total_timesteps?.toLocaleString() ?? "—"}
-        />
-        <StatCard
-          label="Episodes"
-          value={summary?.total_episodes?.toLocaleString() ?? "—"}
-        />
-        <StatCard
-          label="Win Rate (1h)"
-          value={
-            summary?.recent_win_rate
-              ? `${(summary.recent_win_rate * 100).toFixed(1)}%`
-              : "—"
-          }
-          color={
-            summary && summary.recent_win_rate > 0.55
-              ? "green"
-              : summary && summary.recent_win_rate > 0.5
-                ? "yellow"
-                : "red"
-          }
-        />
-        <StatCard
-          label="Sharpe (1h)"
-          value={summary?.recent_sharpe?.toFixed(2) ?? "—"}
-          color={
-            summary && summary.recent_sharpe > 1.5
-              ? "green"
-              : summary && summary.recent_sharpe > 0
-                ? "yellow"
-                : "red"
-          }
-        />
-      </div>
-
-      {/* Trading Stats */}
-      <h2 className="text-xl font-semibold mb-4 text-zinc-300">
-        Virtual Trading
-      </h2>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <StatCard
-          label="Total Bets"
-          value={
-            perf
-              ? `${perf.total_bets.toLocaleString()}${perf.pending_bets > 0 ? ` (${perf.pending_bets} pending)` : ""}`
-              : "—"
-          }
-        />
-        <StatCard
-          label="Win Rate"
-          value={
-            perf?.win_rate ? `${(perf.win_rate * 100).toFixed(1)}%` : "—"
-          }
-          color={perf && perf.win_rate > 0.55 ? "green" : "yellow"}
-        />
-        <StatCard
-          label="Total P&L"
-          value={
-            perf?.total_pnl !== undefined
-              ? `${perf.total_pnl >= 0 ? "+" : ""}${perf.total_pnl.toFixed(0)}`
-              : "—"
-          }
-          color={perf && perf.total_pnl > 0 ? "green" : "red"}
-        />
-        <StatCard
-          label="Avg Odds"
-          value={perf?.avg_odds?.toFixed(2) ?? "—"}
-        />
-      </div>
-
-      {/* Agent Status */}
-      <h2 className="text-xl font-semibold mb-4 text-zinc-300">System</h2>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard
-          label="Agent Version"
-          value={summary?.latest_version ?? "—"}
-        />
-        <StatCard
-          label="ROI (1h)"
-          value={
-            summary?.recent_roi
-              ? `${(summary.recent_roi * 100).toFixed(1)}%`
-              : "—"
-          }
-          color={
-            summary && summary.recent_roi > 0.08
-              ? "green"
-              : summary && summary.recent_roi > 0
-                ? "yellow"
-                : "red"
-          }
-        />
-        <StatCard label="Wins / Losses" value={perf ? `${perf.wins} / ${perf.losses}` : "—"} />
-        <StatCard label="Avg Stake" value={perf?.avg_stake?.toFixed(0) ?? "—"} />
-      </div>
     </div>
   );
 }

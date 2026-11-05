@@ -11,6 +11,7 @@ from typing import Any
 import numpy as np
 
 from shared.logging import setup_logging
+from shared.metrics import sharpe as _sharpe
 
 logger = setup_logging("backtest_report")
 
@@ -80,13 +81,8 @@ def bootstrap_ci(
 
 
 def _compute_sharpe(returns: np.ndarray) -> float:
-    """Compute annualized Sharpe ratio from daily returns."""
-    if len(returns) < 2:
-        return 0.0
-    std = float(np.std(returns))
-    if std == 0:
-        return 0.0
-    return float(np.mean(returns) / std * np.sqrt(252))
+    """Non-annualised Sharpe of per-period returns (see shared.metrics.sharpe)."""
+    return _sharpe(returns)
 
 
 def generate_report(

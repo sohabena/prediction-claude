@@ -1,0 +1,70 @@
+# Antigravity AI IDE: Deep Project Analysis & Execution Prompt
+
+Copy and paste the following prompt to the Antigravity AI IDE:
+
+---
+
+## Task: Comprehensive Project Analysis, Execution, & Delivery
+
+I need you, Antigravity AI IDE, to perform an exhaustive analysis of my project, execute and test its functions using browser automation, optimize the codebase, and deliver a fully functional, verified project. Follow this structured approach:
+
+### Phase 1: Project Discovery & Deep Research
+
+**1.1 Codebase Exploration & Deep Research**
+- Thoroughly study the entire project structure and identify:
+  - All major directories and their purposes
+  - Key configuration files (package.json, tsconfig.json, Dockerfile, etc.)
+  - Technology stack (languages, frameworks, libraries, databases)
+- Conduct deep research on the project's domain, current implementation, and best practices to fully understand the architecture and dependencies.
+
+**1.2 Application Logic & Goal Mapping**
+- Identify all application entry points, core modules, data flows, and state management.
+- Analyze the primary business, user, and technical goals.
+- Perform a gap analysis to find bugs, performance bottlenecks, and areas for improvement.
+
+### Phase 2: Execution & Automated Testing
+
+**2.1 Browser Automation & Function Execution**
+- Start the application locally.
+- Use your browser automation capabilities to interact with the application.
+- Execute different functions, navigate through user flows, and thoroughly test the UI/UX.
+- Document any console errors, network failures, or visual bugs encountered during execution.
+
+### Phase 3: Comprehensive Updates & Optimization
+
+**3.1 Codebase Fixes & Optimization**
+- Based on the findings from Phase 1 and Phase 2, update all necessary components in the best possible way.
+- Fix all identified bugs, errors, and logic flaws.
+- Optimize performance, scalability, and maintainability.
+- Apply modern design aesthetics and ensure the UI/UX is premium, dynamic, and fully responsive.
+
+### Phase 4: Post-Fix Verification 
+
+**4.1 Verification via Browser Automation**
+- After applying fixes and updates, restart the application if necessary.
+- Use the browser automation tool AGAIN to verify everything.
+- Re-run the functions and user flows to confirm that all issues are resolved and no new regressions were introduced.
+
+### Phase 5: Final Delivery
+
+**5.1 Complete Project Handoff**
+- Deliver the complete, fully functioning project.
+- Provide a clear summary of what was analyzed, what was fixed, and the final verification results.
+- Ensure the project is stable, robust, and ready for production or the next stage of development.
+
+---
+
+### Additional Context
+[Insert any specific context about your project here, such as:
+- Project domain/industry
+- Specific URLs, routes, or functions you want tested via browser automation
+- Current pain points or known bugs
+- Any particular areas you want focused on]
+
+---
+
+## Instructions for Use
+
+1. **Replace the bracketed section** at the end with your specific project context.
+2. **Provide necessary environment variables** or setup instructions if the project requires them to run locally.
+3. **Review the outputs** and let the IDE know if any specific feature needs further iteration.

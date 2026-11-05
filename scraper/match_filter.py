@@ -27,7 +27,9 @@ COMPETITION_WHITELIST: list[str] = [
     # International formats
     r"t20i", r"odi", r"\btest\b", r"bilateral",
     # Major franchise leagues (top-tier only)
+    # Note: "Indian Premier League" does not contain the substring "ipl"; use indian\s*premier + explicit ipl/tata
     r"\bipl\b", r"indian\s*premier", r"tata\s*ipl",
+    r"\bwpl\b", r"women'?s\s*premier", r"women\s+premier",
     r"\bbbl\b", r"big\s*bash",
     r"\bpsl\b", r"pakistan\s*super",
     r"\bcpl\b", r"caribbean\s*premier",
@@ -49,6 +51,24 @@ COMPETITION_BLACKLIST: list[str] = [
     r"sheffield\s*shield", r"ranji\s*trophy",
     r"bangladesh\s*premier", r"lanka\s*premier", r"afghanistan\s*premier",
 ]
+
+# Simulated / computer-generated cricket (S37). Token matches, case-insensitive, checked on
+# competition and team names. These are never real cricket and must never be recorded.
+SIMULATED_PATTERNS: list[str] = [
+    r"\bsrl\b", r"\bsimulated\b", r"\bvirtual\b", r"\be-?cricket\b",
+]
+_SIMULATED_RE = [re.compile(p, re.IGNORECASE) for p in SIMULATED_PATTERNS]
+
+
+def is_simulated_name(*names: str | None) -> bool:
+    """True when any name carries a simulated-league token (SRL, Simulated, Virtual, E-Cricket)."""
+    for name in names:
+        if not name:
+            continue
+        if any(p.search(name) for p in _SIMULATED_RE):
+            return True
+    return False
+
 
 # ============================================================
 # Layer 2: Team Name Database (imported from shared.constants)
@@ -75,7 +95,22 @@ class MatchClassifier:
         self.enabled = enabled
         self._whitelist_re = [re.compile(p, re.IGNORECASE) for p in COMPETITION_WHITELIST]
         self._blacklist_re = [re.compile(p, re.IGNORECASE) for p in COMPETITION_BLACKLIST]
-        self._stats = {"accepted": 0, "rejected": 0, "unknown_teams_logged": 0}
+        self._stats = {"accepted": 0, "rejected": 0, "unknown_teams_logged": 0, "simulated_rejected": 0}
+
+    def reject_if_simulated(self, event: OddsEvent) -> bool:
+        """Return True and count the event when it is a simulated (SRL/virtual) match.
+
+        Independent of ``enabled``: the recording gate calls it even when the filter is off.
+        """
+        if not is_simulated_name(event.competition, event.team_home, event.team_away):
+            return False
+        self._stats["simulated_rejected"] += 1
+        logger.debug(
+            "match_rejected_simulated",
+            competition=event.competition,
+            teams=f"{event.team_home} vs {event.team_away}",
+        )
+        return True
 
     def qualifies(self, event: OddsEvent) -> bool:
         """
@@ -86,8 +121,17 @@ class MatchClassifier:
         if not self.enabled:
             return True
 
-        # Layer 0: Blacklist always wins
-        if self._is_blacklisted(event.competition):
+        # Layer 0a (S37): simulated leagues are rejected and counted separately
+        if self.reject_if_simulated(event):
+            self._stats["rejected"] += 1
+            return False
+
+        # Layer 0: Blacklist always wins (checks competition, team_home, and team_away)
+        if (
+            self._is_blacklisted(event.competition)
+            or self._is_blacklisted(event.team_home)
+            or self._is_blacklisted(event.team_away)
+        ):
             logger.debug(
                 "match_rejected_blacklist",
                 competition=event.competition,
@@ -143,6 +187,26 @@ class MatchClassifier:
             team_away=event.team_away,
         )
 
+    def is_international_or_major(self, event: OddsEvent) -> bool:
+        """
+        Strictly verify whether a match is official international or major franchise.
+        Returns False for all SRL, simulated, cyber, minor, and unverified matches.
+        """
+        # 1. Any blacklist pattern in competition or team names immediately fails
+        if (
+            self._is_blacklisted(event.competition)
+            or self._is_blacklisted(event.team_home)
+            or self._is_blacklisted(event.team_away)
+        ):
+            return False
+
+        # 2. Whitelisted competition name
+        if event.competition and self._is_whitelisted(event.competition):
+            return True
+
+        # 3. Known team name recognition (both teams must be recognised)
+        return self._is_known_team(event.team_home) and self._is_known_team(event.team_away)
+
     def _is_whitelisted(self, competition: str) -> bool:
         """Check if competition matches any whitelist pattern."""
         for pattern in self._whitelist_re:
@@ -162,7 +226,21 @@ class MatchClassifier:
     def _is_known_team(self, team_name: str) -> bool:
         """Check if a team name is in the known teams database."""
         normalized = team_name.lower().strip()
-        return normalized in ALL_KNOWN_TEAMS
+        if normalized in ALL_KNOWN_TEAMS:
+            return True
+        # LotusBook often appends " W" / " Women" for women's franchise sides (WPL).
+        stripped = self._strip_womens_suffix(normalized)
+        return stripped != normalized and stripped in ALL_KNOWN_TEAMS
+
+    @staticmethod
+    def _strip_womens_suffix(normalized: str) -> str:
+        """Remove common women's-side suffixes so WPL teams match men's franchise aliases."""
+        n = normalized
+        for suffix in (" (w)", " w", " women", " w."):
+            if n.endswith(suffix):
+                n = n[: -len(suffix)].strip()
+                break
+        return n
 
     @property
     def stats(self) -> dict[str, int]:

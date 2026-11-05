@@ -26,8 +26,12 @@ tensorboard>=2.15.0
 
 # --- Data & ML ---
 pandas>=2.2.0
-numpy>=1.26.0
-scikit-learn>=1.4.0
+# Pinned to the versions the models are trained with: joblib pickles of scikit-learn models only load under the same
+# scikit-learn (1.9 cannot read 1.6 pickles: "No module named '_loss'"). Bump together and retrain.
+numpy==2.2.4
+scipy==1.15.2
+scikit-learn==1.6.1
+joblib==1.4.2
 
 # --- Web Scraping ---
 playwright>=1.41.0
@@ -49,5 +53,4 @@ httpx>=0.26.0
 
 # --- Utilities ---
 python-dotenv>=1.0.0
-httpx>=0.26.0
 orjson>=3.9.0

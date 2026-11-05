@@ -1,0 +1,186 @@
+{
+  "specialist_key": "odi_men",
+  "created_at": "2026-11-02T11:13:24.056251+00:00",
+  "config": {
+    "gamma": 0.99,
+    "lr": 0.0003,
+    "ent_coef": 0.008,
+    "n_steps": 2048,
+    "batch_size": 64,
+    "n_epochs": 5,
+    "net_arch": {
+      "pi": [
+        256,
+        256,
+        128
+      ],
+      "vf": [
+        256,
+        256,
+        128
+      ]
+    },
+    "timesteps_per_match": 300,
+    "epochs_over_data": 3,
+    "n_envs": 8,
+    "patience": 5
+  },
+  "seed": 0,
+  "n_envs": 8,
+  "data_hash": "bb177825d3cd:74160",
+  "split_ids_hash": {
+    "train": "b7ce812badc3",
+    "val": "b9b242af1ef5",
+    "holdout": "14906ff7a8f5"
+  },
+  "split_sizes": {
+    "train": 235,
+    "val": 50,
+    "holdout": 52
+  },
+  "git_sha": "160d9cf",
+  "planned_timesteps": 211500,
+  "timesteps_run": 212992,
+  "best_val_mean_match_pnl": 3006.12,
+  "val_history": [
+    {
+      "timesteps": 21152,
+      "val_mean_match_pnl": 2007.1
+    },
+    {
+      "timesteps": 42304,
+      "val_mean_match_pnl": 1758.63
+    },
+    {
+      "timesteps": 63456,
+      "val_mean_match_pnl": 1378.55
+    },
+    {
+      "timesteps": 84600,
+      "val_mean_match_pnl": 1286.2
+    },
+    {
+      "timesteps": 105752,
+      "val_mean_match_pnl": 1391.43
+    },
+    {
+      "timesteps": 126904,
+      "val_mean_match_pnl": 3006.12
+    },
+    {
+      "timesteps": 148056,
+      "val_mean_match_pnl": 1432.76
+    },
+    {
+      "timesteps": 169200,
+      "val_mean_match_pnl": 1031.77
+    },
+    {
+      "timesteps": 190352,
+      "val_mean_match_pnl": 1429.59
+    },
+    {
+      "timesteps": 211504,
+      "val_mean_match_pnl": 1793.06
+    }
+  ],
+  "holdout_metrics": {
+    "key": "odi_men",
+    "format_name": "Men's One-Day International",
+    "matches_trained": 235,
+    "matches_tested": 52,
+    "timesteps": 212992,
+    "total_bets": 1415,
+    "avg_bets_per_match": 27.21,
+    "hedged_bets": 682,
+    "hedge_rate_pct": 48.2,
+    "win_rate_pct": 84.62,
+    "total_pnl": 130364.19,
+    "mean_roi_pct": 2.507,
+    "sharpe_ratio": 0.742,
+    "max_drawdown_dollars": 6489.16,
+    "max_drawdown_pct": 0.1248,
+    "profit_factor": 8.426,
+    "policy": "model",
+    "evaluated_at": "2026-11-02T11:13:13.936091+00:00",
+    "holdout_match_ids_hash": "14906ff7a8f5",
+    "code_version": "160d9cf",
+    "n_matches": 52,
+    "bet_win_rate_pct": 51.66,
+    "total_stake": 2027937.26,
+    "roi_on_turnover_pct": 6.4284,
+    "mean_match_pnl": 2507.0,
+    "pnl_ci95_low": 1619.4,
+    "pnl_ci95_high": 3400.87,
+    "commission_paid": 3018.75,
+    "edge_vs_random": -9596.59,
+    "baselines": {
+      "random": {
+        "key": "odi_men",
+        "format_name": "Men's One-Day International",
+        "matches_trained": 0,
+        "matches_tested": 52,
+        "timesteps": 0,
+        "total_bets": 1520,
+        "avg_bets_per_match": 29.23,
+        "hedged_bets": 818,
+        "hedge_rate_pct": 53.82,
+        "win_rate_pct": 50.0,
+        "total_pnl": 629386.51,
+        "mean_roi_pct": 12.1036,
+        "sharpe_ratio": 0.3729,
+        "max_drawdown_dollars": 39614.95,
+        "max_drawdown_pct": 0.7618,
+        "profit_factor": 4.59,
+        "policy": "random",
+        "evaluated_at": "2026-11-02T11:13:19.544434+00:00",
+        "holdout_match_ids_hash": "14906ff7a8f5",
+        "code_version": "160d9cf",
+        "n_matches": 52,
+        "bet_win_rate_pct": 49.21,
+        "total_stake": 4257874.68,
+        "roi_on_turnover_pct": 14.7817,
+        "mean_match_pnl": 12103.59,
+        "pnl_ci95_low": 4276.27,
+        "pnl_ci95_high": 21963.29,
+        "commission_paid": 16422.32,
+        "edge_vs_random": null,
+        "baselines": {}
+      },
+      "hold": {
+        "key": "odi_men",
+        "format_name": "Men's One-Day International",
+        "matches_trained": 0,
+        "matches_tested": 52,
+        "timesteps": 0,
+        "total_bets": 0,
+        "avg_bets_per_match": 0.0,
+        "hedged_bets": 0,
+        "hedge_rate_pct": 0.0,
+        "win_rate_pct": 0.0,
+        "total_pnl": 0.0,
+        "mean_roi_pct": 0.0,
+        "sharpe_ratio": 0.0,
+        "max_drawdown_dollars": 0.0,
+        "max_drawdown_pct": 0.0,
+        "profit_factor": 0.0,
+        "policy": "hold",
+        "evaluated_at": "2026-11-02T11:13:24.056196+00:00",
+        "holdout_match_ids_hash": "14906ff7a8f5",
+        "code_version": "160d9cf",
+        "n_matches": 52,
+        "bet_win_rate_pct": 0.0,
+        "total_stake": 0.0,
+        "roi_on_turnover_pct": 0.0,
+        "mean_match_pnl": 0.0,
+        "pnl_ci95_low": 0.0,
+        "pnl_ci95_high": 0.0,
+        "commission_paid": 0.0,
+        "edge_vs_random": null,
+        "baselines": {}
+      }
+    }
+  },
+  "model_path": "C:\\Users\\sohai\\Downloads\\prediction-claude\\models\\specialists_v2\\odi_men_v1.zip",
+  "vecnorm_path": "C:\\Users\\sohai\\Downloads\\prediction-claude\\models\\specialists_v2\\odi_men_v1_vecnorm.pkl"
+}

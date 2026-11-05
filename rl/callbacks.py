@@ -227,6 +227,14 @@ class DatabaseMetricsCallback(BaseCallback):
                     if isinstance(info.get("step_info"), dict):
                         win_rate = info["step_info"].get("win_rate", 0.0)
                         roi = info["step_info"].get("roi", 0.0)
+                    policy_loss = 0.0
+                    value_loss = 0.0
+                    entropy = 0.0
+                    if self.logger:
+                        policy_loss = float(self.logger.name_to_value.get("train/policy_loss", 0.0))
+                        value_loss = float(self.logger.name_to_value.get("train/value_loss", 
+                                        self.logger.name_to_value.get("train/loss", 0.0)))
+                        entropy = float(self.logger.name_to_value.get("train/entropy_loss", 0.0))
 
                     self._pending_rows.append({
                         "time": datetime.now(timezone.utc),
@@ -238,9 +246,9 @@ class DatabaseMetricsCallback(BaseCallback):
                         "roi": float(roi),
                         "sharpe_ratio": 0.0,
                         "max_drawdown": 0.0,
-                        "policy_loss": 0.0,
-                        "value_loss": 0.0,
-                        "entropy": 0.0,
+                        "policy_loss": policy_loss,
+                        "value_loss": value_loss,
+                        "entropy": entropy,
                         "agent_version": self.agent_version,
                     })
 

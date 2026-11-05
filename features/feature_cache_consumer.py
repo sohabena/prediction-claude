@@ -16,7 +16,7 @@ from features.pipeline import FeaturePipeline
 from features.store import FeatureStore
 from shared.constants import CHANNEL_MATCH_EVENTS
 from shared.logging import setup_logging
-from shared.redis_client import get_redis
+from shared.redis_client import BoundedDedupe, default_consumer_name, get_redis
 from shared.schemas import OddsEvent, PortfolioState
 
 logger = setup_logging("feature_cache_consumer")
@@ -52,6 +52,7 @@ class FeatureCacheConsumer:
         self._store = FeatureStore()
         self._running = False
         self._pubsub: Optional[Any] = None
+        self._seen_ticks = BoundedDedupe()
 
     async def start(self) -> None:
         """Subscribe and process match_events."""
@@ -59,29 +60,25 @@ class FeatureCacheConsumer:
         logger.info("feature_cache_consumer_started")
 
         redis = await get_redis()
-        self._pubsub = await redis.subscribe(CHANNEL_MATCH_EVENTS)
-
         try:
-            async for raw_message in self._pubsub.listen():
+            async for msg in redis.consume_bus(
+                "feature_cache", default_consumer_name("fc-"), [CHANNEL_MATCH_EVENTS]
+            ):
                 if not self._running:
                     break
-                if raw_message.get("type") != "message":
+                data = msg.data
+                key = (data.get("match_id"), data.get("timestamp"))
+                if None not in key and key in self._seen_ticks:
+                    await redis.ack_bus(msg)
                     continue
-
-                data = raw_message.get("data")
-                if not data:
-                    continue
-
-                if isinstance(data, str):
-                    try:
-                        data = json.loads(data)
-                    except json.JSONDecodeError:
-                        continue
-
                 try:
                     await self._handle_event(data)
                 except Exception as e:
                     logger.debug("feature_cache_error", error=str(e))
+                    continue  # stays pending for redelivery
+                if None not in key:
+                    self._seen_ticks.add(key)
+                await redis.ack_bus(msg)
 
         except asyncio.CancelledError:
             pass

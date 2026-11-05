@@ -1,0 +1,9 @@
+{
+  "model": "models/market_dynamics/20261104.joblib",
+  "version": "s97-1",
+  "date": "20261104",
+  "activated_at": "2026-11-04T02:34:04.939335+00:00",
+  "reason": "no active model: the first model is activated",
+  "train_matches": 14,
+  "lomo_simulated_clv_primary": -0.0269379248428003
+}
