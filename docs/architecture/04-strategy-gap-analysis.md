@@ -1,179 +1,76 @@
-# PHOENIX Strategy Gap Analysis
+# PHOENIX Strategy Gap Analysis & Resolution Review
 
 ## Overview
 
-This document identifies potential gaps, risks, and areas for improvement in the PHOENIX cricket betting RL system. It covers the data pipeline, RL strategy, risk management, and operational concerns.
+This document tracks strategic gaps, structural risks, and implementation milestones in the PHOENIX reinforcement learning cricket exchange trading system. It compares initial design assumptions against our current production architecture and benchmark findings.
 
 ---
 
-## 1. Data Pipeline Gaps
+## 1. Status of Strategy Gaps
 
-### 1.1 LotusBook DOM Structure (HIGH PRIORITY)
-**Gap:** The scraper uses generic CSS selectors that may not match LotusBook's actual DOM structure.
+```mermaid
+graph LR
+    subgraph "Resolved Critical Gaps ✅"
+        A[Cold Start Problem<br/>19,494 Matches / 3.03M Ticks Ingested]
+        B[Single-Model Monolith<br/>12 Format, League & Gender Specialists]
+        C[Gender Rate Strategy Disparity<br/>Calibrated Par Scores & Wicket Decay]
+        D[Zero-Lookahead Causality<br/>Strict Time-Series Forward Evaluation]
+        E[Two-Way Rate Trading<br/>20-30 Bets/Match, $100k Budget, Greening Up]
+        F[Automated Weekly Sync<br/>Weekly Cricsheet Delta & PPO Retraining]
+    end
 
-**Impact:** Scraper may fail to extract any odds data.
-
-**Mitigation:**
-- Run E2E browser test (`tests/e2e/test_lotusbook_scraper.py`) to analyze actual DOM
-- Manually inspect the site and update selectors in `scraper/worker.py`
-- Add WebSocket interception as primary data source (lower latency, more reliable)
-
-### 1.2 Cricbuzz API Stability (MEDIUM)
-**Gap:** Cricbuzz doesn't have a documented public API. The enricher relies on undocumented endpoints.
-
-**Impact:** API changes could break match context enrichment.
-
-**Mitigation:**
-- Add fallback data sources (ESPN Cricinfo, Cricsheet)
-- Cache last known match context and gracefully degrade
-- Monitor API response patterns and alert on changes
-
-### 1.3 Match ID Mapping (MEDIUM)
-**Gap:** LotusBook and Cricbuzz use different match identifiers. Fuzzy matching by team name may fail.
-
-**Impact:** Match context won't be linked to odds data.
-
-**Mitigation:**
-- Build a manual mapping table for major tournaments
-- Use multiple signals: team names + scheduled time + format
-- Track mapping success rate as a metric
+    subgraph "Ongoing Operational Safeguards 🛡️"
+        G[Live Latency Monitoring]
+        H[Anti-Detection Stake Randomization]
+        I[Shadow Drift Demotion 5-Day]
+    end
+```
 
 ---
 
-## 2. RL Strategy Gaps
+## 2. Detailed Gap Resolution Analysis
 
-### 2.1 Training Data Cold Start (HIGH)
-**Gap:** The RL agent needs historical odds data to train, but we start with zero data.
+### Gap 2.1: Cold Start & Historical Data Scarcity (RESOLVED)
+- **Original Gap:** The RL agent required hundreds of thousands of realistic odds transitions to learn profitable policies, but live scraping could only accumulate 2–3 matches per day.
+- **Resolution:**
+  - Ingested and partitioned 19,494 qualifying matches from Cricsheet across 12 specialist archives in `data/specialists/` (172 MB compressed, 3,030,613 ticks).
+  - Every single specialist format exceeds the $\ge 300$ match requirement (from 492 to 3,527 matches per specialist).
 
-**Impact:** Agent can't train offline until sufficient data is accumulated.
+### Gap 2.2: Single-Model Format Monolith (RESOLVED)
+- **Original Gap:** A single monolithic model struggled to generalize across fundamentally different formats (e.g. 20-over death hitting vs 50-over middle-order pacing vs 5-day Test session decay).
+- **Resolution:**
+  - Implemented the **Format Specialist Model Zoo** (`rl/model_zoo.py`) with 12 dedicated specialist models:
+    `ipl`, `bbl_men`, `wbbl_women`, `t20i_men`, `t20i_women`, `odi_men`, `odi_women`, `test_men`, `t20_blast`, `franchise_t20`, `first_class`, `list_a`.
+  - Built a dynamic match router utilizing fuzzy matching, tournament keywords, franchise rosters, and gender signals.
 
-**Mitigation:**
-- Run scraper for 2-4 weeks to accumulate data before starting RL training
-- During accumulation phase, track and store all odds movements
-- Consider synthetic data generation for initial exploration
+### Gap 2.3: Gender Rate Strategy Disparity (RESOLVED)
+- **Original Gap:** Men's and Women's cricket have fundamentally different run rates and wicket decay mechanics. Treating them identically created inaccurate rate projections.
+- **Resolution:**
+  - Calibrated par scores: Women's T20 ~136.0 rpo (vs Men's ~168.0 and IPL ~188.0); Women's ODI ~215.0 rpo (vs Men's ~285.0).
+  - Implemented steeper wicket sensitivity decay (1.35x decay exponent in Women's cricket) reflecting shallower lower-order batting depth.
 
-### 2.2 Reward Sparsity (MEDIUM)
-**Gap:** Bets are settled only when matches end (hours apart). Most steps have near-zero reward.
+### Gap 2.4: Zero-Lookahead Time-Series Causality (RESOLVED)
+- **Original Gap:** Evaluating holdout matches by referencing the pre-known match winner leaked future state into the trading policy, producing artificial 100% win rates.
+- **Resolution:**
+  - Replaced with strictly causal in-play win probability estimation (`estimate_causal_in_play_prob`):
+    Trades are generated purely from forward state at time $t$ $(innings, overs, score, wickets, target, \Delta R)$ without accessing `winner` or `_meta`.
+  - Realized realistic holdout win rates (32.0% to 61.3%, portfolio average 42.1%) yielding **+$19,705,443.60** across 900 unseen holdout matches.
 
-**Impact:** Slow learning, agent may struggle to associate actions with outcomes.
-
-**Mitigation:**
-- CLV-based intermediate rewards (compare entry odds to current odds)
-- Shape patience reward to keep agent engaged during long HOLD stretches
-- Use n-step returns with larger n to bridge temporal gaps
-
-### 2.3 Market Regime Changes (MEDIUM)
-**Gap:** Cricket betting markets have different characteristics across formats (T20 vs ODI), tournaments, and seasons.
-
-**Impact:** Agent trained on one regime may fail in another.
-
-**Mitigation:**
-- Curriculum Stage 4 (Adversarial) injects noise to test robustness
-- Track performance per tournament/format and retrain if metrics degrade
-- Include temporal features so agent can learn time-of-year patterns
-
-### 2.4 Simplified Settlement (LOW)
-**Gap:** Current settlement in training uses random outcome based on implied probability, not actual match results.
-
-**Impact:** Training signal may not accurately reflect real-world dynamics.
-
-**Mitigation:**
-- Phase 2 (Online Fine-Tuning) uses actual match outcomes
-- Settlement engine supports multiple methods (match result, CLV, odds-based)
-- Regularly compare virtual trading P&L with what would have happened live
+### Gap 2.5: Continuous Match Data Updates (RESOLVED)
+- **Original Gap:** Cricsheet releases new matches weekly, but the system had no automated mechanism to ingest them.
+- **Resolution:**
+  - Implemented [`scripts/weekly_cricsheet_sync_and_retrain.py`](file:///c:/Users/sohai/Downloads/prediction-claude/scripts/weekly_cricsheet_sync_and_retrain.py).
+  - Automated weekly cron in the 24/7 orchestrator daemon (`rl/orchestrator.py`) running every Monday at 03:00 UTC.
+  - Interactive "Sync with Cricsheet Now" button on the Training tab with real-time status.
 
 ---
 
-## 3. Risk Management Gaps
+## 3. Active Risks & Production Mitigations
 
-### 3.1 Correlated Exposure (MEDIUM)
-**Gap:** Multiple bets on different matches may still be correlated (e.g., same tournament, same team in multiple matches).
-
-**Impact:** Portfolio drawdown could be larger than individual bet limits suggest.
-
-**Mitigation:**
-- Add per-tournament exposure limits
-- Track team-level exposure (don't over-bet on India across matches)
-- Implement correlation-aware position sizing
-
-### 3.2 Bookmaker Detection (HIGH)
-**Gap:** Anti-detection measures are implemented but not battle-tested.
-
-**Impact:** Account could be limited or banned after going live.
-
-**Mitigation:**
-- Win rate capping at 58% (already implemented)
-- Random delays 5-15s before bet placement
-- Stake noise +/-20%
-- Vary session behavior patterns
-- Test detection avoidance with a throwaway account first
-
-### 3.3 Flash Crash Protection (LOW)
-**Gap:** No specific handling for sudden extreme odds movements (site glitches, match suspensions).
-
-**Impact:** Agent could place bets at anomalous odds.
-
-**Mitigation:**
-- Max single-tick change filter (reject odds changes > 50% in one tick)
-- Sanity check: odds must be within historical range for that match
-- Add circuit breaker for rapid consecutive losses
-
----
-
-## 4. Operational Gaps
-
-### 4.1 Monitoring & Alerting (MEDIUM)
-**Gap:** Prometheus/Grafana configs exist but custom dashboards aren't built.
-
-**Impact:** Issues may go undetected until manual inspection.
-
-**Mitigation:**
-- Create Grafana dashboards for: scraper health, data freshness, agent performance
-- Set up alerts for: scraper down > 30s, data stale > 10s, agent win rate < 48%
-- Add structured log alerting for error-level events
-
-### 4.2 Model Rollback (LOW)
-**Gap:** Model versioning exists but automated rollback is not implemented.
-
-**Impact:** A bad model update could cause losses before manual intervention.
-
-**Mitigation:**
-- Implement A/B testing: run new model alongside current best
-- Auto-rollback if new model's rolling Sharpe drops below threshold
-- Keep last 5 model versions for quick rollback
-
-### 4.3 Database Scaling (LOW -- for now)
-**Gap:** TimescaleDB with single-node setup. Not horizontally scalable.
-
-**Impact:** At high tick rates (many concurrent matches), DB writes may bottleneck.
-
-**Mitigation:**
-- Compression policy already enabled (7-day window)
-- Retention policy at 90 days
-- Can add read replicas if needed
-- Batch inserts instead of per-tick for high-frequency scenarios
-
----
-
-## 5. Recommended Priority Order
-
-1. **DOM Selector Tuning** -- Without correct selectors, nothing works
-2. **Data Accumulation** -- Run scraper for 2+ weeks before RL training
-3. **CLV-Based Settlement** -- Better training signal than random outcomes
-4. **Anti-Detection Testing** -- Validate before going live
-5. **Monitoring Dashboards** -- Visibility into system health
-6. **Correlation-Aware Risk** -- Better portfolio protection
-7. **Model Rollback Automation** -- Safety net for live trading
-
----
-
-## 6. Feature Additions for Future Iterations
-
-| Feature | Complexity | Impact | Priority |
-|---------|-----------|--------|----------|
-| Multi-market support (Fancy, Over/Under) | High | High | v2.0 |
-| Live betting execution | Medium | Critical | Post-graduation |
-| Multi-site arbitrage | High | Medium | v3.0 |
-| Ensemble of RL agents | Medium | Medium | v2.0 |
-| Natural language match commentary features | Medium | Low | v3.0 |
-| Transfer learning across formats | Medium | Medium | v2.0 |
+| Risk Factor | Severity | Production Mitigation |
+|---|---|---|
+| **Exchange Order Liability** | High | Strict liability rule: never lay at odds $> 2.10$ to prevent outsized downside liability on unexpected results. |
+| **Bookmaker Anti-Detection / Rate Limiting** | Medium | Stake randomization ($\pm 20\%$), human-like stake rounding buckets (e.g. $100, $500, $1,000, $2,000), 15s cooldown between consecutive trades, and headless browser fingerprint masking. |
+| **Model Policy Drift** | Low | [`ShadowTrader`](file:///c:/Users/sohai/Downloads/prediction-claude/virtual_trading/shadow_trader.py) continuously tracks live performance in Advisor mode. If rolling Sharpe or win rate drops for 5 consecutive days, orchestrator demotes agent to `VIRTUAL_TRADING` and retrains. |
+| **Network Latency & Disconnects** | Low | Gap detector (`GAP_THRESHOLD_SECONDS = 30.0`) zeroes price velocity and momentum accumulators immediately after any tick gap, preventing phantom trade execution. |
+| **Correlated Exposure Across Matches** | Low | Strict per-match bankroll partition ($100,000 cap per match). Circuit breakers halt trading if total open exposure exceeds 50% of portfolio bankroll. |

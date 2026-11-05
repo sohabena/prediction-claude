@@ -13,8 +13,8 @@ Available pages and their URLs:
 | Graduation | http://localhost:3000/graduation |
 | Live Matches | http://localhost:3000/matches |
 | Advisor (Signals) | http://localhost:3000/advisor |
-| API Health | http://localhost:8000/api/health |
-| API Docs (Swagger) | http://localhost:8000/docs |
+| API Health | http://localhost:8001/api/health |
+| API Docs (Swagger) | http://localhost:8001/docs |
 | PgAdmin | http://localhost:5050 |
 | Redis Commander | http://localhost:8081 |
 | Prometheus | http://localhost:9090 |

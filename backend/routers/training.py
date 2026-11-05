@@ -1,17 +1,26 @@
-"""Training metrics and progress endpoints."""
+"""Training metrics, progress, and data quality endpoints.
+
+Thin HTTP layer — all business logic delegated to TrainingService.
+"""
 
 from __future__ import annotations
 
 from typing import Any
 
 from fastapi import APIRouter, Query
-from sqlalchemy import text
 
-from shared.db import get_session
+from backend.services.training_service import TrainingService
 from shared.logging import setup_logging
 
 router = APIRouter()
 logger = setup_logging("router_training")
+svc = TrainingService()
+
+
+@router.get("/steps")
+async def get_training_progress() -> dict[str, Any]:
+    """Get current offline training progress."""
+    return await svc.get_training_progress()
 
 
 @router.get("/metrics")
@@ -20,41 +29,7 @@ async def get_training_metrics(
 ) -> dict[str, Any]:
     """Get recent training metrics."""
     try:
-        async with get_session() as session:
-            result = await session.execute(
-                text("""
-                    SELECT time, episode, total_timesteps, episode_reward,
-                           episode_length, win_rate, roi, sharpe_ratio,
-                           max_drawdown, policy_loss, value_loss, entropy,
-                           agent_version
-                    FROM training_metrics
-                    ORDER BY time DESC
-                    LIMIT :limit
-                """),
-                {"limit": limit},
-            )
-            rows = result.fetchall()
-            return {
-                "count": len(rows),
-                "metrics": [
-                    {
-                        "time": row[0].isoformat() if row[0] else None,
-                        "episode": row[1],
-                        "total_timesteps": row[2],
-                        "episode_reward": row[3],
-                        "episode_length": row[4],
-                        "win_rate": row[5],
-                        "roi": row[6],
-                        "sharpe_ratio": row[7],
-                        "max_drawdown": row[8],
-                        "policy_loss": row[9],
-                        "value_loss": row[10],
-                        "entropy": row[11],
-                        "agent_version": row[12],
-                    }
-                    for row in rows
-                ],
-            }
+        return await svc.get_training_metrics(limit)
     except Exception as e:
         logger.error("training_metrics_error", error=str(e))
         return {"count": 0, "metrics": [], "error": str(e)}
@@ -63,38 +38,63 @@ async def get_training_metrics(
 @router.get("/summary")
 async def get_training_summary() -> dict[str, Any]:
     """Get a summary of the latest training state."""
-    try:
-        async with get_session() as session:
-            result = await session.execute(
-                text("""
-                    SELECT
-                        MAX(total_timesteps) as total_steps,
-                        MAX(episode) as total_episodes,
-                        AVG(win_rate) FILTER (WHERE time > NOW() - INTERVAL '1 hour') as recent_win_rate,
-                        AVG(roi) FILTER (WHERE time > NOW() - INTERVAL '1 hour') as recent_roi,
-                        AVG(sharpe_ratio) FILTER (WHERE time > NOW() - INTERVAL '1 hour') as recent_sharpe,
-                        MAX(agent_version) as latest_version
-                    FROM training_metrics
-                """)
-            )
-            row = result.fetchone()
-            if row:
-                return {
-                    "total_timesteps": row[0] or 0,
-                    "total_episodes": row[1] or 0,
-                    "recent_win_rate": float(row[2] or 0),
-                    "recent_roi": float(row[3] or 0),
-                    "recent_sharpe": float(row[4] or 0),
-                    "latest_version": row[5] or "none",
-                }
-    except Exception as e:
-        logger.error("training_summary_error", error=str(e))
+    return await svc.get_training_summary()
 
+
+@router.get("/data-quality")
+async def get_data_quality(
+    limit: int = Query(50, ge=1, le=200),
+) -> dict[str, Any]:
+    """Run the episode quality gate on recent approved matches."""
+    try:
+        return await svc.get_data_quality(limit)
+    except Exception as e:
+        logger.error("data_quality_error", error=str(e))
+        return {
+            "total_episodes": 0, "passed": 0, "failed": 0,
+            "avg_quality_score": 0.0, "reports": [], "error": str(e),
+        }
+
+
+@router.get("/cricsheet-sync/status")
+async def get_cricsheet_sync_status() -> dict[str, Any]:
+    """Get the status of the weekly Cricsheet sync & retraining pipeline."""
+    import json
+    from pathlib import Path
+    status_file = Path("models/specialists/weekly_sync_status.json")
+    if status_file.exists():
+        try:
+            with open(status_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error("error_reading_sync_status", error=str(e))
     return {
-        "total_timesteps": 0,
-        "total_episodes": 0,
-        "recent_win_rate": 0.0,
-        "recent_roi": 0.0,
-        "recent_sharpe": 0.0,
-        "latest_version": "none",
+        "success": True,
+        "new_matches_found": 0,
+        "updated_specialists": [],
+        "timestamp": None,
+        "message": "Weekly sync has not run yet or status file is absent.",
     }
+
+
+@router.post("/cricsheet-sync")
+async def trigger_cricsheet_sync() -> dict[str, Any]:
+    """
+    Trigger on-demand Cricsheet synchronization and specialist model fine-tuning.
+    Runs asynchronously in the background.
+    """
+    import asyncio
+    from scripts.weekly_cricsheet_sync_and_retrain import run_weekly_sync_and_retrain
+
+    async def _run():
+        try:
+            await run_weekly_sync_and_retrain(timesteps=4000)
+        except Exception as e:
+            logger.error("manual_cricsheet_sync_error", error=str(e))
+
+    asyncio.create_task(_run())
+    return {
+        "status": "initiated",
+        "message": "Weekly Cricsheet sync & retraining task initiated in background.",
+    }
+

@@ -1,0 +1,55 @@
+{
+  "run_id": "20261103T075207Z",
+  "git_sha": "8bbedb8032f9a19805bdb5ddf9175f4188eed502",
+  "gate_source": "blend_20261103T075207Z",
+  "gate_status": {
+    "r1_pass": [],
+    "r2_pass": [],
+    "signals_allowed": false
+  },
+  "data_window": {
+    "dataset_dir": "C:\\Users\\sohai\\Downloads\\prediction-claude\\data\\retrain\\20261103T075207Z\\dataset",
+    "dataset_generated_at_utc": "2026-11-03T07:53:58.903895+00:00",
+    "matches": 28,
+    "settled": 11,
+    "first_match_date": "2026-11-02",
+    "last_match_date": "2026-11-06"
+  },
+  "rows": {
+    "usable": 0,
+    "with_model": 0
+  },
+  "metrics": {
+    "gate_counts": {
+      "insufficient": 26
+    },
+    "walk_forward_predictions": 0
+  },
+  "prematch_versions": {
+    "t20": "v0003",
+    "odi": "v0003"
+  },
+  "baseline": {
+    "p_market": {
+      "edges": [],
+      "fractions": [],
+      "n": 0
+    },
+    "p_model": {
+      "edges": [],
+      "fractions": [],
+      "n": 0
+    }
+  },
+  "name": "blend",
+  "version": "v0003",
+  "status": "candidate",
+  "parent": null,
+  "registered_at": "2026-11-03T07:55:44.136167+00:00",
+  "artefacts": {
+    "latest.json": "9262c0e91cd9c75c5524ef75da837c627abf15d5e97b4744162f1246206f0572",
+    "predictions.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "gate.json": "ffed83ebfa6f4860f652d7279a1e7f0c0af583d273bd36bf7c975e88edab3210",
+    "gate.md": "564381d815b125e685be97540e96be048329f6774ec1746892222b7a72043cb6"
+  }
+}

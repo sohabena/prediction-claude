@@ -1,5 +1,3 @@
-version: '3.8'
-
 # ============================================================
 # PHOENIX - Cricket Betting RL System
 # Docker Compose for local Windows deployment
@@ -7,6 +5,7 @@ version: '3.8'
 # Usage:
 #   Development:  docker compose --profile dev up -d
 #   Production:   docker compose --profile prod up -d
+#   Recording:    docker compose --profile recording up -d   (scraper, trainer, paper trader, quality monitor, backend, frontend)
 #   Full stack:   docker compose --profile dev --profile monitor up -d
 # ============================================================
 
@@ -60,8 +59,15 @@ services:
       dockerfile: Dockerfile.backend
     container_name: phoenix-backend
     ports:
-      - "${API_PORT:-8000}:8000"
+      - "${API_PORT:-8001}:8001"
+    # S91: read-only mounts. The paper and data API reads the trader log, the quality log, the daily reports and the
+    # models. Its one write (POST /api/data/results) goes to the database, with an audit line in logs/set_result.jsonl.
+    volumes:
+      - ./logs:/app/logs  # writable: the result form appends its audit line to logs/set_result.jsonl
+      - ./reports:/app/reports:ro
+      - ./models:/app/models:ro
     environment:
+      - PHOENIX_ROOT=/app
       - POSTGRES_HOST=timescaledb
       - POSTGRES_PORT=5432
       - POSTGRES_DB=${POSTGRES_DB:-phoenix_betting}
@@ -69,8 +75,9 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-phoenix_secure_2026}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - API_PORT=8000
-      - API_CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000}
+      - API_PORT=8001
+      - API_CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3001,http://127.0.0.1:3001,http://localhost:3000}
+      - RL_MIN_MATCHES_TO_TRAIN=${RL_MIN_MATCHES_TO_TRAIN:-10}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - LOG_FORMAT=json
     depends_on:
@@ -79,12 +86,12 @@ services:
       timescaledb:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/api/health')"]
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8001/api/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
     restart: unless-stopped
-    profiles: ["dev", "prod"]
+    profiles: ["dev", "prod", "recording"]
     networks:
       - phoenix-app
       - phoenix-monitor
@@ -97,16 +104,117 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - SCRAPER_BETTING_SITE_URL=${SCRAPER_BETTING_SITE_URL:-https://lotusbook.site/cricket}
+      - POSTGRES_HOST=timescaledb
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-phoenix}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-phoenix_secure_2026}
+      - POSTGRES_DB=${POSTGRES_DB:-phoenix_betting}
+      - SCRAPER_BETTING_SITE_URL=${SCRAPER_BETTING_SITE_URL:-https://lotusbook.cc/cricket}
       - SCRAPER_HEADLESS=${SCRAPER_HEADLESS:-true}
       - SCRAPER_POLL_INTERVAL=${SCRAPER_POLL_INTERVAL:-3}
+      # Recording run: every real match (simulated SRL is always rejected), live and pre-match
+      - SCRAPER_INTERNATIONAL_ONLY=${SCRAPER_RECORD_INTERNATIONAL_ONLY:-false}
+      - SCRAPER_RECORD_ALL=1
+      - SCRAPER_RECORD_PREMATCH=1
+      - SCRAPER_MARKET_PAGES=${SCRAPER_MARKET_PAGES:-1}
+      - SCRAPER_MARKET_WORKER_CAP=${SCRAPER_MARKET_WORKER_CAP:-12}
+      - SCRAPER_STALL_MINUTES=${SCRAPER_STALL_MINUTES:-10}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - LOG_FORMAT=json
+    volumes:
+      - ./logs:/app/logs
+    shm_size: "1gb"   # Chromium crashes with Docker's default 64 MB /dev/shm
     depends_on:
       redis:
         condition: service_healthy
+      timescaledb:
+        condition: service_healthy
     restart: unless-stopped
-    profiles: ["dev", "prod"]
+    profiles: ["dev", "prod", "recording"]
+    networks:
+      - phoenix-data
+
+  # S55: read-only data quality checks, hourly. Built from the scraper's Dockerfile, so it runs the same code.
+  quality-monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile.scraper
+    container_name: phoenix-quality-monitor
+    command: ["python", "scripts/data_quality_monitor.py", "--interval", "3600", "--quarantine"]
+    environment:
+      - POSTGRES_HOST=timescaledb
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-phoenix}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-phoenix_secure_2026}
+      - POSTGRES_DB=${POSTGRES_DB:-phoenix_betting}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_FORMAT=json
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles: ["recording"]
+    networks:
+      - phoenix-data
+
+  # S65: weekly retraining (Mondays 03:00 UTC): Cricsheet sync, S60 prematch, S58 dataset, S61 blend, S63 gate,
+  # registry promotion only on evidence. Built from the scraper's Dockerfile. Models and reports are written to the
+  # host through the bind mounts; nothing is promoted into models/ outside models/registry/.
+  trainer:
+    build:
+      context: .
+      dockerfile: Dockerfile.scraper
+    container_name: phoenix-trainer
+    command: ["python", "scripts/retrain_weekly.py", "--loop"]
+    environment:
+      - POSTGRES_HOST=timescaledb
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-phoenix}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-phoenix_secure_2026}
+      - POSTGRES_DB=${POSTGRES_DB:-phoenix_betting}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_FORMAT=json
+    volumes:
+      - ./logs:/app/logs
+      - ./models:/app/models
+      - ./data:/app/data
+      - ./reports:/app/reports
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles: ["recording"]
+    networks:
+      - phoenix-data
+
+  # S72: paper trader, virtual bets every 15 s on live and upcoming real matches (SRL excluded). No real money.
+  # Built from the scraper's Dockerfile. Reads the database, writes only paper_bets; logs to ./logs/paper_trader.log.
+  paper-trader:
+    build:
+      context: .
+      dockerfile: Dockerfile.scraper
+    container_name: phoenix-paper-trader
+    command: ["python", "scripts/run_paper_trader.py", "--loop"]
+    environment:
+      - POSTGRES_HOST=timescaledb
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-phoenix}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-phoenix_secure_2026}
+      - POSTGRES_DB=${POSTGRES_DB:-phoenix_betting}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_FORMAT=json
+    volumes:
+      - ./logs:/app/logs
+      - ./models:/app/models
+      - ./data:/app/data
+      - ./reports:/app/reports  # daily paper report and the S88 dashboard
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles: ["recording"]
     networks:
       - phoenix-data
 
@@ -161,7 +269,7 @@ services:
       - RL_MODEL_PATH=/app/models/best_model.zip
       - RL_STARTING_BANKROLL=${RL_STARTING_BANKROLL:-100000}
       - RL_GRADUATION_ENABLED=${RL_GRADUATION_ENABLED:-true}
-      - RL_MIN_MATCHES_TO_TRAIN=${RL_MIN_MATCHES_TO_TRAIN:-30}
+      - RL_MIN_MATCHES_TO_TRAIN=${RL_MIN_MATCHES_TO_TRAIN:-10}
       - RL_NIGHTLY_RETRAIN_STEPS=${RL_NIGHTLY_RETRAIN_STEPS:-50000}
       - RL_AUTO_ADVANCE_CURRICULUM=true
       - SCRAPER_INTERNATIONAL_ONLY=true
@@ -188,16 +296,19 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        # NEXT_PUBLIC_* values are inlined at build time: changing this needs `--build frontend`
+        - NEXT_PUBLIC_API_URL=http://localhost:${API_PORT:-8001}/api
     container_name: phoenix-frontend
     ports:
-      - "3000:3000"
+      - "${FRONTEND_PORT:-3001}:3000"  # 3001 on the host: 3000 is often taken by other local tools
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:${API_PORT:-8000}
-      - NEXT_PUBLIC_WS_URL=ws://localhost:${API_PORT:-8000}/ws
+      - NEXT_PUBLIC_API_URL=http://localhost:${API_PORT:-8001}/api
+      - NEXT_PUBLIC_WS_URL=ws://localhost:${API_PORT:-8001}/ws
     depends_on:
       - backend
     restart: unless-stopped
-    profiles: ["dev", "prod"]
+    profiles: ["dev", "prod", "recording"]
     networks:
       - phoenix-app
 

@@ -5,13 +5,14 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, Float, Integer, String
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.models.base import Base
 
 
 class MatchContextRecord(Base):
-    """Time-series record of match statistics from Cricbuzz enricher."""
+    """Time-series record of match statistics derived from LotusBook data."""
 
     __tablename__ = "match_context"
 
@@ -29,3 +30,6 @@ class MatchContextRecord(Base):
     bowling_team: Mapped[str | None] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(String, default="scheduled")
     match_format: Mapped[str] = mapped_column(String, default="T20")
+    # S107 part A: batters, bowler, partnership and last wicket from the live score feed. Nullable: rows before
+    # S107 and rows from feeds without players stay NULL.
+    players: Mapped[dict | None] = mapped_column(JSONB, nullable=True)

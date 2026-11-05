@@ -1,0 +1,33 @@
+{
+  "_provenance": "Real finished livescore-v2 match. result_text is the exact text logged by scraper/manager.py (event score_result_text, match lb_36267578, 2026-11-03T10:20:55.446842Z, logs/scraper_child.log line 69738). final_context_row and result_row are the stored rows. The raw score/v3 body was not logged, so which feed field carried the text (stats.result or stats.status) is not recorded.",
+  "match_id": "lb_36267578",
+  "pipeline": "livescore-v2",
+  "competition": "Nepal Premier League",
+  "team_home": "Biratnagar Kings",
+  "team_away": "Janakpur Bolts",
+  "result_text": "Biratnagar Kings won by 2 runs \ud83c\udfc6",
+  "parsed_as": {
+    "result_type": "win",
+    "winner": "Biratnagar Kings",
+    "margin": "2 runs"
+  },
+  "final_context_row": {
+    "time": "2026-11-03T10:20:55.434915+00:00",
+    "is_live": false,
+    "status": "completed",
+    "score": 172,
+    "wickets": 7,
+    "overs": 20.0,
+    "innings": 2,
+    "batting_team": "Janakpur Bolts",
+    "balls_remaining": 0
+  },
+  "result_row": {
+    "winner": "Biratnagar Kings",
+    "loser": "Janakpur Bolts",
+    "result_type": "win",
+    "margin": "2 runs",
+    "source": "lotusbook_scoreboard",
+    "completed_at": "2026-11-03T10:20:55.447102+00:00"
+  }
+}

@@ -29,12 +29,12 @@ Training is **fully autonomous** -- managed by the Orchestrator (`rl/orchestrato
 
 ### State 1: ACCUMULATING (Data Collection)
 - **What happens**: The orchestrator checks TimescaleDB every 5 minutes for sufficient training data.
-- **Trigger to advance**: When 30+ matches have 50+ odds ticks each (configurable in `shared/config.py`).
+- **Trigger to advance**: When 10+ matches have 50+ odds ticks each (configurable in `shared/config.py`).
 - **No manual action needed** -- the scraper feeds data continuously.
 
 ### State 2: OFFLINE_TRAINING (Initial Model Training)
 - **What happens**: The `MatchDataLoader` loads historical episodes from the DB. A PPO agent trains for 500,000 steps on this data.
-- **Data used**: 66-feature vectors per timestep, including odds movements, momentum indicators, market microstructure, and portfolio state.
+- **Data used**: 74-feature vectors per timestep, including odds movements, momentum indicators, market microstructure, and portfolio state.
 - **Trigger to advance**: Training completes successfully.
 - **Duration**: Hours to days depending on data volume and hardware.
 

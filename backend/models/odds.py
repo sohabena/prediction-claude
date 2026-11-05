@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, String
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, Identity, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.models.base import Base
@@ -17,6 +17,9 @@ class OddsTick(Base):
 
     time: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
     match_id: Mapped[str] = mapped_column(String, primary_key=True)
+    tick_seq: Mapped[int] = mapped_column(
+        BigInteger, Identity(always=True), primary_key=True
+    )
     team_home: Mapped[str] = mapped_column(String, nullable=False)
     team_away: Mapped[str] = mapped_column(String, nullable=False)
     competition: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -29,13 +32,73 @@ class OddsTick(Base):
     back_away: Mapped[float | None] = mapped_column(Float, nullable=True)
     lay_away: Mapped[float | None] = mapped_column(Float, nullable=True)
 
+    # Volume (liquidity available at each price)
+    volume_back_home: Mapped[float | None] = mapped_column(Float, nullable=True)
+    volume_lay_home: Mapped[float | None] = mapped_column(Float, nullable=True)
+    volume_back_away: Mapped[float | None] = mapped_column(Float, nullable=True)
+    volume_lay_away: Mapped[float | None] = mapped_column(Float, nullable=True)
+
     # Derived
     implied_prob_home: Mapped[float | None] = mapped_column(Float, nullable=True)
     implied_prob_away: Mapped[float | None] = mapped_column(Float, nullable=True)
     overround: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # Live match context (from scraper score_text parsing)
+    score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    wickets: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    overs: Mapped[float | None] = mapped_column(Float, nullable=True)
+    innings: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # State
     is_live: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Metadata
     source: Mapped[str] = mapped_column(String, default="lotusbook")
+    scrape_latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class OddsTickHistorical(Base):
+    """Historical / synthetic training ticks (no retention, 30-day chunks)."""
+
+    __tablename__ = "odds_ticks_historical"
+
+    time: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
+    match_id: Mapped[str] = mapped_column(String, primary_key=True)
+    tick_seq: Mapped[int] = mapped_column(
+        BigInteger, Identity(always=True), primary_key=True
+    )
+    team_home: Mapped[str] = mapped_column(String, nullable=False)
+    team_away: Mapped[str] = mapped_column(String, nullable=False)
+    competition: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    # 1X2 Odds
+    back_home: Mapped[float | None] = mapped_column(Float, nullable=True)
+    lay_home: Mapped[float | None] = mapped_column(Float, nullable=True)
+    back_draw: Mapped[float | None] = mapped_column(Float, nullable=True)
+    lay_draw: Mapped[float | None] = mapped_column(Float, nullable=True)
+    back_away: Mapped[float | None] = mapped_column(Float, nullable=True)
+    lay_away: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # Volume (liquidity available at each price)
+    volume_back_home: Mapped[float | None] = mapped_column(Float, nullable=True)
+    volume_lay_home: Mapped[float | None] = mapped_column(Float, nullable=True)
+    volume_back_away: Mapped[float | None] = mapped_column(Float, nullable=True)
+    volume_lay_away: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # Derived
+    implied_prob_home: Mapped[float | None] = mapped_column(Float, nullable=True)
+    implied_prob_away: Mapped[float | None] = mapped_column(Float, nullable=True)
+    overround: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # Live match context (from scraper score_text parsing)
+    score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    wickets: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    overs: Mapped[float | None] = mapped_column(Float, nullable=True)
+    innings: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # State
+    is_live: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Metadata
+    source: Mapped[str] = mapped_column(String, default="lotusbook")
+    scrape_latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)

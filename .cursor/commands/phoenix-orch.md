@@ -16,8 +16,8 @@ This queries the API to show:
 If the API is not reachable, the backend may be down. Suggest running `/phoenix-start`.
 
 You can also query individual endpoints directly:
-- State: `Invoke-RestMethod http://localhost:8000/api/advisor/state`
-- Stats: `Invoke-RestMethod http://localhost:8000/api/advisor/stats`
-- Shadow: `Invoke-RestMethod http://localhost:8000/api/advisor/shadow/performance`
-- Drift: `Invoke-RestMethod http://localhost:8000/api/advisor/shadow/drift`
-- Graduation: `Invoke-RestMethod http://localhost:8000/api/graduation/status`
+- State: `Invoke-RestMethod http://localhost:8001/api/advisor/state`
+- Stats: `Invoke-RestMethod http://localhost:8001/api/advisor/stats`
+- Shadow: `Invoke-RestMethod http://localhost:8001/api/advisor/shadow/performance`
+- Drift: `Invoke-RestMethod http://localhost:8001/api/advisor/shadow/drift`
+- Graduation: `Invoke-RestMethod http://localhost:8001/api/graduation/status`

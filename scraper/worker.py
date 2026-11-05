@@ -1,13 +1,20 @@
 """
-Scraper worker: manages a Playwright page for scraping a single match or match list.
+Scraper worker: manages a Playwright page for scraping LotusBook cricket odds.
 Uses DOM polling with optional WebSocket interception.
+
+Tailored to LotusBook's Tailwind CSS grid layout:
+  - Listing rows carry no competition; the parser derives it from team names
+  - Match links use a[href*="/cricket/"][href*="vs"] (site dropped id=inPlayTeamName)
+  - Odds in sibling col-span-6 divs with back/lay cells
 """
 
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from typing import Any
+from urllib.parse import unquote
 
 from playwright.async_api import Page, Route
 
@@ -17,10 +24,294 @@ from shared.schemas import OddsEvent
 
 logger = setup_logging("scraper_worker")
 
+# JavaScript to extract all match data from LotusBook's cricket page.
+# This runs in the browser context and returns structured match data.
+LOTUSBOOK_EXTRACT_JS = r"""
+() => {
+    const results = [];
+
+    // Match links: historically a#inPlayTeamName; current LotusBook uses plain <a> with
+    // href /cricket/{Team%20vs%20Team}/... and no id (verified Mar 2026).
+    const matchLinks = document.querySelectorAll(
+        'a[href*="/cricket/"][href*="vs"]'
+    );
+
+    for (const link of matchLinks) {
+        try {
+            const href = link.getAttribute('href') || '';
+
+            // Skip competition-level links (no "vs" in href)
+            if (!href.includes('vs')) continue;
+
+            // --- Team names ---
+            let teams = [];
+            const teamSpans = link.querySelectorAll(
+                'span[class*="text_color_primary"], span[class*="text-text_color_primary"]'
+            );
+            for (const span of teamSpans) {
+                const t = span.textContent.trim();
+                // Exclude the date/time span (primary1) and LIVE badge
+                if (t && t.length > 1 && !/^LIVE$/i.test(t) && !span.className.includes('primary1')) {
+                    teams.push(t);
+                }
+            }
+
+            function parseTeamsFromHref(hrefStr) {
+                try {
+                    const m = hrefStr.match(/\/cricket\/([^/?#]+)/i);
+                    if (!m) return [];
+                    const seg = decodeURIComponent(m[1].replace(/\+/g, ' '));
+                    const parts = seg.split(/\s+vs\s+|-vs-/i);
+                    if (parts.length >= 2) {
+                        return [parts[0].trim(), parts[1].trim()];
+                    }
+                } catch (e) {}
+                return [];
+            }
+            function parseTeamsFromLinkText(el) {
+                const raw = (el.textContent || '').trim().replace(/^LIVE\s*/i, '').trim();
+                const parts = raw.split(/\s+vs\s+|-vs-/i);
+                if (parts.length >= 2) {
+                    return [parts[0].trim(), parts[1].trim()];
+                }
+                return [];
+            }
+            if (teams.length < 2) {
+                const fromHref = parseTeamsFromHref(href);
+                if (fromHref.length >= 2) teams = fromHref;
+            }
+            if (teams.length < 2) {
+                const fromText = parseTeamsFromLinkText(link);
+                if (fromText.length >= 2) teams = fromText;
+            }
+            if (teams.length < 2) continue;
+
+            // --- Match ID from URL ---
+            const urlParts = href.split('/');
+            const lotusId = urlParts[urlParts.length - 1] || '';
+
+            // --- Live / time detection ---
+            let isLive = false;
+            let timeText = '';
+            let scoreText = '';
+            let scheduledTime = '';
+
+            // 1. Check for explicit inPlay badge inside link or child elements
+            const inPlayEl = link.querySelector('#inPlay, [id="inPlay"], [class*="inPlay"], [class*="in_play"]');
+            if (inPlayEl) {
+                isLive = true;
+                timeText = inPlayEl.textContent.trim();
+            } else if (/LIVE/i.test(link.textContent || '')) {
+                isLive = true;
+            }
+
+            // 2. Check for scheduled time in spans (e.g. "Today at 10:00 PM", "Tomorrow 12:15 PM")
+            const spans = link.querySelectorAll('span');
+            for (const span of spans) {
+                const raw = span.textContent.trim();
+                if (/today|tomorrow|\d{1,2}[-/]\d{1,2}/i.test(raw)) {
+                    scheduledTime = raw;
+                    break;
+                }
+            }
+
+            // If scheduled time exists and no inPlay badge, it's upcoming (not live)
+            if (scheduledTime && !inPlayEl) {
+                isLive = false;
+            }
+
+            // 3. Score extraction (e.g. 142/3 (18.2))
+            const scorePattern = /(\d{1,3})\/(\d{1,2})(?:\s*\(?([\d.]+)\)?)?/;
+            for (const span of spans) {
+                const t = span.textContent.trim();
+                if (scorePattern.test(t)) {
+                    scoreText = t;
+                    isLive = true;
+                    break;
+                }
+            }
+
+            // --- Competition name ---
+            // The 2026-11 listing has no per-row competition element (verified against
+            // tests/fixtures/lotusbook/listing_page_20261103.html: the left-menu competition names are
+            // not linked to rows, and the In Play / Upcoming Events headings are not competitions).
+            // An explicit data attribute is used if LotusBook adds one; otherwise the parser maps the
+            // competition from the team names (scraper/parsers/lotusbook_parser.py COMPETITION_BY_TEAM).
+            let competition = '';
+            const compEl = link.closest('[data-competition]');
+            if (compEl) {
+                competition = (compEl.getAttribute('data-competition') || '').trim();
+            }
+
+            // --- Odds extraction ---
+            // On lotusbook.cc, odds sit directly in link.nextElementSibling (col-span-6 lg:col-span-7 div).
+            // The odds must belong to THIS match's row. A suspended row has no price buttons; walking further up the
+            // page then finds the next match's odds and records them under this match (seen 2026-11-02:
+            // Oman v Netherlands carried Melbourne Stars W prices). So only look inside ancestors that contain no
+            // other match link; otherwise the row has no prices (stored as null).
+            const ODDS_SEL = 'button[data-odd-type], [class*="backBtnBg"], [class*="layBtnBg"]';
+            function ownsOnlyThisMatch(el) {
+                const others = Array.from(el.querySelectorAll('a[href*="/cricket/"][href*="vs"]'))
+                    .filter(a => a.getAttribute('href') !== href);
+                return others.length === 0;
+            }
+            let oddsDiv = link.nextElementSibling;
+            if (!oddsDiv || !oddsDiv.querySelector(ODDS_SEL) || !ownsOnlyThisMatch(oddsDiv)) {
+                let w = link;
+                oddsDiv = null;
+                for (let depth = 0; depth < 10 && w; depth++) {
+                    const sib = w.nextElementSibling;
+                    if (sib && sib.querySelector && sib.querySelector(ODDS_SEL)) {
+                        if (ownsOnlyThisMatch(sib) && (!w.parentElement || ownsOnlyThisMatch(w.parentElement))) {
+                            oddsDiv = sib;
+                        }
+                        break;
+                    }
+                    w = w.parentElement;
+                    if (w && !ownsOnlyThisMatch(w)) break;  // left this match's row
+                }
+            }
+
+            let back_home = null, lay_home = null;
+            let back_draw = null, lay_draw = null;
+            let back_away = null, lay_away = null;
+            let volume_back_home = null, volume_lay_home = null;
+            let volume_back_away = null, volume_lay_away = null;
+
+            if (oddsDiv) {
+                function parseVolume(txt) {
+                    if (!txt) return null;
+                    const cleaned = txt.replace(/[₹$,\s]/g, '').trim();
+                    if (!cleaned || cleaned === '-') return null;
+                    const abbrevMatch = cleaned.match(/^([\d.]+)\s*(K|L|Lac|Cr|M)?$/i);
+                    if (abbrevMatch) {
+                        let val = parseFloat(abbrevMatch[1]);
+                        const suffix = (abbrevMatch[2] || '').toUpperCase();
+                        if (suffix === 'K') val *= 1000;
+                        else if (suffix === 'L' || suffix === 'LAC') val *= 100000;
+                        else if (suffix === 'CR') val *= 10000000;
+                        else if (suffix === 'M') val *= 1000000;
+                        return val;
+                    }
+                    const num = parseFloat(cleaned);
+                    return isNaN(num) ? null : num;
+                }
+
+                function parseBtn(btn) {
+                    if (!btn) return { odds: null, volume: null };
+                    // 1. Try explicit data attributes (lotusbook.cc)
+                    const dataPrice = btn.getAttribute('data-price');
+                    const dataSize = btn.getAttribute('data-size');
+                    if (dataPrice !== null && dataPrice !== undefined) {
+                        let odds = parseFloat(dataPrice);
+                        let vol = dataSize ? parseFloat(dataSize) : null;
+                        if (!isNaN(odds) && odds > 0) {
+                            return { odds: odds, volume: (!isNaN(vol) && vol > 0) ? vol : null };
+                        }
+                    }
+                    // 2. Fallback: Parse spans or text
+                    const spans = btn.querySelectorAll('span');
+                    let odds = null;
+                    let volume = null;
+                    for (const span of spans) {
+                        const txt = span.textContent.trim();
+                        if (!txt || txt === '-') continue;
+                        const num = parseFloat(txt.replace(/,/g, ''));
+                        if (!isNaN(num) && num > 0) {
+                            if (odds === null) odds = num;
+                            else if (volume === null) volume = parseVolume(txt);
+                        }
+                    }
+                    if (odds === null) {
+                        const fullText = btn.textContent.trim();
+                        const match = fullText.match(/^([\d.]+)/);
+                        if (match) {
+                            const val = parseFloat(match[1]);
+                            if (!isNaN(val) && val > 0) odds = val;
+                        }
+                    }
+                    return { odds, volume };
+                }
+
+                // Check buttons inside oddsDiv
+                const buttons = Array.from(oddsDiv.querySelectorAll('button[data-odd-type]'));
+                if (buttons.length >= 6) {
+                    // Modern lotusbook.cc grid:
+                    // buttons[0..2] = Back Home, Back Draw, Back Away
+                    // buttons[3..5] = Lay Home, Lay Draw, Lay Away
+                    const bH = parseBtn(buttons[0]);
+                    const bD = parseBtn(buttons[1]);
+                    const bA = parseBtn(buttons[2]);
+                    const lH = parseBtn(buttons[3]);
+                    const lD = parseBtn(buttons[4]);
+                    const lA = parseBtn(buttons[5]);
+
+                    back_home = bH.odds; volume_back_home = bH.volume;
+                    back_draw = bD.odds;
+                    back_away = bA.odds; volume_back_away = bA.volume;
+
+                    lay_home = lH.odds; volume_lay_home = lH.volume;
+                    lay_draw = lD.odds;
+                    lay_away = lA.odds; volume_lay_away = lA.volume;
+                } else {
+                    // Fallback to class-based query
+                    const backs = Array.from(oddsDiv.querySelectorAll('[class*="backBtnBg"]'));
+                    const lays = Array.from(oddsDiv.querySelectorAll('[class*="layBtnBg"]'));
+                    if (backs.length > 0 && lays.length > 0) {
+                        const homeB = parseBtn(backs[0]);
+                        const homeL = parseBtn(lays[0]);
+                        back_home = homeB.odds; volume_back_home = homeB.volume;
+                        lay_home = homeL.odds; volume_lay_home = homeL.volume;
+
+                        const awayB = parseBtn(backs[backs.length - 1]);
+                        const awayL = parseBtn(lays[lays.length - 1]);
+                        back_away = awayB.odds; volume_back_away = awayB.volume;
+                        lay_away = awayL.odds; volume_lay_away = awayL.volume;
+
+                        if (backs.length >= 3 && lays.length >= 3) {
+                            const drawB = parseBtn(backs[1]);
+                            const drawL = parseBtn(lays[1]);
+                            back_draw = drawB.odds;
+                            lay_draw = drawL.odds;
+                        }
+                    }
+                }
+            }
+
+            results.push({
+                team_home: teams[0],
+                team_away: teams[1],
+                competition: competition,
+                is_live: isLive,
+                lotus_id: lotusId,
+                href: href,
+                time_text: timeText,
+                score_text: scoreText,
+                scheduled_time: scheduledTime,
+                back_home: back_home,
+                lay_home: lay_home,
+                back_draw: back_draw,
+                lay_draw: lay_draw,
+                back_away: back_away,
+                lay_away: lay_away,
+                volume_back_home: volume_back_home,
+                volume_lay_home: volume_lay_home,
+                volume_back_away: volume_back_away,
+                volume_lay_away: volume_lay_away,
+            });
+        } catch (e) {
+            // Skip this match on error
+        }
+    }
+
+    return results;
+}
+"""
+
 
 class ScraperWorker:
     """
-    Individual match scraper using Playwright + CDP.
+    LotusBook cricket scraper using Playwright + CDP.
 
     Two data extraction modes:
     1. WebSocket interception (preferred - lowest latency)
@@ -65,163 +356,31 @@ class ScraperWorker:
 
     async def _extract_dom_data(self) -> list[dict[str, Any]]:
         """
-        Extract match data from DOM elements.
+        Extract match data from LotusBook's DOM using targeted JS evaluation.
 
-        Parses the LotusBook cricket page structure to find
-        match cards with team names and 1X2 odds.
-        """
-        matches: list[dict[str, Any]] = []
-
-        # Try to find match containers - adapt selectors to LotusBook's DOM
-        match_cards = await self.page.query_selector_all(
-            "[class*='match'], [class*='event'], [class*='game'], "
-            "[class*='Market'], [class*='coupon'], tr[class*='match']"
-        )
-
-        if not match_cards:
-            # Fallback: try broader selectors
-            match_cards = await self.page.query_selector_all(
-                ".event-row, .match-row, .game-row, "
-                "[data-match], [data-event]"
-            )
-
-        for card in match_cards:
-            try:
-                match_data = await self._parse_match_card(card)
-                if match_data:
-                    matches.append(match_data)
-            except Exception as e:
-                logger.debug("card_parse_error", error=str(e))
-
-        # If structured selectors fail, try JS-based extraction
-        if not matches:
-            matches = await self._extract_via_js()
-
-        return matches
-
-    async def _parse_match_card(self, card: Any) -> dict[str, Any] | None:
-        """Parse a single match card element into raw data dict."""
-        text_content = await card.text_content() or ""
-
-        if not text_content.strip():
-            return None
-
-        # Try to find team names
-        team_elements = await card.query_selector_all(
-            "[class*='team'], [class*='name'], [class*='runner']"
-        )
-        team_names = []
-        for elem in team_elements:
-            name = (await elem.text_content() or "").strip()
-            if name and len(name) > 1:
-                team_names.append(name)
-
-        if len(team_names) < 2:
-            return None
-
-        # Try to find odds values
-        odds_elements = await card.query_selector_all(
-            "[class*='odds'], [class*='price'], [class*='rate'], "
-            "[class*='back'], [class*='lay']"
-        )
-        odds_values: list[float | None] = []
-        for elem in odds_elements:
-            val_text = (await elem.text_content() or "").strip()
-            try:
-                odds_values.append(float(val_text))
-            except (ValueError, TypeError):
-                odds_values.append(None)
-
-        # Check for live indicator
-        is_live = "live" in text_content.lower() or "in-play" in text_content.lower()
-
-        # Competition
-        comp_elem = await card.query_selector("[class*='competition'], [class*='league'], [class*='tournament']")
-        competition = ""
-        if comp_elem:
-            competition = (await comp_elem.text_content() or "").strip()
-
-        # Map odds values to 1X2 format (expected: back_home, lay_home, back_draw, lay_draw, back_away, lay_away)
-        result: dict[str, Any] = {
-            "team_home": team_names[0],
-            "team_away": team_names[1] if len(team_names) > 1 else "",
-            "competition": competition,
-            "is_live": is_live,
-        }
-
-        odds_fields = ["back_home", "lay_home", "back_draw", "lay_draw", "back_away", "lay_away"]
-        for i, field in enumerate(odds_fields):
-            result[field] = odds_values[i] if i < len(odds_values) else None
-
-        return result
-
-    async def _extract_via_js(self) -> list[dict[str, Any]]:
-        """
-        Fallback JS-based extraction.
-
-        Evaluates JavaScript on the page to extract odds data
-        that might be stored in JS variables or data attributes.
+        LotusBook uses a Tailwind CSS grid layout:
+          - Listing rows carry no competition; the parser derives it from team names
+          - a#inPlayTeamName links hold team names (span.text-text_color_primary1)
+          - Odds in the next sibling col-span-6 div with backBtnBg/layBtnBg cells
+          - Live indicator via #inPlay element or score pattern in #inPlayTime
         """
         try:
-            result = await self.page.evaluate("""
-                () => {
-                    const matches = [];
-
-                    // Try to find odds from page data structures
-                    // This needs to be adapted to LotusBook's actual JS structure
-                    const rows = document.querySelectorAll(
-                        'tr, [class*="event"], [class*="match"], [class*="game"]'
-                    );
-
-                    for (const row of rows) {
-                        const text = row.textContent || '';
-                        // Look for patterns that indicate match data
-                        const numbers = text.match(/\\d+\\.\\d{2}/g);
-                        if (numbers && numbers.length >= 2) {
-                            const teamEls = row.querySelectorAll(
-                                '[class*="team"], [class*="name"], [class*="runner"], td'
-                            );
-                            const teamNames = [];
-                            for (const el of teamEls) {
-                                const name = el.textContent.trim();
-                                if (name && name.length > 2 && !/^\\d/.test(name)) {
-                                    teamNames.push(name);
-                                }
-                            }
-                            if (teamNames.length >= 2) {
-                                const odds = numbers.map(n => parseFloat(n));
-                                matches.push({
-                                    team_home: teamNames[0],
-                                    team_away: teamNames[1],
-                                    is_live: text.toLowerCase().includes('live'),
-                                    back_home: odds[0] || null,
-                                    lay_home: odds[1] || null,
-                                    back_draw: odds[2] || null,
-                                    lay_draw: odds[3] || null,
-                                    back_away: odds[4] || null,
-                                    lay_away: odds[5] || null,
-                                });
-                            }
-                        }
-                    }
-
-                    return matches;
-                }
-            """)
-            return result if isinstance(result, list) else []
+            result = await self.page.evaluate(LOTUSBOOK_EXTRACT_JS)
+            if isinstance(result, list):
+                if result:
+                    logger.debug(
+                        "dom_extraction_raw",
+                        match_count=len(result),
+                        first_match=result[0].get("team_home", "?"),
+                    )
+                return result
+            return []
         except Exception as e:
-            logger.error("js_extraction_error", error=str(e))
+            logger.error("dom_extraction_error", error=str(e))
             return []
 
     async def setup_ws_interception(self) -> None:
         """Set up WebSocket interception for real-time data."""
-
-        async def handle_ws(route: Route) -> None:
-            """Intercept WebSocket frames for odds data."""
-            response = await route.fetch()
-            body = await response.text()
-            logger.debug("ws_frame_intercepted", size=len(body))
-            await route.fulfill(response=response)
 
         # CDP-based WebSocket listening
         cdp = await self.page.context.new_cdp_session(self.page)
@@ -259,17 +418,35 @@ class ScraperWorker:
         """
         self._running = True
         logger.info("poll_loop_started", interval=self.poll_interval)
+        poll_count = 0
+        zero_count = 0
 
         while self._running:
             try:
+                poll_count += 1
                 events = await self.scrape_once()
 
                 # Also check WebSocket buffer
                 ws_events = self.get_ws_events()
                 events.extend(ws_events)
 
-                if events and callback:
-                    await callback(events)
+                if events:
+                    zero_count = 0
+                    if callback:
+                        await callback(events)
+                else:
+                    zero_count += 1
+
+                # Periodically reload page (every ~5 min) or if DOM extraction returned 0 events repeatedly
+                if poll_count >= 100 or zero_count >= 5:
+                    logger.info("refreshing_live_page", poll_count=poll_count, zero_count=zero_count)
+                    poll_count = 0
+                    zero_count = 0
+                    try:
+                        await self.page.reload(wait_until="domcontentloaded", timeout=20000)
+                        await asyncio.sleep(2)
+                    except Exception as re:
+                        logger.warning("page_reload_failed", error=str(re))
 
             except Exception as e:
                 logger.error("poll_error", error=str(e))

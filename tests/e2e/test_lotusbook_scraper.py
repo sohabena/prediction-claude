@@ -138,7 +138,7 @@ class TestBackendAPI:
 
         try:
             async with httpx.AsyncClient() as client:
-                resp = await client.get("http://localhost:8000/api/health", timeout=5)
+                resp = await client.get("http://localhost:8001/api/health", timeout=5)
                 if resp.status_code == 200:
                     data = resp.json()
                     assert "status" in data
@@ -154,7 +154,7 @@ class TestBackendAPI:
 
         try:
             async with httpx.AsyncClient() as client:
-                resp = await client.get("http://localhost:8000/", timeout=5)
+                resp = await client.get("http://localhost:8001/", timeout=5)
                 if resp.status_code == 200:
                     data = resp.json()
                     assert data["service"] == "PHOENIX Backend"

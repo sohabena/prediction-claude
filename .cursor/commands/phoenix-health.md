@@ -4,7 +4,7 @@ description: Quick health check of PHOENIX backend API, Redis, and database
 You MUST execute the following command and report the results. Do NOT just print the command.
 
 ```powershell
-python -c "import httpx; r=httpx.get('http://localhost:8000/api/health', timeout=5); d=r.json(); [print(f'{k}: {v}') for k,v in d.items()]"
+python -c "import httpx; r=httpx.get('http://localhost:8001/api/health', timeout=5); d=r.json(); [print(f'{k}: {v}') for k,v in d.items()]"
 ```
 
 This returns the health status of:

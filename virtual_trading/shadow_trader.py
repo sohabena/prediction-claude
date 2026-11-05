@@ -199,6 +199,26 @@ class ShadowTrader:
 
         return bet
 
+    def void_shadow_bet(self, match_id: str) -> Optional[ShadowBet]:
+        """
+        Void a shadow bet (tie/no result/abandoned) -- no P&L impact.
+
+        Args:
+            match_id: The match identifier.
+
+        Returns:
+            The voided ShadowBet, or None if not found.
+        """
+        bet = self._open_bets.pop(match_id, None)
+        if bet is None:
+            return None
+
+        bet.settle("void", 0.0)
+        self._settled_bets.append(bet)
+
+        logger.info("shadow_bet_voided", match_id=match_id)
+        return bet
+
     def settle_shadow_bet(self, match_id: str, won: bool) -> Optional[ShadowBet]:
         """
         Settle a shadow bet when the match completes.
@@ -214,12 +234,20 @@ class ShadowTrader:
         if bet is None:
             return None
 
+        is_lay = "LAY" in bet.action
+
         if won:
-            pnl = bet.stake * (bet.odds - 1)
+            if is_lay:
+                pnl = bet.stake  # Lay win: keep the backer's stake
+            else:
+                pnl = bet.stake * (bet.odds - 1)  # Back win: profit = stake * (odds-1)
             bet.settle("win", pnl)
             self._total_wins += 1
         else:
-            pnl = -bet.stake
+            if is_lay:
+                pnl = -bet.stake * (bet.odds - 1)  # Lay loss: liability = stake * (odds-1)
+            else:
+                pnl = -bet.stake  # Back loss: lose stake
             bet.settle("loss", pnl)
 
         self._balance += pnl
@@ -461,16 +489,16 @@ class ShadowTrader:
         ]
 
     def _compute_sharpe(self) -> float:
-        """Compute annualized Sharpe ratio from daily P&L."""
+        """Per-calendar-day Sharpe (not annualised), zero-bet days included."""
+        from shared.metrics import daily_series, sharpe
+
         if len(self._daily_pnl) < 5:
             return 0.0
-
-        daily_returns = list(self._daily_pnl.values())
-        mean_ret = np.mean(daily_returns)
-        std_ret = np.std(daily_returns)
-        if std_ret == 0:
-            return 0.0
-        return float(mean_ret / std_ret * np.sqrt(252))
+        days = sorted(self._daily_pnl)
+        series = daily_series(
+            [(d, p) for d, p in self._daily_pnl.items()], days[0], days[-1],
+        )
+        return sharpe(series)
 
     def _get_daily_history(self, days: int) -> list[dict[str, Any]]:
         """Get daily P&L history for the last N days."""

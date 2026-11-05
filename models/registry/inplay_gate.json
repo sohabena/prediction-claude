@@ -1,0 +1,32 @@
+{
+  "t20": {
+    "inplay_model_allowed": false,
+    "matches": 1,
+    "logloss_diff": -0.015789073364449416,
+    "ci": [
+      null,
+      null
+    ],
+    "evaluated_at": "2026-11-03T12:14:16.479321+00:00"
+  },
+  "odi": {
+    "inplay_model_allowed": false,
+    "matches": 0,
+    "logloss_diff": null,
+    "ci": [
+      null,
+      null
+    ],
+    "evaluated_at": "2026-11-03T12:14:16.479321+00:00"
+  },
+  "multiday": {
+    "inplay_model_allowed": false,
+    "matches": 0,
+    "logloss_diff": null,
+    "ci": [
+      null,
+      null
+    ],
+    "evaluated_at": "2026-11-03T12:14:16.479321+00:00"
+  }
+}

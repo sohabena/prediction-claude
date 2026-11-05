@@ -1,0 +1,809 @@
+{
+ "status": {
+  "statusCode": "0",
+  "statusDesc": "Success"
+ },
+ "success": true,
+ "result": [
+  {
+   "type": "EVENT_TYPE",
+   "name": "Cricket",
+   "id": "4",
+   "children": [
+    {
+     "type": "GROUP",
+     "name": "WBBL",
+     "id": "10529093",
+     "countryCode": "IN",
+     "children": [
+      {
+       "type": "EVENT",
+       "name": "WBBL",
+       "id": "28045743",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Hobart Hurricanes W v Melbourne Renegades W",
+       "id": "36266944",
+       "countryCode": "GB",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Adelaide Strikers W v Brisbane Heat W",
+       "id": "36267052",
+       "countryCode": "GB",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Sydney Thunder W v Perth Scorchers W",
+       "id": "36271347",
+       "countryCode": "AU",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      }
+     ],
+     "altType": "COMPETITION",
+     "altId": "10529093",
+     "altName": "WBBL",
+     "startTime": "0001-01-01T00:00:00"
+    },
+    {
+     "type": "GROUP",
+     "name": "First Class Series New Zealand A vs India A",
+     "id": "53670",
+     "countryCode": "IN",
+     "children": [
+      {
+       "type": "EVENT",
+       "name": "New Zealand A vs. India A",
+       "id": "75330120",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      }
+     ],
+     "altType": "COMPETITION",
+     "altId": "53670",
+     "altName": "First Class Series New Zealand A vs India A",
+     "startTime": "0001-01-01T00:00:00"
+    },
+    {
+     "type": "GROUP",
+     "name": "Ranji Trophy",
+     "id": "21572",
+     "countryCode": "IN",
+     "children": [
+      {
+       "type": "EVENT",
+       "name": "Gujarat vs. Kerala",
+       "id": "75261828",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Uttar Pradesh vs. Baroda",
+       "id": "75261712",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Jammu And Kashmir vs. Puducherry",
+       "id": "75261716",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Goa vs. Bihar",
+       "id": "75261718",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Tripura vs. Saurashtra",
+       "id": "75261774",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Railways vs. Mumbai",
+       "id": "75261900",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Chhattisgarh vs. Hyderabad",
+       "id": "75261776",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Delhi vs. Services",
+       "id": "75261832",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Bengal vs. Maharashtra",
+       "id": "75261834",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Odisha vs. Jharkhand",
+       "id": "75261830",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Uttarakhand vs. Haryana",
+       "id": "75261902",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Chandigarh vs. Tamil Nadu",
+       "id": "75261906",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Vidarbha vs. Madhya Pradesh",
+       "id": "75261714",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Punjab vs. Andhra",
+       "id": "75261772",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Assam vs. Karnataka",
+       "id": "75261778",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Himachal Pradesh vs. Rajasthan",
+       "id": "75261904",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      }
+     ],
+     "altType": "COMPETITION",
+     "altId": "21572",
+     "altName": "Ranji Trophy",
+     "startTime": "0001-01-01T00:00:00"
+    },
+    {
+     "type": "GROUP",
+     "name": "Premier League SRL",
+     "id": "32201",
+     "countryCode": "IN",
+     "children": [
+      {
+       "type": "EVENT",
+       "name": "Lucknow Super Giants SRL vs. Mumbai Indians SRL",
+       "id": "76111586",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Mumbai Indians SRL vs. Kolkata Knight Riders SRL",
+       "id": "76111622",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Sunrisers Hyderabad SRL vs. Lucknow Super Giants SRL",
+       "id": "76111634",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Chennai Super Kings SRL vs. Rajasthan Royals SRL",
+       "id": "76111644",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Delhi Capitals SRL vs. Punjab Kings SRL",
+       "id": "76111650",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      }
+     ],
+     "altType": "COMPETITION",
+     "altId": "32201",
+     "altName": "Premier League SRL",
+     "startTime": "0001-01-01T00:00:00"
+    },
+    {
+     "type": "GROUP",
+     "name": "ICC Cricket World Cup League Two",
+     "id": "31337",
+     "countryCode": "IN",
+     "children": [
+      {
+       "type": "EVENT",
+       "name": "Oman vs. Netherlands",
+       "id": "75878940",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      }
+     ],
+     "altType": "COMPETITION",
+     "altId": "31337",
+     "altName": "ICC Cricket World Cup League Two",
+     "startTime": "0001-01-01T00:00:00"
+    },
+    {
+     "type": "GROUP",
+     "name": "Nepal Premier League",
+     "id": "45191",
+     "countryCode": "IN",
+     "children": [
+      {
+       "type": "EVENT",
+       "name": "Kathmandu Gurkhas vs. Karnali Yaks",
+       "id": "75330604",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Sudurpaschim Royals vs. Chitwan Rhinos",
+       "id": "75330606",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      }
+     ],
+     "altType": "COMPETITION",
+     "altId": "45191",
+     "altName": "Nepal Premier League",
+     "startTime": "0001-01-01T00:00:00"
+    },
+    {
+     "type": "GROUP",
+     "name": "Big Bash League, Women",
+     "id": "21570",
+     "countryCode": "IN",
+     "children": [
+      {
+       "type": "EVENT",
+       "name": "Melbourne Stars vs. Perth Scorchers",
+       "id": "75326604",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      }
+     ],
+     "altType": "COMPETITION",
+     "altId": "21570",
+     "altName": "Big Bash League, Women",
+     "startTime": "0001-01-01T00:00:00"
+    },
+    {
+     "type": "GROUP",
+     "name": "Nepal Premier League",
+     "id": "12706346",
+     "countryCode": "IN",
+     "children": [
+      {
+       "type": "EVENT",
+       "name": "Sudurpaschim Royals v Chitwan Rhinos",
+       "id": "36263556",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Sudurpaschim Royals v Karnali Yaks",
+       "id": "36271488",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Lumbini Lions v Pokhara Avengers",
+       "id": "36267634",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Biratnagar Kings v Janakpur Bolts",
+       "id": "36267578",
+       "countryCode": "GB",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      }
+     ],
+     "altType": "COMPETITION",
+     "altId": "12706346",
+     "altName": "Nepal Premier League",
+     "startTime": "0001-01-01T00:00:00"
+    },
+    {
+     "type": "GROUP",
+     "name": "T20 Matches",
+     "id": "12241523",
+     "countryCode": "IN",
+     "children": [
+      {
+       "type": "EVENT",
+       "name": "West Indies A v England Lions",
+       "id": "36269512",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      }
+     ],
+     "altType": "COMPETITION",
+     "altId": "12241523",
+     "altName": "T20 Matches",
+     "startTime": "0001-01-01T00:00:00"
+    },
+    {
+     "type": "GROUP",
+     "name": "NCL GT20",
+     "id": "53896",
+     "countryCode": "IN",
+     "children": [
+      {
+       "type": "EVENT",
+       "name": "Toronto Kings vs. Montreal Warriors",
+       "id": "76321652",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      }
+     ],
+     "altType": "COMPETITION",
+     "altId": "53896",
+     "altName": "NCL GT20",
+     "startTime": "0001-01-01T00:00:00"
+    },
+    {
+     "type": "GROUP",
+     "name": "T20 International SRL",
+     "id": "36807",
+     "countryCode": "IN",
+     "children": [
+      {
+       "type": "EVENT",
+       "name": "Sri Lanka SRL vs. New Zealand SRL",
+       "id": "76108412",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Australia SRL vs. West Indies SRL",
+       "id": "76108414",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "India SRL vs. South Africa SRL",
+       "id": "76108416",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "England SRL vs. New Zealand SRL",
+       "id": "76108418",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      }
+     ],
+     "altType": "COMPETITION",
+     "altId": "36807",
+     "altName": "T20 International SRL",
+     "startTime": "0001-01-01T00:00:00"
+    },
+    {
+     "type": "GROUP",
+     "name": "Pakistan Super League SRL",
+     "id": "36805",
+     "countryCode": "IN",
+     "children": [
+      {
+       "type": "EVENT",
+       "name": "Rawalpindiz Srl vs. Lahore Qalandars SRL",
+       "id": "76109994",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Multan Sultans SRL vs. Hyderabad Kingsmen Srl",
+       "id": "76109996",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Islamabad United SRL vs. Quetta Gladiators SRL",
+       "id": "76109998",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      }
+     ],
+     "altType": "COMPETITION",
+     "altId": "36805",
+     "altName": "Pakistan Super League SRL",
+     "startTime": "0001-01-01T00:00:00"
+    },
+    {
+     "type": "GROUP",
+     "name": "Quaid e-Azam Trophy",
+     "id": "33317",
+     "countryCode": "IN",
+     "children": [
+      {
+       "type": "EVENT",
+       "name": "Islamabad Region vs. Multan Region",
+       "id": "76113562",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Faisalabad Region vs. Peshawar Blues",
+       "id": "76339216",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Karachi Region Blues vs. Sialkot Blues",
+       "id": "76339214",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Lahore Region Whites vs. Fata Region",
+       "id": "76113560",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      }
+     ],
+     "altType": "COMPETITION",
+     "altId": "33317",
+     "altName": "Quaid e-Azam Trophy",
+     "startTime": "0001-01-01T00:00:00"
+    },
+    {
+     "type": "GROUP",
+     "name": "Big Bash League SRL",
+     "id": "33207",
+     "countryCode": "IN",
+     "children": [
+      {
+       "type": "EVENT",
+       "name": "Adelaide Strikers SRL vs. Perth Scorchers SRL",
+       "id": "76111046",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Brisbane Heat SRL vs. Sydney Thunder SRL",
+       "id": "76111048",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Hobart Hurricanes SRL vs. Melbourne Stars SRL",
+       "id": "76111050",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Melbourne Renegades SRL vs. Perth Scorchers SRL",
+       "id": "76111052",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      }
+     ],
+     "altType": "COMPETITION",
+     "altId": "33207",
+     "altName": "Big Bash League SRL",
+     "startTime": "0001-01-01T00:00:00"
+    },
+    {
+     "type": "GROUP",
+     "name": "T20 MCA Super Premier League",
+     "id": "48995",
+     "countryCode": "IN",
+     "children": [
+      {
+       "type": "EVENT",
+       "name": "Colombo Aces vs. Fairfirst Insurance",
+       "id": "76227862",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Cdb A vs. Dpgc",
+       "id": "76227860",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      }
+     ],
+     "altType": "COMPETITION",
+     "altId": "48995",
+     "altName": "T20 MCA Super Premier League",
+     "startTime": "0001-01-01T00:00:00"
+    },
+    {
+     "type": "GROUP",
+     "name": "T20 PCB Super-3, Women",
+     "id": "54004",
+     "countryCode": "IN",
+     "children": [
+      {
+       "type": "EVENT",
+       "name": "Incredibles vs. Warriors",
+       "id": "76073798",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      }
+     ],
+     "altType": "COMPETITION",
+     "altId": "54004",
+     "altName": "T20 PCB Super-3, Women",
+     "startTime": "0001-01-01T00:00:00"
+    },
+    {
+     "type": "GROUP",
+     "name": "SA T20 League SRL",
+     "id": "39175",
+     "countryCode": "IN",
+     "children": [
+      {
+       "type": "EVENT",
+       "name": "Durban Super Giants SRL vs. Sunrisers Eastern Cape SRL",
+       "id": "76109628",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Pretoria Capitals SRL vs. Mi Cape Town SRL",
+       "id": "76109630",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Joburg Super Kings SRL vs. Paarl Royals SRL",
+       "id": "76109720",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      }
+     ],
+     "altType": "COMPETITION",
+     "altId": "39175",
+     "altName": "SA T20 League SRL",
+     "startTime": "0001-01-01T00:00:00"
+    },
+    {
+     "type": "GROUP",
+     "name": "Super Smash SRL",
+     "id": "46519",
+     "countryCode": "IN",
+     "children": [
+      {
+       "type": "EVENT",
+       "name": "Wellington SRL vs. Canterbury SRL",
+       "id": "76109048",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Northern Districts SRL vs. Otago SRL",
+       "id": "76109050",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      }
+     ],
+     "altType": "COMPETITION",
+     "altId": "46519",
+     "altName": "Super Smash SRL",
+     "startTime": "0001-01-01T00:00:00"
+    },
+    {
+     "type": "GROUP",
+     "name": "Caribbean Premier League SRL",
+     "id": "36803",
+     "countryCode": "IN",
+     "children": [
+      {
+       "type": "EVENT",
+       "name": "Antigua And Barbuda Falcons SRL vs. Jamaica Kingsmen Srl",
+       "id": "76110450",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "St Kitts And Nevis Patriots SRL vs. Guyana Amazon Warriors SRL",
+       "id": "76110452",
+       "countryCode": "IN",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      }
+     ],
+     "altType": "COMPETITION",
+     "altId": "36803",
+     "altName": "Caribbean Premier League SRL",
+     "startTime": "0001-01-01T00:00:00"
+    },
+    {
+     "type": "GROUP",
+     "name": "Ford Trophy",
+     "id": "10586027",
+     "countryCode": "NZ",
+     "children": [
+      {
+       "type": "EVENT",
+       "name": "Wellington Firebirds v Northern Districts",
+       "id": "36264203",
+       "countryCode": "NZ",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Otago Volts v Canterbury Kings",
+       "id": "36266991",
+       "countryCode": "NZ",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      },
+      {
+       "type": "EVENT",
+       "name": "Central Stags v Auckland Aces",
+       "id": "36266935",
+       "countryCode": "NZ",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      }
+     ],
+     "altType": "COMPETITION",
+     "altId": "10586027",
+     "altName": "Ford Trophy",
+     "startTime": "0001-01-01T00:00:00"
+    },
+    {
+     "type": "GROUP",
+     "name": "One Day Internationals",
+     "id": "9962116",
+     "countryCode": "NZ",
+     "children": [
+      {
+       "type": "EVENT",
+       "name": "New Zealand v India",
+       "id": "36271322",
+       "countryCode": "NZ",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      }
+     ],
+     "altType": "COMPETITION",
+     "altId": "9962116",
+     "altName": "One Day Internationals",
+     "startTime": "0001-01-01T00:00:00"
+    },
+    {
+     "type": "GROUP",
+     "name": "Test Matches",
+     "id": "11365612",
+     "countryCode": "GB",
+     "children": [
+      {
+       "type": "EVENT",
+       "name": "Bangladesh v West Indies",
+       "id": "36267671",
+       "countryCode": "GB",
+       "children": [],
+       "startTime": "0001-01-01T00:00:00"
+      }
+     ],
+     "altType": "COMPETITION",
+     "altId": "11365612",
+     "altName": "Test Matches",
+     "startTime": "0001-01-01T00:00:00"
+    }
+   ],
+   "sortOrder": 0
+  }
+ ]
+}

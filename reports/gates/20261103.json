@@ -1,0 +1,4764 @@
+{
+  "report": "s63_gate_report",
+  "generated_at_utc": "2026-11-03T05:26:32.862077+00:00",
+  "source": {
+    "name": "market",
+    "kind": "market",
+    "predictions_file": null,
+    "predictions_rows": 535
+  },
+  "dataset": {
+    "dir": "data\\training\\20261103-0522",
+    "dataset": "s58_training_dataset",
+    "generated_at_utc": "2026-11-03T05:22:25.830568+00:00",
+    "git_sha": "307a18052d043dce1891f592cdfe52c618d4532e",
+    "matches": 22,
+    "settled_matches": 7,
+    "snapshots": 948
+  },
+  "eval_version": "1.0.0",
+  "segments_version": "2026.11.03-1",
+  "settings": {
+    "n_boot": 2000,
+    "seed": 20261103,
+    "bankroll": 1000.0,
+    "devig": "power",
+    "latency_s": 60,
+    "policy_min_edge": 0.02,
+    "policy_segment": "all",
+    "r1_min_matches": 200,
+    "r2_min_matches": 150,
+    "binding_close": {
+      "prematch": "last price before the off (T-0)",
+      "inplay": "same side 10 min after (book_10m)"
+    },
+    "commission": "none modelled; the takeable price already carries the spread"
+  },
+  "coverage": {
+    "prematch": {
+      "rows": 1,
+      "matches": 1,
+      "bets": 1
+    },
+    "inplay": {
+      "rows": 307,
+      "matches": 5,
+      "bets": 4
+    }
+  },
+  "gates": [
+    {
+      "arena": "prematch",
+      "segment": "all",
+      "matches": 1,
+      "rows": 1,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 199,
+        "logloss_diff": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 149,
+        "bets": 1,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": -10.0,
+          "lo": -10.0,
+          "hi": -10.0
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": 0.678547835337734,
+      "market_logloss": 0.678547835337734,
+      "source_ece": 0.4926467819096815,
+      "market_ece": 0.4926467819096815
+    },
+    {
+      "arena": "prematch",
+      "segment": "family_t20",
+      "matches": 1,
+      "rows": 1,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 199,
+        "logloss_diff": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 149,
+        "bets": 1,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": -10.0,
+          "lo": -10.0,
+          "hi": -10.0
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": 0.678547835337734,
+      "market_logloss": 0.678547835337734,
+      "source_ece": 0.4926467819096815,
+      "market_ece": 0.4926467819096815
+    },
+    {
+      "arena": "prematch",
+      "segment": "family_odi",
+      "matches": 0,
+      "rows": 0,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": null,
+      "market_logloss": null,
+      "source_ece": null,
+      "market_ece": null
+    },
+    {
+      "arena": "prematch",
+      "segment": "family_test",
+      "matches": 0,
+      "rows": 0,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": null,
+      "market_logloss": null,
+      "source_ece": null,
+      "market_ece": null
+    },
+    {
+      "arena": "prematch",
+      "segment": "gender_men",
+      "matches": 1,
+      "rows": 1,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 199,
+        "logloss_diff": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 149,
+        "bets": 1,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": -10.0,
+          "lo": -10.0,
+          "hi": -10.0
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": 0.678547835337734,
+      "market_logloss": 0.678547835337734,
+      "source_ece": 0.4926467819096815,
+      "market_ece": 0.4926467819096815
+    },
+    {
+      "arena": "prematch",
+      "segment": "gender_women",
+      "matches": 0,
+      "rows": 0,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": null,
+      "market_logloss": null,
+      "source_ece": null,
+      "market_ece": null
+    },
+    {
+      "arena": "prematch",
+      "segment": "tier_1",
+      "matches": 1,
+      "rows": 1,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 199,
+        "logloss_diff": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 149,
+        "bets": 1,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": -10.0,
+          "lo": -10.0,
+          "hi": -10.0
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": 0.678547835337734,
+      "market_logloss": 0.678547835337734,
+      "source_ece": 0.4926467819096815,
+      "market_ece": 0.4926467819096815
+    },
+    {
+      "arena": "prematch",
+      "segment": "tier_2",
+      "matches": 0,
+      "rows": 0,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": null,
+      "market_logloss": null,
+      "source_ece": null,
+      "market_ece": null
+    },
+    {
+      "arena": "prematch",
+      "segment": "market_favourite",
+      "matches": 0,
+      "rows": 0,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": null,
+      "market_logloss": null,
+      "source_ece": null,
+      "market_ece": null
+    },
+    {
+      "arena": "prematch",
+      "segment": "market_mid",
+      "matches": 1,
+      "rows": 1,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 199,
+        "logloss_diff": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 149,
+        "bets": 1,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": -10.0,
+          "lo": -10.0,
+          "hi": -10.0
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": 0.678547835337734,
+      "market_logloss": 0.678547835337734,
+      "source_ece": 0.4926467819096815,
+      "market_ece": 0.4926467819096815
+    },
+    {
+      "arena": "prematch",
+      "segment": "market_longshot",
+      "matches": 0,
+      "rows": 0,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": null,
+      "market_logloss": null,
+      "source_ece": null,
+      "market_ece": null
+    },
+    {
+      "arena": "prematch",
+      "segment": "real",
+      "matches": 0,
+      "rows": 0,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": null,
+      "market_logloss": null,
+      "source_ece": null,
+      "market_ece": null
+    },
+    {
+      "arena": "prematch",
+      "segment": "simulated",
+      "matches": 1,
+      "rows": 1,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 199,
+        "logloss_diff": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 149,
+        "bets": 1,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": -10.0,
+          "lo": -10.0,
+          "hi": -10.0
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": 0.678547835337734,
+      "market_logloss": 0.678547835337734,
+      "source_ece": 0.4926467819096815,
+      "market_ece": 0.4926467819096815
+    },
+    {
+      "arena": "inplay",
+      "segment": "all",
+      "matches": 5,
+      "rows": 307,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 195,
+        "logloss_diff": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 145,
+        "bets": 4,
+        "bets_with_clv": 4,
+        "clv_per_bet": {
+          "point": -0.06769009303224972,
+          "lo": -0.14792056091499614,
+          "hi": 0.0
+        },
+        "pnl_total": {
+          "point": -29.799999999999997,
+          "lo": -69.6,
+          "hi": 20.0
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": 0.28677692606938404,
+      "market_logloss": 0.28677692606938404,
+      "source_ece": 0.2242020600190827,
+      "market_ece": 0.2242020600190827
+    },
+    {
+      "arena": "inplay",
+      "segment": "family_t20",
+      "matches": 4,
+      "rows": 166,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 196,
+        "logloss_diff": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 146,
+        "bets": 3,
+        "bets_with_clv": 3,
+        "clv_per_bet": {
+          "point": -0.09025345737633296,
+          "lo": -0.1730013106159895,
+          "hi": 0.0
+        },
+        "pnl_total": {
+          "point": -39.8,
+          "lo": -69.39999999999999,
+          "hi": -10.0
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": 0.30789957553317254,
+      "market_logloss": 0.30789957553317254,
+      "source_ece": 0.23163884373919735,
+      "market_ece": 0.23163884373919735
+    },
+    {
+      "arena": "inplay",
+      "segment": "family_odi",
+      "matches": 0,
+      "rows": 0,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": null,
+      "market_logloss": null,
+      "source_ece": null,
+      "market_ece": null
+    },
+    {
+      "arena": "inplay",
+      "segment": "family_test",
+      "matches": 0,
+      "rows": 0,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": null,
+      "market_logloss": null,
+      "source_ece": null,
+      "market_ece": null
+    },
+    {
+      "arena": "inplay",
+      "segment": "gender_men",
+      "matches": 4,
+      "rows": 215,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 196,
+        "logloss_diff": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 146,
+        "bets": 3,
+        "bets_with_clv": 3,
+        "clv_per_bet": {
+          "point": -0.09025345737633296,
+          "lo": -0.1730013106159895,
+          "hi": 0.0
+        },
+        "pnl_total": {
+          "point": -19.799999999999997,
+          "lo": -59.599999999999994,
+          "hi": 20.0
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": 0.2533761494496323,
+      "market_logloss": 0.2533761494496323,
+      "source_ece": 0.19638380728105237,
+      "market_ece": 0.19638380728105237
+    },
+    {
+      "arena": "inplay",
+      "segment": "gender_women",
+      "matches": 1,
+      "rows": 92,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 199,
+        "logloss_diff": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 149,
+        "bets": 1,
+        "bets_with_clv": 1,
+        "clv_per_bet": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "pnl_total": {
+          "point": -10.0,
+          "lo": -10.0,
+          "hi": -10.0
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": 0.36483308882206467,
+      "market_logloss": 0.36483308882206467,
+      "source_ece": 0.2892121071786103,
+      "market_ece": 0.2892121071786103
+    },
+    {
+      "arena": "inplay",
+      "segment": "tier_1",
+      "matches": 4,
+      "rows": 215,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 196,
+        "logloss_diff": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 146,
+        "bets": 3,
+        "bets_with_clv": 3,
+        "clv_per_bet": {
+          "point": -0.09025345737633296,
+          "lo": -0.1730013106159895,
+          "hi": 0.0
+        },
+        "pnl_total": {
+          "point": -19.799999999999997,
+          "lo": -59.599999999999994,
+          "hi": 20.0
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": 0.2533761494496323,
+      "market_logloss": 0.2533761494496323,
+      "source_ece": 0.19638380728105237,
+      "market_ece": 0.19638380728105237
+    },
+    {
+      "arena": "inplay",
+      "segment": "tier_2",
+      "matches": 1,
+      "rows": 92,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 199,
+        "logloss_diff": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 149,
+        "bets": 1,
+        "bets_with_clv": 1,
+        "clv_per_bet": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "pnl_total": {
+          "point": -10.0,
+          "lo": -10.0,
+          "hi": -10.0
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": 0.36483308882206467,
+      "market_logloss": 0.36483308882206467,
+      "source_ece": 0.2892121071786103,
+      "market_ece": 0.2892121071786103
+    },
+    {
+      "arena": "inplay",
+      "segment": "market_favourite",
+      "matches": 2,
+      "rows": 43,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 198,
+        "logloss_diff": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 148,
+        "bets": 1,
+        "bets_with_clv": 1,
+        "clv_per_bet": {
+          "point": -0.0977590615130094,
+          "lo": -0.0977590615130094,
+          "hi": -0.0977590615130094
+        },
+        "pnl_total": {
+          "point": -19.799999999999997,
+          "lo": -39.599999999999994,
+          "hi": 0.0
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": 0.26636224012624365,
+      "market_logloss": 0.26636224012624365,
+      "source_ece": 0.2289639544508278,
+      "market_ece": 0.2289639544508278
+    },
+    {
+      "arena": "inplay",
+      "segment": "market_mid",
+      "matches": 3,
+      "rows": 85,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 197,
+        "logloss_diff": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 147,
+        "bets": 3,
+        "bets_with_clv": 3,
+        "clv_per_bet": {
+          "point": -0.05766710353866317,
+          "lo": -0.17300131061598947,
+          "hi": 0.0
+        },
+        "pnl_total": {
+          "point": -10.0,
+          "lo": -30.0,
+          "hi": 30.0
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": 0.545093504232936,
+      "market_logloss": 0.545093504232936,
+      "source_ece": 0.3824866965203594,
+      "market_ece": 0.3824866965203594
+    },
+    {
+      "arena": "inplay",
+      "segment": "market_longshot",
+      "matches": 3,
+      "rows": 179,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 197,
+        "logloss_diff": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 147,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": 0.16901671574342386,
+      "market_logloss": 0.16901671574342386,
+      "source_ece": 0.14789504569967743,
+      "market_ece": 0.14789504569967743
+    },
+    {
+      "arena": "inplay",
+      "segment": "real",
+      "matches": 2,
+      "rows": 233,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 198,
+        "logloss_diff": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 148,
+        "bets": 2,
+        "bets_with_clv": 2,
+        "clv_per_bet": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "pnl_total": {
+          "point": 0.0,
+          "lo": -20.0,
+          "hi": 20.0
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": 0.3025486306284301,
+      "market_logloss": 0.3025486306284301,
+      "source_ece": 0.2445729537578703,
+      "market_ece": 0.2445729537578703
+    },
+    {
+      "arena": "inplay",
+      "segment": "simulated",
+      "matches": 3,
+      "rows": 74,
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 197,
+        "logloss_diff": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 147,
+        "bets": 2,
+        "bets_with_clv": 2,
+        "clv_per_bet": {
+          "point": -0.13538018606449945,
+          "lo": -0.1730013106159895,
+          "hi": -0.0977590615130094
+        },
+        "pnl_total": {
+          "point": -29.799999999999997,
+          "lo": -59.39999999999999,
+          "hi": 0.0
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      },
+      "source_logloss": 0.23711736982265794,
+      "market_logloss": 0.23711736982265794,
+      "source_ece": 0.19916102036123423,
+      "market_ece": 0.19916102036123423
+    }
+  ],
+  "results": [
+    {
+      "arena": "prematch",
+      "segment": "all",
+      "matches": 1,
+      "rows": 1,
+      "source": {
+        "logloss": 0.678547835337734,
+        "brier": 0.24270085172596526,
+        "calibration": {
+          "ece": 0.4926467819096815,
+          "bins": [
+            {
+              "lo": 0.0,
+              "hi": 0.1,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.1,
+              "hi": 0.2,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.2,
+              "hi": 0.30000000000000004,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.30000000000000004,
+              "hi": 0.4,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.4,
+              "hi": 0.5,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.5,
+              "hi": 0.6000000000000001,
+              "n": 1,
+              "mean_p": 0.5073532180903185,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.6000000000000001,
+              "hi": 0.7000000000000001,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.7000000000000001,
+              "hi": 0.8,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.8,
+              "hi": 0.9,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.9,
+              "hi": 1.0,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            }
+          ]
+        }
+      },
+      "market": {
+        "logloss": 0.678547835337734,
+        "brier": 0.24270085172596526,
+        "calibration": {
+          "ece": 0.4926467819096815,
+          "bins": [
+            {
+              "lo": 0.0,
+              "hi": 0.1,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.1,
+              "hi": 0.2,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.2,
+              "hi": 0.30000000000000004,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.30000000000000004,
+              "hi": 0.4,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.4,
+              "hi": 0.5,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.5,
+              "hi": 0.6000000000000001,
+              "n": 1,
+              "mean_p": 0.5073532180903185,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.6000000000000001,
+              "hi": 0.7000000000000001,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.7000000000000001,
+              "hi": 0.8,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.8,
+              "hi": 0.9,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.9,
+              "hi": 1.0,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            }
+          ]
+        }
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 199,
+        "logloss_diff": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 149,
+        "bets": 1,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": -10.0,
+          "lo": -10.0,
+          "hi": -10.0
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "prematch",
+      "segment": "family_t20",
+      "matches": 1,
+      "rows": 1,
+      "source": {
+        "logloss": 0.678547835337734,
+        "brier": 0.24270085172596526,
+        "calibration": {
+          "ece": 0.4926467819096815,
+          "bins": [
+            {
+              "lo": 0.0,
+              "hi": 0.1,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.1,
+              "hi": 0.2,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.2,
+              "hi": 0.30000000000000004,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.30000000000000004,
+              "hi": 0.4,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.4,
+              "hi": 0.5,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.5,
+              "hi": 0.6000000000000001,
+              "n": 1,
+              "mean_p": 0.5073532180903185,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.6000000000000001,
+              "hi": 0.7000000000000001,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.7000000000000001,
+              "hi": 0.8,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.8,
+              "hi": 0.9,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.9,
+              "hi": 1.0,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            }
+          ]
+        }
+      },
+      "market": {
+        "logloss": 0.678547835337734,
+        "brier": 0.24270085172596526,
+        "calibration": {
+          "ece": 0.4926467819096815,
+          "bins": [
+            {
+              "lo": 0.0,
+              "hi": 0.1,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.1,
+              "hi": 0.2,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.2,
+              "hi": 0.30000000000000004,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.30000000000000004,
+              "hi": 0.4,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.4,
+              "hi": 0.5,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.5,
+              "hi": 0.6000000000000001,
+              "n": 1,
+              "mean_p": 0.5073532180903185,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.6000000000000001,
+              "hi": 0.7000000000000001,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.7000000000000001,
+              "hi": 0.8,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.8,
+              "hi": 0.9,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.9,
+              "hi": 1.0,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            }
+          ]
+        }
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 199,
+        "logloss_diff": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 149,
+        "bets": 1,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": -10.0,
+          "lo": -10.0,
+          "hi": -10.0
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "prematch",
+      "segment": "family_odi",
+      "matches": 0,
+      "rows": 0,
+      "source": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "market": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "prematch",
+      "segment": "family_test",
+      "matches": 0,
+      "rows": 0,
+      "source": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "market": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "prematch",
+      "segment": "gender_men",
+      "matches": 1,
+      "rows": 1,
+      "source": {
+        "logloss": 0.678547835337734,
+        "brier": 0.24270085172596526,
+        "calibration": {
+          "ece": 0.4926467819096815,
+          "bins": [
+            {
+              "lo": 0.0,
+              "hi": 0.1,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.1,
+              "hi": 0.2,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.2,
+              "hi": 0.30000000000000004,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.30000000000000004,
+              "hi": 0.4,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.4,
+              "hi": 0.5,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.5,
+              "hi": 0.6000000000000001,
+              "n": 1,
+              "mean_p": 0.5073532180903185,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.6000000000000001,
+              "hi": 0.7000000000000001,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.7000000000000001,
+              "hi": 0.8,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.8,
+              "hi": 0.9,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.9,
+              "hi": 1.0,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            }
+          ]
+        }
+      },
+      "market": {
+        "logloss": 0.678547835337734,
+        "brier": 0.24270085172596526,
+        "calibration": {
+          "ece": 0.4926467819096815,
+          "bins": [
+            {
+              "lo": 0.0,
+              "hi": 0.1,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.1,
+              "hi": 0.2,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.2,
+              "hi": 0.30000000000000004,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.30000000000000004,
+              "hi": 0.4,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.4,
+              "hi": 0.5,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.5,
+              "hi": 0.6000000000000001,
+              "n": 1,
+              "mean_p": 0.5073532180903185,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.6000000000000001,
+              "hi": 0.7000000000000001,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.7000000000000001,
+              "hi": 0.8,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.8,
+              "hi": 0.9,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.9,
+              "hi": 1.0,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            }
+          ]
+        }
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 199,
+        "logloss_diff": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 149,
+        "bets": 1,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": -10.0,
+          "lo": -10.0,
+          "hi": -10.0
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "prematch",
+      "segment": "gender_women",
+      "matches": 0,
+      "rows": 0,
+      "source": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "market": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "prematch",
+      "segment": "tier_1",
+      "matches": 1,
+      "rows": 1,
+      "source": {
+        "logloss": 0.678547835337734,
+        "brier": 0.24270085172596526,
+        "calibration": {
+          "ece": 0.4926467819096815,
+          "bins": [
+            {
+              "lo": 0.0,
+              "hi": 0.1,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.1,
+              "hi": 0.2,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.2,
+              "hi": 0.30000000000000004,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.30000000000000004,
+              "hi": 0.4,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.4,
+              "hi": 0.5,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.5,
+              "hi": 0.6000000000000001,
+              "n": 1,
+              "mean_p": 0.5073532180903185,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.6000000000000001,
+              "hi": 0.7000000000000001,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.7000000000000001,
+              "hi": 0.8,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.8,
+              "hi": 0.9,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.9,
+              "hi": 1.0,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            }
+          ]
+        }
+      },
+      "market": {
+        "logloss": 0.678547835337734,
+        "brier": 0.24270085172596526,
+        "calibration": {
+          "ece": 0.4926467819096815,
+          "bins": [
+            {
+              "lo": 0.0,
+              "hi": 0.1,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.1,
+              "hi": 0.2,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.2,
+              "hi": 0.30000000000000004,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.30000000000000004,
+              "hi": 0.4,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.4,
+              "hi": 0.5,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.5,
+              "hi": 0.6000000000000001,
+              "n": 1,
+              "mean_p": 0.5073532180903185,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.6000000000000001,
+              "hi": 0.7000000000000001,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.7000000000000001,
+              "hi": 0.8,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.8,
+              "hi": 0.9,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.9,
+              "hi": 1.0,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            }
+          ]
+        }
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 199,
+        "logloss_diff": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 149,
+        "bets": 1,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": -10.0,
+          "lo": -10.0,
+          "hi": -10.0
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "prematch",
+      "segment": "tier_2",
+      "matches": 0,
+      "rows": 0,
+      "source": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "market": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "prematch",
+      "segment": "market_favourite",
+      "matches": 0,
+      "rows": 0,
+      "source": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "market": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "prematch",
+      "segment": "market_mid",
+      "matches": 1,
+      "rows": 1,
+      "source": {
+        "logloss": 0.678547835337734,
+        "brier": 0.24270085172596526,
+        "calibration": {
+          "ece": 0.4926467819096815,
+          "bins": [
+            {
+              "lo": 0.0,
+              "hi": 0.1,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.1,
+              "hi": 0.2,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.2,
+              "hi": 0.30000000000000004,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.30000000000000004,
+              "hi": 0.4,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.4,
+              "hi": 0.5,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.5,
+              "hi": 0.6000000000000001,
+              "n": 1,
+              "mean_p": 0.5073532180903185,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.6000000000000001,
+              "hi": 0.7000000000000001,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.7000000000000001,
+              "hi": 0.8,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.8,
+              "hi": 0.9,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.9,
+              "hi": 1.0,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            }
+          ]
+        }
+      },
+      "market": {
+        "logloss": 0.678547835337734,
+        "brier": 0.24270085172596526,
+        "calibration": {
+          "ece": 0.4926467819096815,
+          "bins": [
+            {
+              "lo": 0.0,
+              "hi": 0.1,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.1,
+              "hi": 0.2,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.2,
+              "hi": 0.30000000000000004,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.30000000000000004,
+              "hi": 0.4,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.4,
+              "hi": 0.5,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.5,
+              "hi": 0.6000000000000001,
+              "n": 1,
+              "mean_p": 0.5073532180903185,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.6000000000000001,
+              "hi": 0.7000000000000001,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.7000000000000001,
+              "hi": 0.8,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.8,
+              "hi": 0.9,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.9,
+              "hi": 1.0,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            }
+          ]
+        }
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 199,
+        "logloss_diff": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 149,
+        "bets": 1,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": -10.0,
+          "lo": -10.0,
+          "hi": -10.0
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "prematch",
+      "segment": "market_longshot",
+      "matches": 0,
+      "rows": 0,
+      "source": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "market": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "prematch",
+      "segment": "real",
+      "matches": 0,
+      "rows": 0,
+      "source": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "market": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "prematch",
+      "segment": "simulated",
+      "matches": 1,
+      "rows": 1,
+      "source": {
+        "logloss": 0.678547835337734,
+        "brier": 0.24270085172596526,
+        "calibration": {
+          "ece": 0.4926467819096815,
+          "bins": [
+            {
+              "lo": 0.0,
+              "hi": 0.1,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.1,
+              "hi": 0.2,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.2,
+              "hi": 0.30000000000000004,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.30000000000000004,
+              "hi": 0.4,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.4,
+              "hi": 0.5,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.5,
+              "hi": 0.6000000000000001,
+              "n": 1,
+              "mean_p": 0.5073532180903185,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.6000000000000001,
+              "hi": 0.7000000000000001,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.7000000000000001,
+              "hi": 0.8,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.8,
+              "hi": 0.9,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.9,
+              "hi": 1.0,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            }
+          ]
+        }
+      },
+      "market": {
+        "logloss": 0.678547835337734,
+        "brier": 0.24270085172596526,
+        "calibration": {
+          "ece": 0.4926467819096815,
+          "bins": [
+            {
+              "lo": 0.0,
+              "hi": 0.1,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.1,
+              "hi": 0.2,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.2,
+              "hi": 0.30000000000000004,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.30000000000000004,
+              "hi": 0.4,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.4,
+              "hi": 0.5,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.5,
+              "hi": 0.6000000000000001,
+              "n": 1,
+              "mean_p": 0.5073532180903185,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.6000000000000001,
+              "hi": 0.7000000000000001,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.7000000000000001,
+              "hi": 0.8,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.8,
+              "hi": 0.9,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.9,
+              "hi": 1.0,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            }
+          ]
+        }
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 199,
+        "logloss_diff": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 149,
+        "bets": 1,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": -10.0,
+          "lo": -10.0,
+          "hi": -10.0
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "inplay",
+      "segment": "all",
+      "matches": 5,
+      "rows": 307,
+      "source": {
+        "logloss": 0.28677692606938404,
+        "brier": 0.07743005676800932,
+        "calibration": {
+          "ece": 0.2242020600190827,
+          "bins": [
+            {
+              "lo": 0.0,
+              "hi": 0.1,
+              "n": 69,
+              "mean_p": 0.042523910387922956,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.1,
+              "hi": 0.2,
+              "n": 61,
+              "mean_p": 0.1372459849263521,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.2,
+              "hi": 0.30000000000000004,
+              "n": 12,
+              "mean_p": 0.25585595815744405,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.30000000000000004,
+              "hi": 0.4,
+              "n": 86,
+              "mean_p": 0.3565211866161823,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.4,
+              "hi": 0.5,
+              "n": 16,
+              "mean_p": 0.4598913423957552,
+              "observed": 0.0625
+            },
+            {
+              "lo": 0.5,
+              "hi": 0.6000000000000001,
+              "n": 13,
+              "mean_p": 0.5375525365752549,
+              "observed": 0.15384615384615385
+            },
+            {
+              "lo": 0.6000000000000001,
+              "hi": 0.7000000000000001,
+              "n": 19,
+              "mean_p": 0.6594414185110833,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.7000000000000001,
+              "hi": 0.8,
+              "n": 19,
+              "mean_p": 0.7541761907014086,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.8,
+              "hi": 0.9,
+              "n": 6,
+              "mean_p": 0.8482071734988342,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.9,
+              "hi": 1.0,
+              "n": 6,
+              "mean_p": 0.9342804760128026,
+              "observed": 1.0
+            }
+          ]
+        }
+      },
+      "market": {
+        "logloss": 0.28677692606938404,
+        "brier": 0.07743005676800932,
+        "calibration": {
+          "ece": 0.2242020600190827,
+          "bins": [
+            {
+              "lo": 0.0,
+              "hi": 0.1,
+              "n": 69,
+              "mean_p": 0.042523910387922956,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.1,
+              "hi": 0.2,
+              "n": 61,
+              "mean_p": 0.1372459849263521,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.2,
+              "hi": 0.30000000000000004,
+              "n": 12,
+              "mean_p": 0.25585595815744405,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.30000000000000004,
+              "hi": 0.4,
+              "n": 86,
+              "mean_p": 0.3565211866161823,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.4,
+              "hi": 0.5,
+              "n": 16,
+              "mean_p": 0.4598913423957552,
+              "observed": 0.0625
+            },
+            {
+              "lo": 0.5,
+              "hi": 0.6000000000000001,
+              "n": 13,
+              "mean_p": 0.5375525365752549,
+              "observed": 0.15384615384615385
+            },
+            {
+              "lo": 0.6000000000000001,
+              "hi": 0.7000000000000001,
+              "n": 19,
+              "mean_p": 0.6594414185110833,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.7000000000000001,
+              "hi": 0.8,
+              "n": 19,
+              "mean_p": 0.7541761907014086,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.8,
+              "hi": 0.9,
+              "n": 6,
+              "mean_p": 0.8482071734988342,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.9,
+              "hi": 1.0,
+              "n": 6,
+              "mean_p": 0.9342804760128026,
+              "observed": 1.0
+            }
+          ]
+        }
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 195,
+        "logloss_diff": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 145,
+        "bets": 4,
+        "bets_with_clv": 4,
+        "clv_per_bet": {
+          "point": -0.06769009303224972,
+          "lo": -0.14792056091499614,
+          "hi": 0.0
+        },
+        "pnl_total": {
+          "point": -29.799999999999997,
+          "lo": -69.6,
+          "hi": 20.0
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "inplay",
+      "segment": "family_t20",
+      "matches": 4,
+      "rows": 166,
+      "source": {
+        "logloss": 0.30789957553317254,
+        "brier": 0.08455076927292156,
+        "calibration": {
+          "ece": 0.23163884373919735,
+          "bins": [
+            {
+              "lo": 0.0,
+              "hi": 0.1,
+              "n": 22,
+              "mean_p": 0.042850489905806734,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.1,
+              "hi": 0.2,
+              "n": 40,
+              "mean_p": 0.13740843609910097,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.2,
+              "hi": 0.30000000000000004,
+              "n": 7,
+              "mean_p": 0.2705967064822314,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.30000000000000004,
+              "hi": 0.4,
+              "n": 27,
+              "mean_p": 0.3882731722855012,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.4,
+              "hi": 0.5,
+              "n": 10,
+              "mean_p": 0.4916462036133131,
+              "observed": 0.1
+            },
+            {
+              "lo": 0.5,
+              "hi": 0.6000000000000001,
+              "n": 10,
+              "mean_p": 0.5272645677704858,
+              "observed": 0.2
+            },
+            {
+              "lo": 0.6000000000000001,
+              "hi": 0.7000000000000001,
+              "n": 19,
+              "mean_p": 0.6594414185110833,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.7000000000000001,
+              "hi": 0.8,
+              "n": 19,
+              "mean_p": 0.7541761907014086,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.8,
+              "hi": 0.9,
+              "n": 6,
+              "mean_p": 0.8482071734988342,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.9,
+              "hi": 1.0,
+              "n": 6,
+              "mean_p": 0.9342804760128026,
+              "observed": 1.0
+            }
+          ]
+        }
+      },
+      "market": {
+        "logloss": 0.30789957553317254,
+        "brier": 0.08455076927292156,
+        "calibration": {
+          "ece": 0.23163884373919735,
+          "bins": [
+            {
+              "lo": 0.0,
+              "hi": 0.1,
+              "n": 22,
+              "mean_p": 0.042850489905806734,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.1,
+              "hi": 0.2,
+              "n": 40,
+              "mean_p": 0.13740843609910097,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.2,
+              "hi": 0.30000000000000004,
+              "n": 7,
+              "mean_p": 0.2705967064822314,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.30000000000000004,
+              "hi": 0.4,
+              "n": 27,
+              "mean_p": 0.3882731722855012,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.4,
+              "hi": 0.5,
+              "n": 10,
+              "mean_p": 0.4916462036133131,
+              "observed": 0.1
+            },
+            {
+              "lo": 0.5,
+              "hi": 0.6000000000000001,
+              "n": 10,
+              "mean_p": 0.5272645677704858,
+              "observed": 0.2
+            },
+            {
+              "lo": 0.6000000000000001,
+              "hi": 0.7000000000000001,
+              "n": 19,
+              "mean_p": 0.6594414185110833,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.7000000000000001,
+              "hi": 0.8,
+              "n": 19,
+              "mean_p": 0.7541761907014086,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.8,
+              "hi": 0.9,
+              "n": 6,
+              "mean_p": 0.8482071734988342,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.9,
+              "hi": 1.0,
+              "n": 6,
+              "mean_p": 0.9342804760128026,
+              "observed": 1.0
+            }
+          ]
+        }
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 196,
+        "logloss_diff": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 146,
+        "bets": 3,
+        "bets_with_clv": 3,
+        "clv_per_bet": {
+          "point": -0.09025345737633296,
+          "lo": -0.1730013106159895,
+          "hi": 0.0
+        },
+        "pnl_total": {
+          "point": -39.8,
+          "lo": -69.39999999999999,
+          "hi": -10.0
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "inplay",
+      "segment": "family_odi",
+      "matches": 0,
+      "rows": 0,
+      "source": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "market": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "inplay",
+      "segment": "family_test",
+      "matches": 0,
+      "rows": 0,
+      "source": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "market": {
+        "logloss": null,
+        "brier": null,
+        "calibration": null
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 200,
+        "logloss_diff": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 150,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "inplay",
+      "segment": "gender_men",
+      "matches": 4,
+      "rows": 215,
+      "source": {
+        "logloss": 0.2533761494496323,
+        "brier": 0.06524375858733229,
+        "calibration": {
+          "ece": 0.19638380728105237,
+          "bins": [
+            {
+              "lo": 0.0,
+              "hi": 0.1,
+              "n": 68,
+              "mean_p": 0.04171065241836878,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.1,
+              "hi": 0.2,
+              "n": 21,
+              "mean_p": 0.13693655412111602,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.2,
+              "hi": 0.30000000000000004,
+              "n": 5,
+              "mean_p": 0.23521891050274185,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.30000000000000004,
+              "hi": 0.4,
+              "n": 59,
+              "mean_p": 0.3419906169031043,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.4,
+              "hi": 0.5,
+              "n": 7,
+              "mean_p": 0.4188201537515334,
+              "observed": 0.14285714285714285
+            },
+            {
+              "lo": 0.5,
+              "hi": 0.6000000000000001,
+              "n": 5,
+              "mean_p": 0.5557810020966628,
+              "observed": 0.4
+            },
+            {
+              "lo": 0.6000000000000001,
+              "hi": 0.7000000000000001,
+              "n": 19,
+              "mean_p": 0.6594414185110833,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.7000000000000001,
+              "hi": 0.8,
+              "n": 19,
+              "mean_p": 0.7541761907014086,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.8,
+              "hi": 0.9,
+              "n": 6,
+              "mean_p": 0.8482071734988342,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.9,
+              "hi": 1.0,
+              "n": 6,
+              "mean_p": 0.9342804760128026,
+              "observed": 1.0
+            }
+          ]
+        }
+      },
+      "market": {
+        "logloss": 0.2533761494496323,
+        "brier": 0.06524375858733229,
+        "calibration": {
+          "ece": 0.19638380728105237,
+          "bins": [
+            {
+              "lo": 0.0,
+              "hi": 0.1,
+              "n": 68,
+              "mean_p": 0.04171065241836878,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.1,
+              "hi": 0.2,
+              "n": 21,
+              "mean_p": 0.13693655412111602,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.2,
+              "hi": 0.30000000000000004,
+              "n": 5,
+              "mean_p": 0.23521891050274185,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.30000000000000004,
+              "hi": 0.4,
+              "n": 59,
+              "mean_p": 0.3419906169031043,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.4,
+              "hi": 0.5,
+              "n": 7,
+              "mean_p": 0.4188201537515334,
+              "observed": 0.14285714285714285
+            },
+            {
+              "lo": 0.5,
+              "hi": 0.6000000000000001,
+              "n": 5,
+              "mean_p": 0.5557810020966628,
+              "observed": 0.4
+            },
+            {
+              "lo": 0.6000000000000001,
+              "hi": 0.7000000000000001,
+              "n": 19,
+              "mean_p": 0.6594414185110833,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.7000000000000001,
+              "hi": 0.8,
+              "n": 19,
+              "mean_p": 0.7541761907014086,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.8,
+              "hi": 0.9,
+              "n": 6,
+              "mean_p": 0.8482071734988342,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.9,
+              "hi": 1.0,
+              "n": 6,
+              "mean_p": 0.9342804760128026,
+              "observed": 1.0
+            }
+          ]
+        }
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 196,
+        "logloss_diff": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 146,
+        "bets": 3,
+        "bets_with_clv": 3,
+        "clv_per_bet": {
+          "point": -0.09025345737633296,
+          "lo": -0.1730013106159895,
+          "hi": 0.0
+        },
+        "pnl_total": {
+          "point": -19.799999999999997,
+          "lo": -59.599999999999994,
+          "hi": 20.0
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "inplay",
+      "segment": "gender_women",
+      "matches": 1,
+      "rows": 92,
+      "source": {
+        "logloss": 0.36483308882206467,
+        "brier": 0.10590890577720019,
+        "calibration": {
+          "ece": 0.2892121071786103,
+          "bins": [
+            {
+              "lo": 0.0,
+              "hi": 0.1,
+              "n": 1,
+              "mean_p": 0.09782545231760645,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.1,
+              "hi": 0.2,
+              "n": 40,
+              "mean_p": 0.13740843609910097,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.2,
+              "hi": 0.30000000000000004,
+              "n": 7,
+              "mean_p": 0.2705967064822314,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.30000000000000004,
+              "hi": 0.4,
+              "n": 27,
+              "mean_p": 0.3882731722855012,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.4,
+              "hi": 0.5,
+              "n": 9,
+              "mean_p": 0.4918356002301498,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.5,
+              "hi": 0.6000000000000001,
+              "n": 8,
+              "mean_p": 0.526159745624375,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.6000000000000001,
+              "hi": 0.7000000000000001,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.7000000000000001,
+              "hi": 0.8,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.8,
+              "hi": 0.9,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.9,
+              "hi": 1.0,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            }
+          ]
+        }
+      },
+      "market": {
+        "logloss": 0.36483308882206467,
+        "brier": 0.10590890577720019,
+        "calibration": {
+          "ece": 0.2892121071786103,
+          "bins": [
+            {
+              "lo": 0.0,
+              "hi": 0.1,
+              "n": 1,
+              "mean_p": 0.09782545231760645,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.1,
+              "hi": 0.2,
+              "n": 40,
+              "mean_p": 0.13740843609910097,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.2,
+              "hi": 0.30000000000000004,
+              "n": 7,
+              "mean_p": 0.2705967064822314,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.30000000000000004,
+              "hi": 0.4,
+              "n": 27,
+              "mean_p": 0.3882731722855012,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.4,
+              "hi": 0.5,
+              "n": 9,
+              "mean_p": 0.4918356002301498,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.5,
+              "hi": 0.6000000000000001,
+              "n": 8,
+              "mean_p": 0.526159745624375,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.6000000000000001,
+              "hi": 0.7000000000000001,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.7000000000000001,
+              "hi": 0.8,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.8,
+              "hi": 0.9,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.9,
+              "hi": 1.0,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            }
+          ]
+        }
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 199,
+        "logloss_diff": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 149,
+        "bets": 1,
+        "bets_with_clv": 1,
+        "clv_per_bet": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "pnl_total": {
+          "point": -10.0,
+          "lo": -10.0,
+          "hi": -10.0
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "inplay",
+      "segment": "tier_1",
+      "matches": 4,
+      "rows": 215,
+      "source": {
+        "logloss": 0.2533761494496323,
+        "brier": 0.06524375858733229,
+        "calibration": {
+          "ece": 0.19638380728105237,
+          "bins": [
+            {
+              "lo": 0.0,
+              "hi": 0.1,
+              "n": 68,
+              "mean_p": 0.04171065241836878,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.1,
+              "hi": 0.2,
+              "n": 21,
+              "mean_p": 0.13693655412111602,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.2,
+              "hi": 0.30000000000000004,
+              "n": 5,
+              "mean_p": 0.23521891050274185,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.30000000000000004,
+              "hi": 0.4,
+              "n": 59,
+              "mean_p": 0.3419906169031043,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.4,
+              "hi": 0.5,
+              "n": 7,
+              "mean_p": 0.4188201537515334,
+              "observed": 0.14285714285714285
+            },
+            {
+              "lo": 0.5,
+              "hi": 0.6000000000000001,
+              "n": 5,
+              "mean_p": 0.5557810020966628,
+              "observed": 0.4
+            },
+            {
+              "lo": 0.6000000000000001,
+              "hi": 0.7000000000000001,
+              "n": 19,
+              "mean_p": 0.6594414185110833,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.7000000000000001,
+              "hi": 0.8,
+              "n": 19,
+              "mean_p": 0.7541761907014086,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.8,
+              "hi": 0.9,
+              "n": 6,
+              "mean_p": 0.8482071734988342,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.9,
+              "hi": 1.0,
+              "n": 6,
+              "mean_p": 0.9342804760128026,
+              "observed": 1.0
+            }
+          ]
+        }
+      },
+      "market": {
+        "logloss": 0.2533761494496323,
+        "brier": 0.06524375858733229,
+        "calibration": {
+          "ece": 0.19638380728105237,
+          "bins": [
+            {
+              "lo": 0.0,
+              "hi": 0.1,
+              "n": 68,
+              "mean_p": 0.04171065241836878,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.1,
+              "hi": 0.2,
+              "n": 21,
+              "mean_p": 0.13693655412111602,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.2,
+              "hi": 0.30000000000000004,
+              "n": 5,
+              "mean_p": 0.23521891050274185,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.30000000000000004,
+              "hi": 0.4,
+              "n": 59,
+              "mean_p": 0.3419906169031043,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.4,
+              "hi": 0.5,
+              "n": 7,
+              "mean_p": 0.4188201537515334,
+              "observed": 0.14285714285714285
+            },
+            {
+              "lo": 0.5,
+              "hi": 0.6000000000000001,
+              "n": 5,
+              "mean_p": 0.5557810020966628,
+              "observed": 0.4
+            },
+            {
+              "lo": 0.6000000000000001,
+              "hi": 0.7000000000000001,
+              "n": 19,
+              "mean_p": 0.6594414185110833,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.7000000000000001,
+              "hi": 0.8,
+              "n": 19,
+              "mean_p": 0.7541761907014086,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.8,
+              "hi": 0.9,
+              "n": 6,
+              "mean_p": 0.8482071734988342,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.9,
+              "hi": 1.0,
+              "n": 6,
+              "mean_p": 0.9342804760128026,
+              "observed": 1.0
+            }
+          ]
+        }
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 196,
+        "logloss_diff": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 146,
+        "bets": 3,
+        "bets_with_clv": 3,
+        "clv_per_bet": {
+          "point": -0.09025345737633296,
+          "lo": -0.1730013106159895,
+          "hi": 0.0
+        },
+        "pnl_total": {
+          "point": -19.799999999999997,
+          "lo": -59.599999999999994,
+          "hi": 20.0
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "inplay",
+      "segment": "tier_2",
+      "matches": 1,
+      "rows": 92,
+      "source": {
+        "logloss": 0.36483308882206467,
+        "brier": 0.10590890577720019,
+        "calibration": {
+          "ece": 0.2892121071786103,
+          "bins": [
+            {
+              "lo": 0.0,
+              "hi": 0.1,
+              "n": 1,
+              "mean_p": 0.09782545231760645,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.1,
+              "hi": 0.2,
+              "n": 40,
+              "mean_p": 0.13740843609910097,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.2,
+              "hi": 0.30000000000000004,
+              "n": 7,
+              "mean_p": 0.2705967064822314,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.30000000000000004,
+              "hi": 0.4,
+              "n": 27,
+              "mean_p": 0.3882731722855012,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.4,
+              "hi": 0.5,
+              "n": 9,
+              "mean_p": 0.4918356002301498,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.5,
+              "hi": 0.6000000000000001,
+              "n": 8,
+              "mean_p": 0.526159745624375,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.6000000000000001,
+              "hi": 0.7000000000000001,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.7000000000000001,
+              "hi": 0.8,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.8,
+              "hi": 0.9,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.9,
+              "hi": 1.0,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            }
+          ]
+        }
+      },
+      "market": {
+        "logloss": 0.36483308882206467,
+        "brier": 0.10590890577720019,
+        "calibration": {
+          "ece": 0.2892121071786103,
+          "bins": [
+            {
+              "lo": 0.0,
+              "hi": 0.1,
+              "n": 1,
+              "mean_p": 0.09782545231760645,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.1,
+              "hi": 0.2,
+              "n": 40,
+              "mean_p": 0.13740843609910097,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.2,
+              "hi": 0.30000000000000004,
+              "n": 7,
+              "mean_p": 0.2705967064822314,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.30000000000000004,
+              "hi": 0.4,
+              "n": 27,
+              "mean_p": 0.3882731722855012,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.4,
+              "hi": 0.5,
+              "n": 9,
+              "mean_p": 0.4918356002301498,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.5,
+              "hi": 0.6000000000000001,
+              "n": 8,
+              "mean_p": 0.526159745624375,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.6000000000000001,
+              "hi": 0.7000000000000001,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.7000000000000001,
+              "hi": 0.8,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.8,
+              "hi": 0.9,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.9,
+              "hi": 1.0,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            }
+          ]
+        }
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 199,
+        "logloss_diff": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 149,
+        "bets": 1,
+        "bets_with_clv": 1,
+        "clv_per_bet": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "pnl_total": {
+          "point": -10.0,
+          "lo": -10.0,
+          "hi": -10.0
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "inplay",
+      "segment": "market_favourite",
+      "matches": 2,
+      "rows": 43,
+      "source": {
+        "logloss": 0.26636224012624365,
+        "brier": 0.06025793414488854,
+        "calibration": {
+          "ece": 0.2289639544508278,
+          "bins": [
+            {
+              "lo": 0.0,
+              "hi": 0.1,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.1,
+              "hi": 0.2,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.2,
+              "hi": 0.30000000000000004,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.30000000000000004,
+              "hi": 0.4,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.4,
+              "hi": 0.5,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.5,
+              "hi": 0.6000000000000001,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.6000000000000001,
+              "hi": 0.7000000000000001,
+              "n": 12,
+              "mean_p": 0.6775230365181516,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.7000000000000001,
+              "hi": 0.8,
+              "n": 19,
+              "mean_p": 0.7541761907014086,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.8,
+              "hi": 0.9,
+              "n": 6,
+              "mean_p": 0.8482071734988342,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.9,
+              "hi": 1.0,
+              "n": 6,
+              "mean_p": 0.9342804760128026,
+              "observed": 1.0
+            }
+          ]
+        }
+      },
+      "market": {
+        "logloss": 0.26636224012624365,
+        "brier": 0.06025793414488854,
+        "calibration": {
+          "ece": 0.2289639544508278,
+          "bins": [
+            {
+              "lo": 0.0,
+              "hi": 0.1,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.1,
+              "hi": 0.2,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.2,
+              "hi": 0.30000000000000004,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.30000000000000004,
+              "hi": 0.4,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.4,
+              "hi": 0.5,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.5,
+              "hi": 0.6000000000000001,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.6000000000000001,
+              "hi": 0.7000000000000001,
+              "n": 12,
+              "mean_p": 0.6775230365181516,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.7000000000000001,
+              "hi": 0.8,
+              "n": 19,
+              "mean_p": 0.7541761907014086,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.8,
+              "hi": 0.9,
+              "n": 6,
+              "mean_p": 0.8482071734988342,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.9,
+              "hi": 1.0,
+              "n": 6,
+              "mean_p": 0.9342804760128026,
+              "observed": 1.0
+            }
+          ]
+        }
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 198,
+        "logloss_diff": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 148,
+        "bets": 1,
+        "bets_with_clv": 1,
+        "clv_per_bet": {
+          "point": -0.0977590615130094,
+          "lo": -0.0977590615130094,
+          "hi": -0.0977590615130094
+        },
+        "pnl_total": {
+          "point": -19.799999999999997,
+          "lo": -39.599999999999994,
+          "hi": 0.0
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "inplay",
+      "segment": "market_mid",
+      "matches": 3,
+      "rows": 85,
+      "source": {
+        "logloss": 0.545093504232936,
+        "brier": 0.17740657037404275,
+        "calibration": {
+          "ece": 0.3824866965203594,
+          "bins": [
+            {
+              "lo": 0.0,
+              "hi": 0.1,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.1,
+              "hi": 0.2,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.2,
+              "hi": 0.30000000000000004,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.30000000000000004,
+              "hi": 0.4,
+              "n": 49,
+              "mean_p": 0.37885786252883497,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.4,
+              "hi": 0.5,
+              "n": 16,
+              "mean_p": 0.4598913423957552,
+              "observed": 0.0625
+            },
+            {
+              "lo": 0.5,
+              "hi": 0.6000000000000001,
+              "n": 13,
+              "mean_p": 0.5375525365752549,
+              "observed": 0.15384615384615385
+            },
+            {
+              "lo": 0.6000000000000001,
+              "hi": 0.7000000000000001,
+              "n": 7,
+              "mean_p": 0.6284443590703949,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.7000000000000001,
+              "hi": 0.8,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.8,
+              "hi": 0.9,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.9,
+              "hi": 1.0,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            }
+          ]
+        }
+      },
+      "market": {
+        "logloss": 0.545093504232936,
+        "brier": 0.17740657037404275,
+        "calibration": {
+          "ece": 0.3824866965203594,
+          "bins": [
+            {
+              "lo": 0.0,
+              "hi": 0.1,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.1,
+              "hi": 0.2,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.2,
+              "hi": 0.30000000000000004,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.30000000000000004,
+              "hi": 0.4,
+              "n": 49,
+              "mean_p": 0.37885786252883497,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.4,
+              "hi": 0.5,
+              "n": 16,
+              "mean_p": 0.4598913423957552,
+              "observed": 0.0625
+            },
+            {
+              "lo": 0.5,
+              "hi": 0.6000000000000001,
+              "n": 13,
+              "mean_p": 0.5375525365752549,
+              "observed": 0.15384615384615385
+            },
+            {
+              "lo": 0.6000000000000001,
+              "hi": 0.7000000000000001,
+              "n": 7,
+              "mean_p": 0.6284443590703949,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.7000000000000001,
+              "hi": 0.8,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.8,
+              "hi": 0.9,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.9,
+              "hi": 1.0,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            }
+          ]
+        }
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 197,
+        "logloss_diff": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 147,
+        "bets": 3,
+        "bets_with_clv": 3,
+        "clv_per_bet": {
+          "point": -0.05766710353866317,
+          "lo": -0.17300131061598947,
+          "hi": 0.0
+        },
+        "pnl_total": {
+          "point": -10.0,
+          "lo": -30.0,
+          "hi": 30.0
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "inplay",
+      "segment": "market_longshot",
+      "matches": 3,
+      "rows": 179,
+      "source": {
+        "logloss": 0.16901671574342386,
+        "brier": 0.03408032278075431,
+        "calibration": {
+          "ece": 0.14789504569967743,
+          "bins": [
+            {
+              "lo": 0.0,
+              "hi": 0.1,
+              "n": 69,
+              "mean_p": 0.042523910387922956,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.1,
+              "hi": 0.2,
+              "n": 61,
+              "mean_p": 0.1372459849263521,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.2,
+              "hi": 0.30000000000000004,
+              "n": 12,
+              "mean_p": 0.25585595815744405,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.30000000000000004,
+              "hi": 0.4,
+              "n": 37,
+              "mean_p": 0.32694018338050734,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.4,
+              "hi": 0.5,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.5,
+              "hi": 0.6000000000000001,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.6000000000000001,
+              "hi": 0.7000000000000001,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.7000000000000001,
+              "hi": 0.8,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.8,
+              "hi": 0.9,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.9,
+              "hi": 1.0,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            }
+          ]
+        }
+      },
+      "market": {
+        "logloss": 0.16901671574342386,
+        "brier": 0.03408032278075431,
+        "calibration": {
+          "ece": 0.14789504569967743,
+          "bins": [
+            {
+              "lo": 0.0,
+              "hi": 0.1,
+              "n": 69,
+              "mean_p": 0.042523910387922956,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.1,
+              "hi": 0.2,
+              "n": 61,
+              "mean_p": 0.1372459849263521,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.2,
+              "hi": 0.30000000000000004,
+              "n": 12,
+              "mean_p": 0.25585595815744405,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.30000000000000004,
+              "hi": 0.4,
+              "n": 37,
+              "mean_p": 0.32694018338050734,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.4,
+              "hi": 0.5,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.5,
+              "hi": 0.6000000000000001,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.6000000000000001,
+              "hi": 0.7000000000000001,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.7000000000000001,
+              "hi": 0.8,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.8,
+              "hi": 0.9,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.9,
+              "hi": 1.0,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            }
+          ]
+        }
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 197,
+        "logloss_diff": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 147,
+        "bets": 0,
+        "bets_with_clv": 0,
+        "clv_per_bet": {
+          "point": null,
+          "lo": null,
+          "hi": null
+        },
+        "pnl_total": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "inplay",
+      "segment": "real",
+      "matches": 2,
+      "rows": 233,
+      "source": {
+        "logloss": 0.3025486306284301,
+        "brier": 0.08360179854067082,
+        "calibration": {
+          "ece": 0.2445729537578703,
+          "bins": [
+            {
+              "lo": 0.0,
+              "hi": 0.1,
+              "n": 48,
+              "mean_p": 0.043526343565761294,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.1,
+              "hi": 0.2,
+              "n": 61,
+              "mean_p": 0.1372459849263521,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.2,
+              "hi": 0.30000000000000004,
+              "n": 12,
+              "mean_p": 0.25585595815744405,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.30000000000000004,
+              "hi": 0.4,
+              "n": 86,
+              "mean_p": 0.3565211866161823,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.4,
+              "hi": 0.5,
+              "n": 15,
+              "mean_p": 0.45788798961801996,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.5,
+              "hi": 0.6000000000000001,
+              "n": 11,
+              "mean_p": 0.5386195693425868,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.6000000000000001,
+              "hi": 0.7000000000000001,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.7000000000000001,
+              "hi": 0.8,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.8,
+              "hi": 0.9,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.9,
+              "hi": 1.0,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            }
+          ]
+        }
+      },
+      "market": {
+        "logloss": 0.3025486306284301,
+        "brier": 0.08360179854067082,
+        "calibration": {
+          "ece": 0.2445729537578703,
+          "bins": [
+            {
+              "lo": 0.0,
+              "hi": 0.1,
+              "n": 48,
+              "mean_p": 0.043526343565761294,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.1,
+              "hi": 0.2,
+              "n": 61,
+              "mean_p": 0.1372459849263521,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.2,
+              "hi": 0.30000000000000004,
+              "n": 12,
+              "mean_p": 0.25585595815744405,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.30000000000000004,
+              "hi": 0.4,
+              "n": 86,
+              "mean_p": 0.3565211866161823,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.4,
+              "hi": 0.5,
+              "n": 15,
+              "mean_p": 0.45788798961801996,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.5,
+              "hi": 0.6000000000000001,
+              "n": 11,
+              "mean_p": 0.5386195693425868,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.6000000000000001,
+              "hi": 0.7000000000000001,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.7000000000000001,
+              "hi": 0.8,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.8,
+              "hi": 0.9,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.9,
+              "hi": 1.0,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            }
+          ]
+        }
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 198,
+        "logloss_diff": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 148,
+        "bets": 2,
+        "bets_with_clv": 2,
+        "clv_per_bet": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "pnl_total": {
+          "point": 0.0,
+          "lo": -20.0,
+          "hi": 20.0
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    },
+    {
+      "arena": "inplay",
+      "segment": "simulated",
+      "matches": 3,
+      "rows": 74,
+      "source": {
+        "logloss": 0.23711736982265794,
+        "brier": 0.05799741037571029,
+        "calibration": {
+          "ece": 0.19916102036123423,
+          "bins": [
+            {
+              "lo": 0.0,
+              "hi": 0.1,
+              "n": 21,
+              "mean_p": 0.04023263455286389,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.1,
+              "hi": 0.2,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.2,
+              "hi": 0.30000000000000004,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.30000000000000004,
+              "hi": 0.4,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.4,
+              "hi": 0.5,
+              "n": 1,
+              "mean_p": 0.48994163406178226,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.5,
+              "hi": 0.6000000000000001,
+              "n": 2,
+              "mean_p": 0.5316838563549293,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.6000000000000001,
+              "hi": 0.7000000000000001,
+              "n": 19,
+              "mean_p": 0.6594414185110833,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.7000000000000001,
+              "hi": 0.8,
+              "n": 19,
+              "mean_p": 0.7541761907014086,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.8,
+              "hi": 0.9,
+              "n": 6,
+              "mean_p": 0.8482071734988342,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.9,
+              "hi": 1.0,
+              "n": 6,
+              "mean_p": 0.9342804760128026,
+              "observed": 1.0
+            }
+          ]
+        }
+      },
+      "market": {
+        "logloss": 0.23711736982265794,
+        "brier": 0.05799741037571029,
+        "calibration": {
+          "ece": 0.19916102036123423,
+          "bins": [
+            {
+              "lo": 0.0,
+              "hi": 0.1,
+              "n": 21,
+              "mean_p": 0.04023263455286389,
+              "observed": 0.0
+            },
+            {
+              "lo": 0.1,
+              "hi": 0.2,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.2,
+              "hi": 0.30000000000000004,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.30000000000000004,
+              "hi": 0.4,
+              "n": 0,
+              "mean_p": null,
+              "observed": null
+            },
+            {
+              "lo": 0.4,
+              "hi": 0.5,
+              "n": 1,
+              "mean_p": 0.48994163406178226,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.5,
+              "hi": 0.6000000000000001,
+              "n": 2,
+              "mean_p": 0.5316838563549293,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.6000000000000001,
+              "hi": 0.7000000000000001,
+              "n": 19,
+              "mean_p": 0.6594414185110833,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.7000000000000001,
+              "hi": 0.8,
+              "n": 19,
+              "mean_p": 0.7541761907014086,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.8,
+              "hi": 0.9,
+              "n": 6,
+              "mean_p": 0.8482071734988342,
+              "observed": 1.0
+            },
+            {
+              "lo": 0.9,
+              "hi": 1.0,
+              "n": 6,
+              "mean_p": 0.9342804760128026,
+              "observed": 1.0
+            }
+          ]
+        }
+      },
+      "r1": {
+        "status": "insufficient",
+        "threshold_matches": 200,
+        "matches_needed": 197,
+        "logloss_diff": {
+          "point": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        },
+        "rule": "source log loss < market, paired 95% CI entirely below 0"
+      },
+      "r2": {
+        "status": "insufficient",
+        "threshold_matches": 150,
+        "matches_needed": 147,
+        "bets": 2,
+        "bets_with_clv": 2,
+        "clv_per_bet": {
+          "point": -0.13538018606449945,
+          "lo": -0.1730013106159895,
+          "hi": -0.0977590615130094
+        },
+        "pnl_total": {
+          "point": -29.799999999999997,
+          "lo": -59.39999999999999,
+          "hi": 0.0
+        },
+        "rule": "mean CLV per bet and total simulated P&L both have 95% CI lower bound > 0"
+      }
+    }
+  ],
+  "summary": {
+    "r1_counts": {
+      "insufficient": 26
+    },
+    "r2_counts": {
+      "insufficient": 26
+    },
+    "r1_pass": [],
+    "r2_pass": [],
+    "signals_allowed": false
+  }
+}

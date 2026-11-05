@@ -1,0 +1,67 @@
+# Per-specialist PPO training config (read by scripts/train_format_specialists.py).
+# n_steps is the TOTAL rollout size across all envs (per-env steps = n_steps // n_envs).
+# Budget: total_timesteps = timesteps_per_match * n_train_matches * epochs_over_data.
+defaults:
+  gamma: 0.99
+  lr: 0.0003
+  ent_coef: 0.01
+  n_steps: 2048
+  batch_size: 64
+  n_epochs: 5
+  net_arch:
+    pi: [256, 256, 128]
+    vf: [256, 256, 128]
+  timesteps_per_match: 300
+  epochs_over_data: 3
+  n_envs: 8
+  patience: 5
+
+specialists:
+  ipl:
+    gamma: 0.98
+    ent_coef: 0.015
+    lr: 0.0003
+  bbl_men:
+    gamma: 0.98
+    ent_coef: 0.012
+    lr: 0.0003
+  wbbl_women:
+    gamma: 0.98
+    ent_coef: 0.012
+    lr: 0.0003
+  t20i_men:
+    gamma: 0.98
+    ent_coef: 0.012
+    lr: 0.0003
+  t20i_women:
+    gamma: 0.98
+    ent_coef: 0.012
+    lr: 0.0003
+  odi_men:
+    gamma: 0.99
+    ent_coef: 0.008
+    lr: 0.0003
+  odi_women:
+    gamma: 0.99
+    ent_coef: 0.008
+    lr: 0.0003
+  test_men:
+    gamma: 0.995
+    ent_coef: 0.006
+    lr: 0.0002
+  t20_blast:
+    gamma: 0.98
+    ent_coef: 0.012
+    lr: 0.0003
+  franchise_t20:
+    gamma: 0.98
+    ent_coef: 0.012
+    lr: 0.0003
+  first_class:
+    gamma: 0.995
+    ent_coef: 0.006
+    lr: 0.0002
+  list_a:
+    gamma: 0.99
+    ent_coef: 0.008
+    lr: 0.0003

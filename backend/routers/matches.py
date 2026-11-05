@@ -1,33 +1,53 @@
-"""Match data endpoints: live odds, historical data."""
+"""Match data endpoints: live odds, historical data, training approval.
+
+Thin HTTP layer — all business logic delegated to MatchService.
+"""
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any, Optional
 
-from fastapi import APIRouter, Query
-from sqlalchemy import select, text
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 
-from shared.db import get_session
+from backend.services.match_service import MatchService
 from shared.logging import setup_logging
-from shared.redis_client import get_redis
 
 router = APIRouter()
 logger = setup_logging("router_matches")
+svc = MatchService()
+
+
+class ScraperSettingsUpdate(BaseModel):
+    auto_approve: Optional[bool] = None
+    international_only: Optional[bool] = None
+
+
+@router.get("/settings")
+async def get_scraper_settings() -> dict[str, Any]:
+    """Get dynamic scraper settings."""
+    try:
+        return await svc.get_scraper_settings()
+    except Exception as e:
+        logger.error("get_scraper_settings_error", error=str(e))
+        return {"auto_approve": False, "international_only": True, "error": str(e)}
+
+
+@router.post("/settings")
+async def update_scraper_settings(settings: ScraperSettingsUpdate) -> dict[str, Any]:
+    """Update dynamic scraper settings."""
+    try:
+        updates = settings.model_dump(exclude_unset=True)
+        return await svc.update_scraper_settings(updates)
+    except Exception as e:
+        logger.error("update_scraper_settings_error", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/active")
 async def get_active_matches() -> dict[str, Any]:
     """Get currently active/live matches."""
-    try:
-        redis = await get_redis()
-        data = await redis.get_json("active_matches")
-        if data:
-            return data
-    except Exception as e:
-        logger.error("active_matches_error", error=str(e))
-
-    return {"matches": []}
+    return await svc.get_active_matches()
 
 
 @router.get("/odds/{match_id}")
@@ -37,40 +57,7 @@ async def get_match_odds(
 ) -> dict[str, Any]:
     """Get recent odds history for a match."""
     try:
-        async with get_session() as session:
-            result = await session.execute(
-                text("""
-                    SELECT time, back_home, lay_home, back_away, lay_away,
-                           back_draw, lay_draw, implied_prob_home, implied_prob_away,
-                           overround, is_live
-                    FROM odds_ticks
-                    WHERE match_id = :match_id
-                    ORDER BY time DESC
-                    LIMIT :limit
-                """),
-                {"match_id": match_id, "limit": limit},
-            )
-            rows = result.fetchall()
-            return {
-                "match_id": match_id,
-                "count": len(rows),
-                "ticks": [
-                    {
-                        "time": row[0].isoformat() if row[0] else None,
-                        "back_home": row[1],
-                        "lay_home": row[2],
-                        "back_away": row[3],
-                        "lay_away": row[4],
-                        "back_draw": row[5],
-                        "lay_draw": row[6],
-                        "implied_prob_home": row[7],
-                        "implied_prob_away": row[8],
-                        "overround": row[9],
-                        "is_live": row[10],
-                    }
-                    for row in rows
-                ],
-            }
+        return await svc.get_match_odds(match_id, limit)
     except Exception as e:
         logger.error("odds_query_error", match_id=match_id, error=str(e))
         return {"match_id": match_id, "count": 0, "ticks": [], "error": str(e)}
@@ -83,39 +70,145 @@ async def get_match_context(
 ) -> dict[str, Any]:
     """Get match context history."""
     try:
-        async with get_session() as session:
-            result = await session.execute(
-                text("""
-                    SELECT time, score, wickets, overs, run_rate, req_run_rate,
-                           innings, balls_remaining, batting_team, bowling_team, status
-                    FROM match_context
-                    WHERE match_id = :match_id
-                    ORDER BY time DESC
-                    LIMIT :limit
-                """),
-                {"match_id": match_id, "limit": limit},
-            )
-            rows = result.fetchall()
-            return {
-                "match_id": match_id,
-                "count": len(rows),
-                "context": [
-                    {
-                        "time": row[0].isoformat() if row[0] else None,
-                        "score": row[1],
-                        "wickets": row[2],
-                        "overs": row[3],
-                        "run_rate": row[4],
-                        "req_run_rate": row[5],
-                        "innings": row[6],
-                        "balls_remaining": row[7],
-                        "batting_team": row[8],
-                        "bowling_team": row[9],
-                        "status": row[10],
-                    }
-                    for row in rows
-                ],
-            }
+        return await svc.get_match_context(match_id, limit)
     except Exception as e:
         logger.error("context_query_error", match_id=match_id, error=str(e))
         return {"match_id": match_id, "count": 0, "context": [], "error": str(e)}
+
+
+# ============================================================
+# Training Approval Endpoints
+# ============================================================
+
+
+@router.get("/training-status")
+async def get_training_status(
+    status_filter: Optional[str] = Query(None, alias="status"),
+) -> dict[str, Any]:
+    """List all matches with their training approval status."""
+    try:
+        return await svc.get_training_status(status_filter)
+    except Exception as e:
+        logger.error("training_status_query_error", error=str(e))
+        return {"matches": [], "total": 0, "summary": {}, "error": str(e)}
+
+
+@router.patch("/{match_id}/approve-scrape")
+async def approve_scrape(match_id: str) -> dict[str, Any]:
+    """Approve a match for data scraping."""
+    try:
+        return await svc.approve_scrape(match_id)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Match not found")
+    except Exception as e:
+        logger.error("approve_scrape_error", match_id=match_id, error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.patch("/{match_id}/reject-scrape")
+async def reject_scrape(match_id: str) -> dict[str, Any]:
+    """Reject a match from data scraping."""
+    try:
+        return await svc.reject_scrape(match_id)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Match not found")
+    except Exception as e:
+        logger.error("reject_scrape_error", match_id=match_id, error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{match_id}/validate")
+async def validate_match_data(match_id: str) -> dict[str, Any]:
+    """Run full data quality validation on a match before approving for training."""
+    try:
+        return await svc.validate_match_data(match_id)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error("validate_match_error", match_id=match_id, error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.patch("/{match_id}/approve")
+async def approve_match(
+    match_id: str,
+    skip_validation: bool = Query(False, description="Skip quality validation"),
+) -> dict[str, Any]:
+    """Approve a match for RL training."""
+    try:
+        return await svc.approve_match(match_id, skip_validation)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error("approve_error", match_id=match_id, error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.patch("/{match_id}/reject")
+async def reject_match(match_id: str) -> dict[str, Any]:
+    """Reject a match from RL training."""
+    try:
+        return await svc.reject_match(match_id)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Match not found")
+    except Exception as e:
+        logger.error("reject_error", match_id=match_id, error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/cleanup/empty")
+async def cleanup_empty_matches() -> dict[str, Any]:
+    """Delete all old matches with 0 ticks."""
+    try:
+        return await svc.delete_empty_matches()
+    except Exception as e:
+        logger.error("cleanup_empty_matches_error", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/{match_id}")
+async def delete_match_data(match_id: str) -> dict[str, Any]:
+    """Delete a rejected match and all its data."""
+    try:
+        return await svc.delete_match(match_id)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Match not found")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("delete_match_error", match_id=match_id, error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{match_id}/result")
+async def submit_manual_result(
+    match_id: str,
+    winner: str,
+    loser: str,
+    result_type: str = Query("win", pattern="^(win|tie|draw|no_result|abandoned)$"),
+    margin: str = "",
+) -> dict[str, Any]:
+    """Manually submit a match result when automatic collection fails."""
+    try:
+        return await svc.submit_manual_result(
+            match_id, winner, loser, result_type, margin,
+        )
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("manual_result_error", match_id=match_id, error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{match_id}/closing_odds")
+async def get_closing_odds(match_id: str) -> dict[str, Any]:
+    """Get the closing odds for a match."""
+    try:
+        return await svc.get_closing_odds(match_id)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error("closing_odds_error", match_id=match_id, error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))

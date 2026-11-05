@@ -1,0 +1,21 @@
+{
+  "n_ticks": 4027,
+  "fair": {
+    "brier": 0.22292990732190276,
+    "log_loss": 0.6373943314980476,
+    "ece": 0.13564791189349729
+  },
+  "market_implied": {
+    "brier": 0.3474356959634673,
+    "log_loss": 1.000559038979614,
+    "ece": 0.29994003104893047
+  },
+  "key": "odi_men",
+  "family": "odi",
+  "code_version": "160d9cf",
+  "train_split_hash": "b7ce812badc3",
+  "holdout_split_hash": "14906ff7a8f5",
+  "n_train_matches": 235,
+  "n_holdout_matches": 52,
+  "caveat": "synthetic corpus: market price is a hand model; validate on recorded odds (S16)"
+}

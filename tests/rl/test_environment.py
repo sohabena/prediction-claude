@@ -105,5 +105,23 @@ class TestCricketBettingEnv:
         # Take a back bet
         obs, reward, done, _, info = env.step(1)  # BACK_HOME_SM
 
-        # Portfolio should have recorded the bet
+        # Portfolio should have recorded the bet (filled on the next tick)
         assert env._portfolio.total_bets >= 1
+
+    def test_sequential_sampling_and_episode_index_option(self) -> None:
+        """Sequential sampling walks the data; options force an episode."""
+        data = [_make_episode_data(5) for _ in range(3)]
+        env = CricketBettingEnv(data=data, episode_sampling="sequential")
+        for expected in (0, 1, 2, 0):
+            _, info = env.reset()
+            assert info["data_index"] == expected
+        _, info = env.reset(options={"episode_index": 2})
+        assert info["data_index"] == 2
+
+    def test_action_masks_shape(self) -> None:
+        """action_masks returns a bool vector with HOLD valid."""
+        env = CricketBettingEnv(data=[_make_episode_data(10)])
+        env.reset()
+        mask = env.action_masks()
+        assert mask.shape == (ACTION_SPACE_SIZE,)
+        assert mask.dtype == bool and mask[0]

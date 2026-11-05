@@ -27,16 +27,56 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy installed packages from builder
 COPY --from=builder /install /usr/local
 
-# Install Playwright browsers
-RUN playwright install chromium
+# Install Playwright browsers to a shared path: the build runs as root, the scraper as `phoenix`
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN playwright install chromium && chmod -R a+rx /ms-playwright
 
-# Copy application code
+# Copy application code (the scraper stores rows through backend.models; the watchdog is a script)
 COPY shared/ /app/shared/
 COPY scraper/ /app/scraper/
 COPY features/ /app/features/
+COPY backend/__init__.py /app/backend/__init__.py
+COPY backend/models/ /app/backend/models/
+COPY scripts/run_scraper_forever.py /app/scripts/run_scraper_forever.py
+COPY scripts/data_quality_monitor.py /app/scripts/data_quality_monitor.py
+COPY scripts/quarantine_ticks.py /app/scripts/quarantine_ticks.py
+COPY scripts/results_reconciliation.py /app/scripts/results_reconciliation.py
+COPY scripts/link_twins.py /app/scripts/link_twins.py
 
-# Create non-root user
-RUN useradd --create-home phoenix
+# S65 trainer (profile recording): weekly prematch, dataset, blend and gate, plus the registry. Same image.
+COPY strategy/ /app/strategy/
+COPY training/ /app/training/
+COPY scripts/build_training_dataset.py /app/scripts/build_training_dataset.py
+COPY scripts/train_fair_value.py /app/scripts/train_fair_value.py
+COPY scripts/train_prematch_model.py /app/scripts/train_prematch_model.py
+COPY scripts/train_blend_model.py /app/scripts/train_blend_model.py
+COPY scripts/evaluate_models.py /app/scripts/evaluate_models.py
+COPY scripts/retrain_weekly.py /app/scripts/retrain_weekly.py
+COPY scripts/cricsheet_harmonizer.py /app/scripts/cricsheet_harmonizer.py
+COPY scripts/synthetic_market.py /app/scripts/synthetic_market.py
+# S97 market-dynamics model (weekly, in the retrain run): dataset from the recordings, then training and activation
+COPY scripts/build_market_dynamics_dataset.py /app/scripts/build_market_dynamics_dataset.py
+COPY scripts/train_market_dynamics.py /app/scripts/train_market_dynamics.py
+# S107 chase model (tail variant): strategy/ and training/ above hold the code; the trainer script is copied for runs in
+# the image. The paper trader reads models/chase/ through the ./models bind mount (no COPY).
+COPY scripts/train_chase_model.py /app/scripts/train_chase_model.py
+
+# S72 paper trader (profile recording): virtual bets from the models; writes only to paper_bets
+# Whole package: the paper trader imports several of its modules (ledger, review, risk helpers)
+COPY virtual_trading/ /app/virtual_trading/
+COPY scripts/run_paper_trader.py /app/scripts/run_paper_trader.py
+COPY scripts/paper_report.py /app/scripts/paper_report.py
+COPY scripts/set_result.py /app/scripts/set_result.py
+COPY scripts/replay_paper.py /app/scripts/replay_paper.py
+COPY scripts/paper_dashboard.py /app/scripts/paper_dashboard.py
+COPY scripts/evaluate_inplay.py /app/scripts/evaluate_inplay.py
+COPY scripts/backfill_actual_start.py /app/scripts/backfill_actual_start.py
+# S97: the paper trader reads models/market_dynamics/current.json (volume) through strategy/ and training/ (copied above)
+
+# Create non-root user; logs/ is bind-mounted from the host so heartbeats are visible there
+RUN useradd --create-home phoenix && mkdir -p /app/logs && chown -R phoenix /app/logs
 USER phoenix
 
-CMD ["python", "-m", "scraper.manager"]
+# The watchdog runs `python -m scraper.manager` as a child and restarts it on crash or stall
+# (no live tick stored for SCRAPER_STALL_MINUTES); Docker restarts the container if the watchdog dies.
+CMD ["python", "scripts/run_scraper_forever.py"]

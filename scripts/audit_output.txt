@@ -1,0 +1,191 @@
+{"service": "database", "host": "localhost", "event": "database_engine_created", "level": "info", "timestamp": "2026-02-12T20:03:05.357222Z"}
+======================================================================
+PHOENIX DATA AUDIT — Scraping vs Training Gap Analysis
+======================================================================
+
+## 1. ODDS TICKS (raw scraped data)
+  Total ticks:   9,204
+  Total matches: 28
+  Date range:    2026-02-08 06:22:17.409720+00:00 → 2026-02-12 19:05:55.736735+00:00
+
+## 2. PER-MATCH DETAIL
+  Match ID             Home                 Away                  Ticks   Dur(min) Competition
+  ----------------------------------------------------------------------------------------------------
+  lb_35247743          South Africa         Afghanistan            1040        248 ICC Men's T20 World Cup
+  lb_35243384          England              West Indies             908        671 ICC Men's T20 World Cup
+  lb_35179358          Sri Lanka            Ireland                 908        654 ICC Men's T20 World Cup
+  lb_35178547          England              Nepal                   752        402 ICC Men's T20 World Cup
+  lb_35207617          New Zealand          Afghanistan             697        148 ICC Men's T20 World Cup
+  lb_35239010          Scotland             Italy                   682        174 ICC Men's T20 World Cup
+  lb_35208378          Zimbabwe             Oman                    643        395 ICC Men's T20 World Cup
+  lb_35247187          Nepal                Italy                   581        341 ICC Men's T20 World Cup
+  lb_35247021          Sri Lanka            Oman                    513        190 ICC Men's T20 World Cup
+  lb_35250251          India                Namibia                 507        546 ICC Men's T20 World Cup
+  lb_35243568          Australia            Ireland                 493        391 ICC Men's T20 World Cup
+  lb_35239003          Netherlands          Namibia                 277         57 ICC Men's T20 World Cup
+  lb_35239003          Netherlands          Namibia                 257       2030 
+  lb_68746188          Delhi (Jagran)       Indore                  164        154 ICC Men's T20 World Cup
+  lb_68321564          Paarl Royals SRL     Durban Super Giants SRL    151         86 ICC Men's T20 World Cup
+  lb_68321374          Northern Districts SRL Auckland SRL            121         71 ICC Men's T20 World Cup
+  lb_35247021          Sri Lanka            Oman                     99       1431 
+  lb_68321716          Quetta Gladiators SRL Islamabad United SRL     65         34 ICC Men's T20 World Cup
+  lb_35250253          Canada               United Arab Emirates     48        616 
+  lb_35208378          Zimbabwe             Oman                     42       6524 
+  lb_35243384          England              West Indies              39       2589 
+  lb_35254881          England              Scotland                 35        446 
+  lb_35243197          New Zealand          United Arab Emirates     27        387 
+  lb_35250371          USA                  Netherlands              27        450 
+  lb_35231087          Namibia              India A                  23       2039 ICC Men's T20 World Cup
+  lb_35247743          South Africa         Afghanistan              22         27 
+  lb_35254582          New Zealand          South Africa             19        449 
+  lb_35254385          Australia            Zimbabwe                 18        452 
+  lb_35243568          Australia            Ireland                  12       2625 
+  lb_68321160          Lucknow Super Giants SRL Chennai Super Kings SRL      9          5 ICC Men's T20 World Cup
+  lb_35178547          England              Nepal                     6       6524 
+  lb_35207617          New Zealand          Afghanistan               6       6524 
+  lb_35179358          Sri Lanka            Ireland                   6       6524 
+  lb_35243197          New Zealand          United Arab Emirates      3         17 ICC Men's T20 World Cup
+  lb_35208420          South Africa         Canada                    1          ? 
+  lb_35178739          Pakistan             Netherlands               1          ? 
+  lb_35196910          India                USA                       1          ? 
+  lb_35196653          West Indies          Scotland                  1          ? 
+
+## 3. FIELD COMPLETENESS (% non-null)
+  back_home                 8412/   9204 ( 91.4%) ################## 
+  lay_home                  8659/   9204 ( 94.1%) ################## 
+  back_away                 9137/   9204 ( 99.3%) ################### 
+  lay_away                  8684/   9204 ( 94.4%) ################## 
+  back_draw                    8/   9204 (  0.1%)  *** GAP ***
+  volume_back_home           175/   9204 (  1.9%)  *** GAP ***
+  volume_lay_home            545/   9204 (  5.9%) # *** GAP ***
+  volume_back_away           545/   9204 (  5.9%) # *** GAP ***
+  volume_lay_away            546/   9204 (  5.9%) # *** GAP ***
+  implied_prob_home         8412/   9204 ( 91.4%) ################## 
+  implied_prob_away         9137/   9204 ( 99.3%) ################### 
+  overround                 8345/   9204 ( 90.7%) ################## 
+  score                      497/   9204 (  5.4%) # *** GAP ***
+  wickets                    497/   9204 (  5.4%) # *** GAP ***
+  overs                        0/   9204 (  0.0%)  *** GAP ***
+  is_live                   9204/   9204 (100.0%) #################### 
+  scrape_latency_ms          546/   9204 (  5.9%) # *** GAP ***
+
+## 4. MATCH CONTEXT (derived from score_text)
+  Total context rows:   505
+  Matches with context: 10
+
+  Match ID              Ticks  Context    Ratio
+  --------------------------------------------------
+  lb_35247743            1062        0       0% *** NO CONTEXT ***
+  lb_35243384             947        0       0% *** NO CONTEXT ***
+  lb_35179358             914        1       0% 
+  lb_35178547             758        1       0% 
+  lb_35207617             703        1       0% 
+  lb_35208378             685        1       0% 
+  lb_35239010             682        0       0% *** NO CONTEXT ***
+  lb_35247021             612        0       0% *** NO CONTEXT ***
+  lb_35247187             581        0       0% *** NO CONTEXT ***
+  lb_35239003             534        0       0% *** NO CONTEXT ***
+  lb_35250251             507      496      98% 
+  lb_35243568             505        0       0% *** NO CONTEXT ***
+  lb_68746188             164        0       0% *** NO CONTEXT ***
+  lb_68321564             151        0       0% *** NO CONTEXT ***
+  lb_68321374             121        0       0% *** NO CONTEXT ***
+  lb_68321716              65        0       0% *** NO CONTEXT ***
+  lb_35250253              48        0       0% *** NO CONTEXT ***
+  lb_35254881              35        0       0% *** NO CONTEXT ***
+  lb_35243197              30        0       0% *** NO CONTEXT ***
+  lb_35250371              27        0       0% *** NO CONTEXT ***
+  lb_35231087              23        1       4% 
+  lb_35254582              19        0       0% *** NO CONTEXT ***
+  lb_35254385              18        0       0% *** NO CONTEXT ***
+  lb_68321160               9        0       0% *** NO CONTEXT ***
+  lb_35208420               1        1     100% 
+  lb_35196653               1        1     100% 
+  lb_35196910               1        1     100% 
+  lb_35178739               1        1     100% 
+
+## 5. MATCH RESULTS (needed for settlement)
+  Matches with results:    22/28
+  Matches WITHOUT results: 6
+  Missing: ['lb_35178739', 'lb_35196653', 'lb_35196910', 'lb_35208420', 'lb_35254582', 'lb_68321160']
+  lb_35178547          England            vs Nepal              → England            (win, src=odds_inference)
+  lb_35179358          Sri Lanka          vs Ireland            → Sri Lanka          (win, src=odds_inference)
+  lb_35207617          New Zealand        vs Afghanistan        → New Zealand        (win, src=odds_inference)
+  lb_35208378          Zimbabwe           vs Oman               → Zimbabwe           (win, src=odds_inference)
+  lb_35231087          Namibia            vs India A            → India A            (win, src=odds_inference)
+  lb_35239003          Netherlands        vs Namibia            → Netherlands        (win, src=odds_inference)
+  lb_35239010          Scotland           vs Italy              → Scotland           (win, src=odds_inference)
+  lb_35243197          New Zealand        vs United Arab Emirates → New Zealand        (win, src=odds_inference)
+  lb_35243384          England            vs West Indies        → West Indies        (win, src=odds_inference)
+  lb_35243568          Australia          vs Ireland            → Australia          (win, src=odds_inference)
+  lb_35247021          Sri Lanka          vs Oman               → Sri Lanka          (win, src=odds_inference)
+  lb_35247187          Nepal              vs Italy              → Italy              (win, src=odds_inference)
+  lb_35247743          South Africa       vs Afghanistan        → Afghanistan        (win, src=odds_inference)
+  lb_35250251          India              vs Namibia            → India              (win, src=odds_inference)
+  lb_35250253          Canada             vs United Arab Emirates → United Arab Emirates (win, src=odds_inference)
+  lb_35250371          USA                vs Netherlands        → Netherlands        (win, src=odds_inference)
+  lb_35254385          Australia          vs Zimbabwe           → Australia          (win, src=odds_inference)
+  lb_35254881          England            vs Scotland           → England            (win, src=odds_inference)
+  lb_68321374          Northern Districts SRL vs Auckland SRL       → Northern Districts SRL (win, src=odds_inference)
+  lb_68321564          Paarl Royals SRL   vs Durban Super Giants SRL → Paarl Royals SRL   (win, src=odds_inference)
+  lb_68321716          Quetta Gladiators SRL vs Islamabad United SRL → Islamabad United SRL (win, src=odds_inference)
+  lb_68746188          Delhi (Jagran)     vs Indore             → Delhi (Jagran)     (win, src=odds_inference)
+
+## 6. TRAINING STATUS
+  Total tracked:     35
+  Training approved: 12
+  Training pending:  16
+  lb_35178547          England            vs Nepal              scrape=scrape_approved  train=approved   auto=True
+  lb_35178739          Pakistan           vs Netherlands        scrape=scrape_approved  train=pending    auto=False
+  lb_35179358          Sri Lanka          vs Ireland            scrape=scrape_approved  train=approved   auto=True
+  lb_35196653          West Indies        vs Scotland           scrape=scrape_approved  train=pending    auto=False
+  lb_35196910          India              vs USA                scrape=scrape_approved  train=pending    auto=False
+  lb_35207617          New Zealand        vs Afghanistan        scrape=scrape_approved  train=approved   auto=True
+  lb_35208378          Zimbabwe           vs Oman               scrape=scrape_approved  train=approved   auto=True
+  lb_35208420          South Africa       vs Canada             scrape=scrape_approved  train=pending    auto=False
+  lb_35225079          Royal Challengers Bengaluru W vs Delhi Capitals W   scrape=scrape_rejected  train=pending    auto=False
+  lb_35227553          England U19        vs India U19          scrape=scrape_rejected  train=pending    auto=False
+  lb_35231087          Namibia            vs India A            scrape=scrape_approved  train=rejected   auto=True
+  lb_35239003          Netherlands        vs Namibia            scrape=scrape_approved  train=approved   auto=True
+  lb_35239010          Scotland           vs Italy              scrape=scrape_approved  train=approved   auto=True
+  lb_35243197          New Zealand        vs United Arab Emirates scrape=scrape_approved  train=approved   auto=True
+  lb_35243384          England            vs West Indies        scrape=scrape_approved  train=approved   auto=True
+  lb_35243568          Australia          vs Ireland            scrape=scrape_approved  train=approved   auto=True
+  lb_35247021          Sri Lanka          vs Oman               scrape=scrape_approved  train=approved   auto=True
+  lb_35247187          Nepal              vs Italy              scrape=scrape_approved  train=approved   auto=False
+  lb_35247743          South Africa       vs Afghanistan        scrape=scrape_approved  train=approved   auto=True
+  lb_35250251          India              vs Namibia            scrape=scrape_approved  train=rejected   auto=False
+  lb_35250253          Canada             vs United Arab Emirates scrape=scrape_approved  train=rejected   auto=False
+  lb_35250371          USA                vs Netherlands        scrape=scrape_approved  train=rejected   auto=False
+  lb_35254385          Australia          vs Zimbabwe           scrape=scrape_approved  train=rejected   auto=False
+  lb_35254582          New Zealand        vs South Africa       scrape=scrape_approved  train=rejected   auto=False
+  lb_35254881          England            vs Scotland           scrape=scrape_approved  train=rejected   auto=False
+  lb_68040740          Fujairah           vs Emirates Blues     scrape=scrape_rejected  train=pending    auto=False
+  lb_68321194          Punjab Kings SRL   vs Gujarat Titans SRL scrape=scrape_rejected  train=pending    auto=False
+  lb_68321524          Joburg Super Kings SRL vs Mi Cape Town SRL   scrape=scrape_rejected  train=pending    auto=False
+  lb_68321568          Joburg Super Kings SRL vs Pretoria Capitals SRL scrape=discovered       train=pending    auto=False
+  lb_68321700          Karachi Kings SRL  vs Lahore Qalandars SRL scrape=scrape_rejected  train=pending    auto=False
+  lb_68321916          Barbados Royals SRL vs St Lucia Kings SRL scrape=scrape_rejected  train=pending    auto=False
+  lb_68322108          Melbourne Stars SRL vs Melbourne Renegades SRL scrape=scrape_rejected  train=pending    auto=False
+  lb_68539980          Dhumketu           vs Durbar             scrape=scrape_rejected  train=pending    auto=False
+  lb_68779904          Z Sports           vs Dubai Daredevils   scrape=scrape_rejected  train=pending    auto=False
+  lb_68779906          Vtac Volts         vs Karwan Cricket Club scrape=discovered       train=pending    auto=False
+
+## 7. TRAINING PIPELINE DATA REQUIREMENTS
+  The RL training pipeline needs for each episode:
+  [REQUIRED] odds_ticks: back_home, lay_home, back_away, lay_away
+  [REQUIRED] match_results: winner, loser (for real settlement)
+  [REQUIRED] match_training_status: training_status='approved'
+  [IMPORTANT] match_context: score, wickets, overs, innings (for features)
+  [USEFUL] volume data: volume_back/lay_home/away (for volume features)
+  [USEFUL] score_text parsing: feeds match_context table
+  [MIN] 50 ticks per match to qualify
+
+======================================================================
+## 8. GAP SUMMARY
+======================================================================
+  1. CRITICAL: 6 matches have NO match results (needed for real settlement)
+  2. IMPORTANT: Volume data very sparse — volume_back_home, volume_lay_home, volume_back_away, volume_lay_away all <10% filled
+  3. IMPORTANT: 18 matches have NO match_context rows (score/wickets/overs will be 0 in features)
+  4. ACTION: 16 matches are 'pending' training approval (won't be used for training until approved)
+  5. CRITICAL: Only 28 matches total. Need 50-100+ for robust RL training

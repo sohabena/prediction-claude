@@ -13,9 +13,11 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
+from shared.config import get_settings
 from shared.constants import (
     KEY_ADVISOR_SIGNALS,
     KEY_AGENT_STATE,
+    KEY_AGENT_VERSION,
     KEY_DRIFT_STATUS,
     KEY_ORCHESTRATOR_STATE,
     KEY_ORCHESTRATOR_STATS,
@@ -63,7 +65,11 @@ async def get_orchestrator_state() -> dict[str, Any]:
     try:
         redis = await get_redis()
         data = await redis.get_json(KEY_ORCHESTRATOR_STATE)
+        agent_ver_data = await redis.get_json(KEY_AGENT_VERSION)
         if data:
+            if isinstance(agent_ver_data, dict) and "version" in agent_ver_data:
+                data["model_version"] = max(data.get("model_version", 0), int(agent_ver_data["version"]))
+                data["strategy_name"] = agent_ver_data.get("strategy_name", "")
             return data
     except Exception as e:
         logger.error("orchestrator_state_error", error=str(e))
@@ -80,11 +86,19 @@ async def get_orchestrator_state() -> dict[str, Any]:
 async def get_orchestrator_stats() -> dict[str, Any]:
     """
     Get orchestrator statistics: data accumulation, training runs, etc.
+    Always overrides min_required from config so UI shows correct threshold.
     """
     try:
         redis = await get_redis()
         data = await redis.get_json(KEY_ORCHESTRATOR_STATS)
         if data:
+            # Always use config for min_required (Redis may have stale 30 from old installs)
+            min_required = get_settings().rl.min_matches_to_train
+            if data.get("accumulation"):
+                data["accumulation"] = dict(data["accumulation"])
+                data["accumulation"]["min_required"] = min_required
+                qual = data["accumulation"].get("qualifying_matches", 0)
+                data["accumulation"]["ready_to_train"] = qual >= min_required
             return data
     except Exception as e:
         logger.error("orchestrator_stats_error", error=str(e))
@@ -210,3 +224,28 @@ async def manual_demote() -> dict[str, Any]:
     except Exception as e:
         logger.error("manual_demote_error", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/specialists")
+async def get_specialists_catalog() -> dict[str, Any]:
+    """
+    Get the catalog of format, league, and gender-specialized trading models:
+    - Men & Women separated (T20I, ODI, BBL, WBBL)
+    - Major leagues separated (IPL, BBL, WBBL, T20 Blast, Franchise T20)
+    - Multi-day & 50-over separated (Test Men, First-Class, ODI Men, ODI Women, List A)
+    """
+    try:
+        from rl.model_zoo import ALL_SPECIALIST_DEFS, get_model_zoo
+        zoo = get_model_zoo()
+        all_specs = zoo.list_specialists()
+        canonical_keys = [k for k, _ in ALL_SPECIALIST_DEFS]
+        specialists = {k: all_specs[k] for k in canonical_keys if k in all_specs}
+        return {
+            "specialists": specialists,
+            "total_available": sum(1 for s in specialists.values() if s.get("available")),
+            "active_strategy": "Format & League Specialist Model Zoo (12 Models)",
+        }
+    except Exception as e:
+        logger.error("get_specialists_error", error=str(e))
+        return {"specialists": {}, "total_available": 0, "error": str(e)}
+

@@ -108,3 +108,20 @@ class TestPortfolioManager:
 
         drawdown = self.portfolio.get_drawdown()
         assert abs(drawdown - 0.10) < 0.01  # ~10% drawdown
+
+    def test_lay_tracks_liability_and_unique_ids(self) -> None:
+        """total_exposure tracks liability; same-timestamp bets get distinct ids."""
+        placed = datetime.now(timezone.utc)
+        ids = set()
+        for _ in range(2):
+            bet = VirtualBet(
+                match_id="m", placed_at=placed, action=BettingAction.LAY_HOME_SM,
+                team="India", odds=3.0, stake=1000.0,
+            )
+            assert self.portfolio.open_position(bet)
+            ids.add(bet.id)
+        assert len(ids) == 2
+        assert self.portfolio.state.total_exposure == pytest.approx(4000.0)  # 2 x 1000 x (3-1)
+        bet_id = next(iter(ids))
+        self.portfolio.close_position(bet_id, pnl=1000.0)
+        assert self.portfolio.state.total_exposure == pytest.approx(2000.0)

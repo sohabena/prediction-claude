@@ -1,0 +1,68 @@
+{
+  "generated_at": "2026-11-03T15:50:12.986161+00:00",
+  "include_srl": false,
+  "matches_with_both_markets": 2,
+  "bookmaker_rows_priced": 964,
+  "opportunities": 99,
+  "opportunity_share": 0.10269709543568464,
+  "by_side": {
+    "BACK": 46,
+    "LAY": 53
+  },
+  "median_edge_now": 0.013698630136986356,
+  "survive_60s": 9,
+  "survive_share": 0.09090909090909091,
+  "episodes": 9,
+  "episode_clv": {
+    "estimate": -0.016945975496779536,
+    "ci_lower": -0.023032741107648667,
+    "ci_upper": 0.01957461816843526,
+    "se": 0.01690076226686046,
+    "n_clusters": 2.0,
+    "n_items": 7.0,
+    "too_few_clusters": 1.0,
+    "statistic": "mean",
+    "weighted": 0.0,
+    "n_boot": 2000.0,
+    "seed": 20261103.0
+  },
+  "settled_episodes": 9,
+  "settled_pnl_units": 0.13000000000000012,
+  "settled_pnl_per_episode": {
+    "estimate": 0.014444444444444458,
+    "ci_lower": -0.10874999999999999,
+    "ci_upper": 1.0,
+    "se": 0.4475830259336479,
+    "n_clusters": 2.0,
+    "n_items": 9.0,
+    "too_few_clusters": 1.0,
+    "statistic": "mean",
+    "weighted": 0.0,
+    "n_boot": 2000.0,
+    "seed": 20261103.0
+  },
+  "per_match": [
+    {
+      "match_id": "lb_36267578",
+      "teams": "Biratnagar Kings v Janakpur Bolts",
+      "bookmaker_rows_priced": 614,
+      "opportunities": 83,
+      "survive_60s": 8,
+      "episodes": 8,
+      "mean_edge_now": 0.030187857538932383,
+      "mean_clv": -0.023032741107648667,
+      "pnl_units": -0.8699999999999999
+    },
+    {
+      "match_id": "lb_36267634",
+      "teams": "Lumbini Lions v Pokhara Avengers",
+      "bookmaker_rows_priced": 350,
+      "opportunities": 16,
+      "survive_60s": 1,
+      "episodes": 1,
+      "mean_edge_now": 0.02901229839614272,
+      "mean_clv": 0.01957461816843526,
+      "pnl_units": 1.0
+    }
+  ]
+}

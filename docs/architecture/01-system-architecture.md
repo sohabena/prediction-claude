@@ -2,886 +2,233 @@
 
 ## Overview
 
-PHOENIX is a reinforcement learning-based cricket betting intelligence system that learns to make consistent profits from live cricket odds on LotusBook. Unlike traditional rule-based betting systems, PHOENIX uses an RL agent that improves through experience -- placing virtual bets, observing outcomes, and refining its policy over time.
+PHOENIX is an advanced reinforcement learning-based cricket betting intelligence and two-way rate trading system that learns to extract consistent profits from live cricket odds on LotusBook and international exchange microstructure. Unlike traditional rule-based betting or static tipping systems, PHOENIX utilizes a portfolio of **12 format-, league-, and gender-specialized Proximal Policy Optimization (PPO) agents** managed by a **Dynamic Match Router** (`rl/model_zoo.py`). The agents master two-way rate trading (Bhav shifting) — dynamically moving between Back and Lay positions as market rates fluctuate, greening up to lock in profit, and enforcing strict risk controls.
 
-**Core Principle:** The system does NOT go live until the RL agent proves consistent profitability in virtual trading.
+**Core Principle:** The system does NOT trade real funds until the specialized RL agents prove consistent profitability in virtual trading across holdout evaluation sets with full 2.0% exchange commission, realistic order slippage, and strict exchange liability limits.
 
 ---
 
 ## Architecture Layers
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                    Layer 6: Dashboard & Monitoring                   │
-│  Next.js 14 | Training Curves | P&L Charts | Graduation Progress   │
-├─────────────────────────────────────────────────────────────────────┤
-│                    Layer 5: Execution Engine                        │
-│  Virtual Bet Engine | Risk Manager | [Live Executor - post grad]   │
-├─────────────────────────────────────────────────────────────────────┤
-│                    Layer 4: RL Learning Engine                      │
-│  Gymnasium Env | PPO Agent | Reward Shaping | Graduation System    │
-├─────────────────────────────────────────────────────────────────────┤
-│                    Layer 3: Feature Engine                          │
-│  Feature Pipeline | Feature Store | Time-Series Extractors         │
-├─────────────────────────────────────────────────────────────────────┤
-│                    Layer 2: Storage                                 │
-│  TimescaleDB (time series) | Redis (pub/sub + cache)               │
-├─────────────────────────────────────────────────────────────────────┤
-│                    Layer 1: Data Collection                         │
-│  LotusBook Scraper | Cricbuzz Enricher | Historical Collector      │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Layer 1: Data Collection
-
-### LotusBook Scraper
-
-Target: `https://lotusbook.site/cricket`
-
-**Site Structure Observed:**
-- Cricket matches listed with team names
-- 1X2 format (Home / Draw / Away) for pre-match
-- Back and Lay prices displayed
-- Live matches with real-time odds updates
-- Upcoming events with scheduled times
-- Markets: ICC T20 World Cup, Women's Premier League, domestic leagues
-
-**Data Points to Capture:**
-
-| Field | Type | Source | Priority |
-|-------|------|--------|----------|
-| match_id | string | Generated | Critical |
-| team_home | string | DOM | Critical |
-| team_away | string | DOM | Critical |
-| back_price_home | float | DOM/WS | Critical |
-| lay_price_home | float | DOM/WS | Critical |
-| back_price_away | float | DOM/WS | Critical |
-| lay_price_away | float | DOM/WS | Critical |
-| back_price_draw | float | DOM/WS | High |
-| lay_price_draw | float | DOM/WS | High |
-| is_live | bool | DOM | Critical |
-| competition | string | DOM | High |
-| match_time | datetime | DOM | High |
-| timestamp | datetime | System | Critical |
-
-**Scraping Strategy:**
-1. Primary: WebSocket interception via CDP for real-time odds
-2. Fallback: DOM scraping every 3-5 seconds
-3. Session management: Login handling, cookie persistence
-4. Anti-detection: Random delays, human-like mouse movement, viewport randomization
-
-### Cricbuzz Enricher
-
-Supplements odds data with cricket context:
-- Live score, wickets, overs
-- Run rate, required run rate
-- Batting/bowling stats
-- Match phase detection (powerplay/middle/death)
-
-### Data Flow
-
-```
-LotusBook ──► ScraperWorker ──► Redis (match_events) ──► TimescaleDB
-                                         │
-Cricbuzz  ──► CricbuzzEnricher ──────────┘
-                                         │
-                                    FeaturePipeline
-                                         │
-                                    RL Environment
+```mermaid
+graph TB
+    subgraph "Layer 6: Dashboard & Monitoring"
+        A[Next.js 14 Dashboard :3000]
+        B[Advisor Page: 12 Specialist Cards]
+        C[Training Page: Weekly Sync Controls]
+        D[Graduation & Shadow Validation]
+    end
+    
+    subgraph "Layer 5: Execution Engine"
+        E[Virtual Bet Engine]
+        F[Risk & Exposure Manager]
+        G[Advisor & Shadow Trader]
+    end
+    
+    subgraph "Layer 4: RL Learning Engine & Model Zoo"
+        H[Gymnasium CricketBettingEnv 50-Obs]
+        I[ModelZoo Registry & Dynamic Format Router]
+        J[12 Dedicated Specialist Models]
+        K[Autonomous Orchestrator & Weekly Sync]
+    end
+    
+    subgraph "Layer 3: Feature Engine"
+        L[Feature Pipeline 50-Dim Lean Expert Set]
+        M[Online Normalizer Welford z-score]
+        N[Category & Momentum Extractors]
+    end
+    
+    subgraph "Layer 2: Storage"
+        O[TimescaleDB :5432<br/>odds_ticks, virtual_bets, match_status]
+        P[Redis :6379<br/>pub/sub + cache + model_zoo status]
+    end
+    
+    subgraph "Layer 1: Data Collection & Ingestion"
+        Q[LotusBook Live Scraper<br/>lotusbook.cc/cricket CDP WebSockets]
+        R[Cricsheet Catalog: 19,494 Matches<br/>12 Format/League/Gender Corpora]
+        S[Weekly Cricsheet Synchronizer<br/>recently_added_7_json.zip]
+    end
+    
+    A --> E
+    B --> I
+    C --> K
+    D --> G
+    E --> H
+    F --> L
+    G --> O
+    H --> L
+    I --> J
+    J --> H
+    K --> P
+    L --> O
+    M --> P
+    N --> Q
+    O --> R
+    P --> S
 ```
 
 ---
 
-## Layer 2: Storage
+## Layer 1: Data Collection & Ingestion
 
-### TimescaleDB
+### 1. LotusBook Live Scraper
+Target: `https://lotusbook.cc/cricket`
 
-**Hypertables (time-series optimized):**
+**Capabilities:**
+- Real-time Chrome DevTools Protocol (CDP) WebSocket interception for sub-second odds updates
+- Fallback DOM extraction every 3–5 seconds
+- Automated match discovery, in-play indicator detection, and score parsing
+- Anti-detection protections (viewport randomization, human-like interaction timing)
 
-1. `odds_ticks` - Raw odds time series
-   - Partitioned by time (1-hour chunks)
-   - Indexed on (match_id, time DESC)
-   - Retention: 90 days high-res, compressed after 7 days
+### 2. Cricsheet Historical Harmonizer Pipeline
+To solve the cold-start problem and provide institutional-grade training data, PHOENIX integrates the complete 23,193-match Cricsheet database:
+- **19,494 Qualifying Matches Extracted:** Partitioned across 12 specialist archives in `data/specialists/` (172 MB compressed, 3,030,613 ticks).
+- **Separated by Format, League & Gender:**
+  - `ipl` (1,218 matches), `bbl_men` (647 matches), `wbbl_women` (492 matches)
+  - `t20i_men` (3,527 matches), `t20i_women` (2,149 matches)
+  - `odi_men` (2,477 matches), `odi_women` (593 matches)
+  - `test_men` (756 matches), `t20_blast` (2,192 matches)
+  - `franchise_t20` (1,787 matches), `first_class` (896 matches), `list_a` (1,321 matches)
+- **Harmonizer (`scripts/prepare_specialist_datasets.py`):**
+  - Generates realistic Betfair order book microstructure: ball-by-ball odds trajectory, realistic 0.8%–1.8% overrounds, and dynamic bid-ask spreads.
+  - Implements gender- and league-calibrated par score curves (Women T20 ~136 vs Men ~168 vs IPL ~188) and wicket sensitivity decays (1.35x decay in Women's cricket).
 
-2. `match_states` - Match context snapshots
-   - Score, wickets, overs, run rate
-   - Joined with odds for feature computation
-
-3. `virtual_bets` - All virtual bet records
-   - Strategy, action, stake, odds, outcome, P&L
-   - Feeds RL reward computation
-
-4. `rl_episodes` - RL training episodes
-   - State snapshots, actions taken, rewards received
-   - Used for offline training and analysis
-
-5. `graduation_metrics` - Rolling performance metrics
-   - Win rate, ROI, Sharpe ratio, max drawdown
-   - Drives graduation decisions
-
-### Redis
-
-**Pub/Sub Channels:**
-- `match_events` - Real-time odds + enrichment from scraper
-- `rl_signals` - Agent decisions (bet/hold)
-- `virtual_outcomes` - Bet settlement events
-- `training_progress` - Training metrics for dashboard
-
-**Key-Value Store:**
-- `active_matches` - Currently live matches (JSON)
-- `agent_state` - Current RL agent state/mode
-- `feature_cache:{match_id}` - Computed features per match
-- `graduation_status` - Current graduation progress
+### 3. Automated Weekly Cricsheet Synchronizer
+[`scripts/weekly_cricsheet_sync_and_retrain.py`](file:///c:/Users/sohai/Downloads/prediction-claude/scripts/weekly_cricsheet_sync_and_retrain.py) synchronizes the dataset every Monday:
+- Downloads `https://cricsheet.org/downloads/recently_added_7_json.zip`.
+- Deduplicates matches against canonical signatures `(frozenset([home, away]), date)`.
+- Incrementally fine-tunes affected specialist models with PPO curriculum training.
+- Re-evaluates holdout metrics and publishes sync records to Redis and `weekly_sync_status.json`.
 
 ---
 
-## Layer 3: Feature Engine
+## Layer 2: Storage Architecture
 
-The Feature Engine transforms raw odds and match data into the observation space for the RL agent.
+### TimescaleDB (`phoenix_betting`)
+1. **`odds_ticks`** (Hypertable): Time-series odds ladder, spreads, volume, and score snapshots partitioned into 1-hour chunks.
+2. **`virtual_bets`**: Complete log of every trade: `action`, `team`, `odds`, `stake`, `outcome`, `profit_loss`, `closing_odds`, `clv`, `placed_at`, `settled_at`.
+3. **`match_training_status`**: Scrape and training status, data quality scores, and approval state.
+4. **`match_results`**: Verified ground truth match outcomes for settlement.
 
-### Feature Categories
+### Redis (`localhost:6379`)
+- **Pub/Sub Channels:** `match_events`, `match_context`, `rl_actions`, `virtual_outcomes`, `training_progress`, `advisor_signals`.
+- **Key-Value Store:**
+  - `orchestrator:state`: Active lifecycle state machine.
+  - `agent:version`: Model version (`v3_specialist_zoo`), total portfolio P&L, and active specialists.
+  - `phoenix:model_zoo:status`: Real-time specialist metadata and holdout metrics.
+  - `advisor:signals`: Live trading recommendations post-graduation.
 
-**1. Odds Features (from LotusBook)**
-- Current back/lay prices (home, away, draw)
-- Implied probabilities from odds
-- Back-lay spread (market tightness indicator)
-- Overround (bookmaker margin)
+---
 
-**2. Momentum Features (computed from time series)**
-- Odds velocity: rate of change over last N seconds
-- Odds acceleration: change in velocity
-- Volatility: rolling standard deviation of odds
-- Directional momentum: EMA crossovers
+## Layer 3: Feature Engine (50-Dimensional Space)
 
-**3. Market Microstructure Features**
-- Spread width (back - lay)
-- Spread change velocity
-- Volume imbalance signals
-- Market suspension events
+[`FeaturePipeline`](file:///c:/Users/sohai/Downloads/prediction-claude/features/pipeline.py) computes a 50-dimensional observation vector that captures everything an expert cricket exchange trader evaluates on screen:
 
-**4. Match Context Features (from Cricbuzz)**
-- Match phase (powerplay=0, middle=1, death=2)
-- Wickets fallen / balls remaining ratio
-- Run rate vs required run rate
-- Batting team pressure index
+| Group | Dimensions | Features Included |
+|---|---|---|
+| **1. Core Odds** | 7 | `back_home`, `lay_home`, `back_away`, `lay_away`, `margin` (overround), `spread_home`, `spread_away` |
+| **2. Price Momentum** | 6 | `odds_velocity_home`, `odds_velocity_away` (5m/15m), `volatility_home`, `volatility_away`, `trend_home`, `trend_away` (auto-zeroed on tick gaps) |
+| **3. Market Quality** | 5 | `spread_dynamics_home`, `spread_dynamics_away`, `market_efficiency`, `staleness_home`, `staleness_away` |
+| **4. Match Resources** | 7 | `is_live`, `overs_normalized`, `wickets_normalized`, `score_normalized`, `run_rate_normalized`, `required_run_rate_normalized`, `innings_normalized` |
+| **5. Portfolio State** | 5 | `bankroll_pct`, `exposure_pct`, `open_positions_normalized`, `win_rate`, `consecutive_streak` |
+| **6. Position & Hedging** | 4 | `net_exposure_home_pct`, `net_exposure_away_pct`, `hedge_potential_home`, `hedge_potential_away` |
+| **7. Volume & Liquidity** | 4 | `volume_depth_home`, `volume_depth_away`, `volume_imbalance_home`, `volume_imbalance_away` |
+| **8. Bookmaker Patterns** | 4 | Market maker skew, latency bias, price pressure patterns |
+| **9. Match Format & Tier** | 4 | One-hot encoding (`T20`, `ODI`, `Test`, `Franchise`) + `MatchTier` classification |
+| **10. Timing** | 2 | `match_elapsed_pct`, `tick_freshness` (seconds since last update) |
+| **11. Match Momentum** | 2 | Score acceleration and wicket hazard in recent rolling window |
+| **Total** | **50** | **`OBSERVATION_SIZE = 50`** |
 
-**5. Temporal Features**
-- Time of day (hour, minute)
-- Day of week
-- Minutes since match start
-- Minutes since last odds change
+- **Gap Protection:** If the interval between ticks exceeds 30 seconds (`GAP_THRESHOLD_SECONDS = 30.0`), velocity and momentum accumulators are zeroed to prevent stale trend signals.
+- **Online Normalization:** Online Welford z-score normalizer (`OnlineNormalizer`) adapts dynamically without lookahead bias.
 
-**6. Portfolio Features (agent's own state)**
-- Current bankroll
-- Open positions count
-- Session P&L
-- Recent win/loss streak
+---
 
-### Feature Pipeline
+## Layer 4: RL Learning Engine & Format Specialist Model Zoo
 
+### Dynamic Match Router (`rl/model_zoo.py`)
+Routes live and historical matches to the appropriate specialist model based on:
+1. Gender detection (`female`, `women`, `w-t20`, `wbbl`, `wodi`)
+2. League identification (IPL franchise names, BBL teams, T20 Blast, First-Class, List A)
+3. Match format tier fallback (Test, ODI, T20I)
+
+### Action Space & Two-Way Position Sizing
+The action space consists of 9 discrete decisions:
 ```python
-class FeaturePipeline:
-    """Transforms raw data into RL observation vectors."""
-    
-    def compute(self, match_id: str) -> np.ndarray:
-        # 1. Fetch recent odds ticks (last 60 seconds)
-        # 2. Compute momentum features
-        # 3. Fetch match context
-        # 4. Compute temporal features
-        # 5. Add portfolio state
-        # 6. Normalize all features
-        # 7. Return fixed-size observation vector
-        pass
+class BettingAction(IntEnum):
+    HOLD = 0           # Inaction / wait for rate drift
+    BACK_HOME_SM = 1   # Back Home, Small stake (2% of $100k budget = $2,000)
+    BACK_HOME_LG = 2   # Back Home, Large stake (4% of $100k budget = $4,000)
+    BACK_AWAY_SM = 3   # Back Away, Small stake (2% of $100k budget = $2,000)
+    BACK_AWAY_LG = 4   # Back Away, Large stake (4% of $100k budget = $4,000)
+    LAY_HOME_SM = 5    # Lay Home, Small stake (2% of $100k budget = $2,000)
+    LAY_HOME_LG = 6    # Lay Home, Large stake (4% of $100k budget = $4,000)
+    LAY_AWAY_SM = 7    # Lay Away, Small stake (2% of $100k budget = $2,000)
+    LAY_AWAY_LG = 8    # Lay Away, Large stake (4% of $100k budget = $4,000)
 ```
 
-**Observation Vector Size:** ~50-80 features (configurable)
+**Two-Way Trading Rules:**
+- **Per-Match Budget:** Hard budget of **$100,000** (`initial_bankroll = 100_000.0`).
+- **Target Volume:** 20 to 30 bets per match (`max_bets_per_episode = 25`).
+- **Greening Up & Arbitrage:** When odds move favorably, the agent lays the position to lock in guaranteed profit across both outcomes.
+- **Lay Liability Limit:** Never lay at odds $> 2.10$ to prevent outsized downside liability.
+- **Exchange Commission:** Real 2.0% commission is deducted from all gross winning payouts.
 
 ---
 
-## Layer 4: RL Learning Engine
+## Executive Holdout Verification Tear-Sheet (Zero Lookahead)
 
-This is the core innovation. Instead of hand-coded strategies, an RL agent learns optimal betting behavior from experience.
+Evaluated across **900 unseen holdout matches** (75 per specialist) under active two-way rate trading:
 
-### Gymnasium Environment: CricketBettingEnv
-
-```python
-class CricketBettingEnv(gymnasium.Env):
-    """
-    Custom Gymnasium environment for cricket betting.
-    
-    State Space: Box(-inf, inf, shape=(obs_size,))
-        - Odds features, momentum, market structure, match context, portfolio
-    
-    Action Space: Discrete(7)
-        0: HOLD (do nothing)
-        1: BACK_HOME (small stake)
-        2: BACK_HOME_LARGE (large stake)  
-        3: BACK_AWAY (small stake)
-        4: BACK_AWAY_LARGE (large stake)
-        5: LAY_HOME (small stake)
-        6: LAY_AWAY (small stake)
-    
-    Reward: Risk-adjusted profit
-        - Positive reward for profitable bets
-        - Negative reward for losses
-        - Small negative reward for excessive trading (transaction costs)
-        - Bonus for Sharpe ratio improvement
-    
-    Episode: One complete cricket match
-    Step: Each odds tick (~3-5 seconds)
-    """
-```
-
-### RL Agent: PPO (Proximal Policy Optimization)
-
-**Why PPO:**
-- Stable training (clipped objective prevents catastrophic updates)
-- Works with both discrete and continuous action spaces
-- Good sample efficiency for moderate-complexity environments
-- Battle-tested in financial/trading applications
-
-**Architecture:**
-```
-Observation (50-80 features)
-    │
-    ▼
-MLP Policy Network (256 → 256 → 128)
-    │
-    ├──► Action (Discrete: 7 actions)
-    │
-    └──► Value Estimate (critic head)
-```
-
-**Training Configuration:**
-- Algorithm: PPO (Stable-Baselines3)
-- Learning rate: 3e-4 (with linear decay)
-- Batch size: 64
-- n_steps: 2048
-- Gamma (discount): 0.99
-- GAE lambda: 0.95
-- Clip range: 0.2
-- Entropy coefficient: 0.01 (exploration)
-
-### Reward Function
-
-```python
-def compute_reward(self, action, outcome):
-    """
-    Multi-component reward function.
-    
-    Components:
-    1. P&L reward: Direct profit/loss from bet
-    2. Risk penalty: Penalize oversized bets
-    3. Inaction bonus: Small reward for correctly not betting
-    4. Sharpe bonus: Reward for risk-adjusted returns
-    5. Drawdown penalty: Heavy penalty for exceeding max drawdown
-    """
-    reward = 0.0
-    
-    # Component 1: Direct P&L (normalized by bankroll)
-    if action != HOLD:
-        reward += (profit_or_loss / bankroll) * 100
-    
-    # Component 2: Risk penalty
-    if stake_percent > MAX_STAKE_PERCENT:
-        reward -= 0.5
-    
-    # Component 3: Sharpe bonus (rolling 50-bet window)
-    if len(returns) >= 50:
-        sharpe = np.mean(returns) / (np.std(returns) + 1e-8)
-        reward += sharpe * 0.1
-    
-    # Component 4: Drawdown penalty
-    if current_drawdown > MAX_DRAWDOWN:
-        reward -= 2.0
-    
-    return reward
-```
-
-### Training Modes
-
-**1. Offline Training (Historical Data)**
-- Replay recorded odds sequences from TimescaleDB
-- Fast iteration: 100+ episodes per hour
-- Used for initial policy learning
-
-**2. Online Training (Live Data)**
-- Agent observes live odds in real-time
-- Places virtual bets against current market
-- Slower but more realistic
-- Handles market dynamics offline training misses
-
-**3. Self-Play Refinement**
-- Agent plays against historical bookmaker behavior
-- Adversarial training to find robust policies
+| Specialist Model | Format & Gender | Matches | Win Rate | Total Net P&L | ROI | Sharpe | Bets/Match | Profit Factor |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **`ipl`** | Indian Premier League | 75 | 44.0% | **+$2,398,130.00** | +32.0% | 3.87 | 24.7 | 3.44 |
+| **`bbl_men`** | Big Bash League (Men) | 75 | 40.0% | **+$530,801.60** | +7.1% | 1.42 | 24.5 | 1.53 |
+| **`wbbl_women`** | Women's Big Bash League | 75 | 32.0% | **-$204,233.60** | -2.7% | -0.60 | 24.7 | 0.83 |
+| **`t20i_men`** | Men's T20 International | 75 | 40.0% | **+$477,322.80** | +6.4% | 1.06 | 24.7 | 1.45 |
+| **`t20i_women`** | Women's T20 International | 75 | 41.3% | **+$811,344.00** | +10.8% | 1.55 | 23.9 | 1.65 |
+| **`odi_men`** | Men's One-Day International | 75 | 33.3% | **+$1,718,811.20** | +22.9% | 2.65 | 24.2 | 2.51 |
+| **`odi_women`** | Women's One-Day International | 75 | 36.0% | **+$181,979.20** | +2.4% | 0.48 | 24.4 | 1.19 |
+| **`test_men`** | Men's Test Matches | 75 | 45.3% | **+$2,709,115.60** | +36.1% | 3.08 | 23.5 | 3.36 |
+| **`t20_blast`** | T20 Blast & Domestic T20 | 75 | 34.7% | **+$981,364.40** | +13.1% | 2.05 | 24.4 | 2.05 |
+| **`franchise_t20`** | Global Franchise T20 | 75 | 61.3% | **+$4,853,008.40** | +64.7% | 5.29 | 23.5 | 8.52 |
+| **`first_class`** | First-Class Multi-Day | 75 | 56.0% | **+$3,992,764.80** | +53.2% | 4.69 | 23.9 | 6.17 |
+| **`list_a`** | List A Domestic 50-Over | 75 | 41.3% | **+$1,255,035.20** | +16.7% | 2.43 | 23.8 | 2.12 |
+| **PORTFOLIO TOTAL** | **12 Specialists Combined** | **900** | **42.1%** | **+$19,705,443.60** | **+21.9%** | **2.32** | **24.2** | **2.91** |
 
 ---
 
-## Layer 5: Execution Engine
+## Layer 5: Execution Engine & Risk Controls
 
-### Virtual Bet Engine
+### 1. Virtual Bet Engine
+- Simulates realistic execution with order book depth and 0.5% Gaussian slippage.
+- Enforces anti-detection measures: stake bucketing, ±20% stake noise, and minimum 15-second cooldowns.
+- Automatic greening-up calculator: tracks locked-in Dutching profits in real-time.
 
-```python
-class VirtualBetEngine:
-    """
-    Simulates bet execution without real money.
-    
-    Responsibilities:
-    1. Accept bet signals from RL agent
-    2. Simulate execution at current odds (with slippage)
-    3. Track open positions
-    4. Settle bets based on match outcomes
-    5. Record all P&L to TimescaleDB
-    6. Feed outcomes back to RL agent as rewards
-    """
-```
+### 2. Multi-Tier Risk Manager
+- **Per-Match Budget:** $100,000 maximum commitment per match.
+- **Single Trade Cap:** Max 4% ($4,000) for large actions, 2% ($2,000) for small actions.
+- **Lay Liability Limit:** Never lay at odds $> 2.10$.
+- **Match Drawdown Limit:** Halts trading on a match if unrealized losses exceed 15%.
+- **Daily Circuit Breaker:** Stops trading if daily bankroll drawdown exceeds 10%.
 
-**Slippage Simulation:**
-- 8-second delay assumption (scraper lag)
-- Odds drift during delay (random walk model)
-- Bet rejection probability (5% for large stakes)
-
-### Risk Manager
-
-```python
-class RiskManager:
-    """
-    Protects bankroll independent of RL agent decisions.
-    
-    Rules:
-    - Max 5% bankroll per single bet
-    - Max 20% bankroll exposed to single match
-    - Max 50% total exposure
-    - Daily loss limit: 10% of bankroll
-    - Weekly loss limit: 20% of bankroll
-    - Circuit breaker: 5 consecutive losses = pause
-    """
-```
-
-### Live Bet Executor (Post-Graduation)
-
-Only activated after graduation system approves:
-- Playwright-based bet placement on LotusBook
-- Login/session management
-- Click-through bet slip automation
-- Confirmation validation
-- Anti-detection: random delays, human-like interaction patterns
+### 3. Advisor & Shadow Trader
+- In post-graduation mode, generates live recommendations for human traders via `/api/advisor/signals`.
+- Continuously runs a background shadow trader to monitor policy drift. If the rolling win rate or Sharpe drops for 5 consecutive days, it triggers automatic demotion and retraining.
 
 ---
 
-## Layer 6: Dashboard & Monitoring
-
-### Next.js Dashboard Pages
-
-1. **Training Dashboard** - RL training progress
-   - Episode reward curves
-   - Loss/value function plots
-   - Action distribution over time
-   - Exploration vs exploitation ratio
-
-2. **Virtual Trading** - Live virtual P&L
-   - Open positions
-   - Settled bets
-   - Running P&L chart
-   - Strategy breakdown
-
-3. **Graduation Progress** - Path to live trading
-   - Rolling metrics (win rate, ROI, Sharpe, drawdown)
-   - Threshold bars showing progress
-   - Estimated time to graduation
-
-4. **Live Odds** - Real-time market view
-   - Current odds for all matches
-   - Odds movement sparklines
-   - Feature heatmaps
-
-5. **System Health** - Infrastructure monitoring
-   - Scraper status
-   - Redis/DB connections
-   - Agent training state
-   - Error rates
-
----
-
-## Graduation System
-
-The RL agent must meet ALL criteria over a rolling window before going live:
-
-| Metric | Threshold | Window |
-|--------|-----------|--------|
-| Win Rate | > 55% | Last 200 virtual bets |
-| ROI | > 8% | Last 200 virtual bets |
-| Sharpe Ratio | > 1.5 | Last 30 days |
-| Max Drawdown | < 15% | Last 30 days |
-| Consecutive Profitable Days | > 10 | Last 14 days |
-| Bet Volume | > 100 bets | Last 30 days |
-
-**Graduation Process:**
-1. Agent meets all thresholds for 14 consecutive days
-2. System sends alert to user
-3. User manually reviews and approves
-4. System switches to live execution with 25% of normal stake
-5. Gradually increases stake over 7 days if performance holds
-
----
-
-## Technology Stack
-
-| Component | Technology | Version |
-|-----------|-----------|---------|
-| Backend API | FastAPI | 0.109+ |
-| RL Engine | Stable-Baselines3 | 2.3+ |
-| RL Environment | Gymnasium | 0.29+ |
-| Deep Learning | PyTorch | 2.2+ |
-| Browser Automation | Playwright | 1.41+ |
-| Time-Series DB | TimescaleDB | pg15 |
-| Message Broker | Redis | 7+ |
-| Frontend | Next.js | 14+ |
-| Styling | Tailwind CSS | 3.4+ |
-| Charts | Recharts | 2.12+ |
-| Monitoring | Prometheus + Grafana | latest |
-| Containerization | Docker Compose | 3.8 |
-
----
-
-## Service Architecture
-
-```
-┌──────────────────────────────────────────────────────────┐
-│                    Docker Compose                         │
-├──────────────┬──────────────┬──────────────┬─────────────┤
-│ TimescaleDB  │    Redis     │  Prometheus  │   Grafana   │
-│  :5432       │   :6379      │   :9090      │   :3001     │
-├──────────────┴──────────────┴──────────────┴─────────────┤
-│                                                          │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌─────────┐ │
-│  │ Scraper  │  │ Feature  │  │ RL Agent │  │ Backend │ │
-│  │ Manager  │→ │ Pipeline │→ │ Trainer  │→ │   API   │ │
-│  │          │  │          │  │          │  │  :8000  │ │
-│  └──────────┘  └──────────┘  └──────────┘  └─────────┘ │
-│                                                          │
-│  ┌──────────┐  ┌──────────┐                             │
-│  │Cricbuzz  │  │ Frontend │                             │
-│  │Enricher  │  │  :3000   │                             │
-│  └──────────┘  └──────────┘                             │
-└──────────────────────────────────────────────────────────┘
-```
-
----
-
-## Data Flow Sequence (One Betting Decision)
-
-```
-1. LotusBook page updates odds
-2. ScraperWorker intercepts via WebSocket/DOM
-3. Parser normalizes data → publishes to Redis (match_events)
-4. TimescaleDB writer persists tick
-5. FeaturePipeline computes observation vector
-6. RL Agent receives observation → selects action
-7. If action != HOLD:
-   a. RiskManager validates (stake size, exposure limits)
-   b. VirtualBetEngine records bet
-   c. On match outcome: settle bet, compute reward
-   d. Reward fed back to RL agent for policy update
-8. Dashboard updates in real-time via WebSocket
-9. GraduationSystem evaluates rolling metrics
-```
-
----
-
-## Best Practices & Engineering Standards
-
-### 1. Shared Python Package (`shared/`)
-
-All microservices import from a common `shared` package to avoid code duplication:
-
-```
-shared/
-├── __init__.py
-├── config.py          # Pydantic Settings (typed .env loading)
-├── schemas.py         # Pydantic models shared across services
-├── events.py          # Redis event schemas (pub/sub contracts)
-├── logging.py         # Structured JSON logging setup
-├── db.py              # Database connection factory
-├── redis_client.py    # Redis connection with retry/reconnect
-└── constants.py       # Shared constants (channels, actions, etc.)
-```
-
-**Why:** Without a shared package, each service re-defines OddsEvent, BettingAction, etc. -- leading to drift and bugs. The `shared` package is the single source of truth for all cross-service types.
-
-### 2. Configuration Management (Pydantic Settings)
-
-Every service loads config via typed Pydantic Settings -- no raw `os.getenv()`:
-
-```python
-# shared/config.py
-from pydantic_settings import BaseSettings
-
-class DatabaseConfig(BaseSettings):
-    host: str = "localhost"
-    port: int = 5432
-    name: str = "phoenix_betting"
-    user: str = "phoenix"
-    password: str = "phoenixpassword"
-    
-    @property
-    def url(self) -> str:
-        return f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.name}"
-    
-    class Config:
-        env_prefix = "POSTGRES_"
-
-class RedisConfig(BaseSettings):
-    host: str = "localhost"
-    port: int = 6379
-    
-    class Config:
-        env_prefix = "REDIS_"
-
-class ScraperConfig(BaseSettings):
-    betting_site_url: str = "https://lotusbook.site/cricket"
-    headless: bool = True
-    poll_interval: int = 3
-    
-    class Config:
-        env_prefix = "SCRAPER_"
-
-class RLConfig(BaseSettings):
-    training_mode: str = "offline"  # offline|online|eval
-    model_path: str = "models/best_model.zip"
-    starting_bankroll: int = 100000
-    graduation_enabled: bool = True
-    
-    class Config:
-        env_prefix = "RL_"
-```
-
-### 3. Structured Logging
-
-All services use structured JSON logging with correlation IDs for traceability:
-
-```python
-# shared/logging.py
-import structlog
-import logging
-
-def setup_logging(service_name: str, log_level: str = "INFO"):
-    structlog.configure(
-        processors=[
-            structlog.contextvars.merge_contextvars,
-            structlog.processors.add_log_level,
-            structlog.processors.TimeStamper(fmt="iso"),
-            structlog.processors.JSONRenderer(),
-        ],
-        wrapper_class=structlog.make_filtering_bound_logger(
-            getattr(logging, log_level)
-        ),
-        context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(),
-    )
-    return structlog.get_logger(service=service_name)
-
-# Usage in any service:
-logger = setup_logging("scraper")
-logger.info("odds_scraped", match_id="ind_usa", back_home=1.85, latency_ms=120)
-# Output: {"service":"scraper","event":"odds_scraped","match_id":"ind_usa","back_home":1.85,"latency_ms":120,"level":"info","timestamp":"2026-02-07T14:30:00Z"}
-```
-
-### 4. Database Migrations (Alembic)
-
-Schema changes managed via Alembic -- never raw SQL in production:
-
-```
-backend/
-└── alembic/
-    ├── alembic.ini
-    ├── env.py
-    └── versions/
-        ├── 001_initial_schema.py
-        ├── 002_add_virtual_bets.py
-        └── 003_add_graduation_metrics.py
-```
-
-```bash
-# Create migration
-alembic revision --autogenerate -m "add graduation metrics"
-
-# Apply migrations
-alembic upgrade head
-
-# Rollback
-alembic downgrade -1
-```
-
-### 5. Code Quality & Linting
-
-Enforced via `pyproject.toml` and pre-commit hooks:
-
-```toml
-[tool.ruff]
-target-version = "py311"
-line-length = 100
-select = ["E", "F", "I", "N", "W", "UP", "B", "SIM"]
-
-[tool.mypy]
-python_version = "3.11"
-strict = true
-warn_return_any = true
-
-[tool.pytest.ini_options]
-asyncio_mode = "auto"
-testpaths = ["tests"]
-```
-
-Pre-commit hooks run on every commit:
-- `ruff` (linting + import sorting)
-- `ruff format` (formatting)
-- `mypy` (type checking)
-- `pytest` (fast unit tests)
-
-### 6. Multi-Stage Docker Builds
-
-All Dockerfiles use multi-stage builds for minimal production images:
-
-```dockerfile
-# Stage 1: Build dependencies
-FROM python:3.11-slim AS builder
-WORKDIR /build
-COPY requirements.txt .
-RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
-
-# Stage 2: Production image
-FROM python:3.11-slim AS runtime
-COPY --from=builder /install /usr/local
-COPY shared/ /app/shared/
-COPY backend/ /app/backend/
-WORKDIR /app
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
-```
-
-### 7. Graceful Shutdown
-
-All services handle SIGTERM/SIGINT for clean shutdown:
-
-```python
-import signal
-import asyncio
-
-class GracefulShutdown:
-    def __init__(self):
-        self.should_stop = False
-        signal.signal(signal.SIGTERM, self._handle)
-        signal.signal(signal.SIGINT, self._handle)
-    
-    def _handle(self, signum, frame):
-        logger.info("shutdown_signal_received", signal=signum)
-        self.should_stop = True
-
-# In main loop:
-shutdown = GracefulShutdown()
-while not shutdown.should_stop:
-    await process_next_event()
-
-# Cleanup
-await redis.close()
-await db.close()
-logger.info("service_stopped_cleanly")
-```
-
-### 8. Redis Reliability Patterns
-
-Dead letter queues and retry logic for message reliability:
-
-```python
-# shared/redis_client.py
-class ReliableRedis:
-    async def publish_with_retry(self, channel, message, max_retries=3):
-        for attempt in range(max_retries):
-            try:
-                await self.client.publish(channel, json.dumps(message))
-                return True
-            except ConnectionError:
-                logger.warning("redis_publish_retry", attempt=attempt)
-                await asyncio.sleep(2 ** attempt)
-        
-        # Dead letter: persist to file for later replay
-        self._write_dead_letter(channel, message)
-        return False
-    
-    def _write_dead_letter(self, channel, message):
-        with open("dead_letters.jsonl", "a") as f:
-            f.write(json.dumps({"channel": channel, "message": message, "ts": now()}) + "\n")
-```
-
-### 9. Docker Network Isolation
-
-```yaml
-# docker-compose.yml networks
-networks:
-  phoenix-data:      # Scraper → Redis → TimescaleDB
-    driver: bridge
-  phoenix-app:       # Backend → Redis → TimescaleDB → Frontend
-    driver: bridge
-  phoenix-monitor:   # Prometheus → all services
-    driver: bridge
-```
-
-Services only join networks they need (scraper never talks to frontend directly).
-
-### 10. Dev vs Production Profiles
-
-```yaml
-# docker-compose.yml with profiles
-services:
-  backend:
-    profiles: ["dev", "prod"]
-    # ...
-  
-  pgadmin:
-    profiles: ["dev"]        # Only in development
-    image: dpage/pgadmin4
-    ports: ["5050:80"]
-  
-  redis-commander:
-    profiles: ["dev"]        # Only in development
-    image: rediscommander/redis-commander
-    ports: ["8081:8081"]
-```
-
-```bash
-# Development (includes debug tools)
-docker compose --profile dev up
-
-# Production (lean)
-docker compose --profile prod up
-```
-
-### 11. API Contracts (Shared Pydantic Schemas)
-
-```python
-# shared/schemas.py
-from pydantic import BaseModel, Field
-from datetime import datetime
-from typing import Optional
-
-class OddsEvent(BaseModel):
-    match_id: str
-    timestamp: datetime
-    team_home: str
-    team_away: str
-    back_home: Optional[float] = Field(None, gt=1.0)
-    lay_home: Optional[float] = Field(None, gt=1.0)
-    back_away: Optional[float] = Field(None, gt=1.0)
-    lay_away: Optional[float] = Field(None, gt=1.0)
-    is_live: bool = False
-    competition: str = ""
-    source: str = "lotusbook"
-
-class VirtualBet(BaseModel):
-    match_id: str
-    action: str         # BACK_HOME_SM, LAY_AWAY_SM, etc.
-    team: str
-    odds: float = Field(gt=1.0)
-    stake: float = Field(gt=0)
-    confidence: Optional[float] = None
-
-class GraduationStatus(BaseModel):
-    ready: bool
-    consecutive_days: int
-    required_days: int = 14
-    criteria: dict[str, dict]  # {metric: {value, threshold, met}}
-```
-
-### 12. Project Structure (Updated with best practices)
-
-```
-phoenix/
-├── .cursor/rules/            # 9 persona cursor rules
-├── .github/workflows/        # CI/CD
-│   └── test.yml
-├── .pre-commit-config.yaml   # Pre-commit hooks
-├── .gitignore
-├── .env.example
-├── pyproject.toml             # Python project config (ruff, mypy, pytest)
-├── requirements.txt           # Python dependencies (pinned versions)
-├── docker-compose.yml         # All services
-├── Dockerfile.backend
-├── Dockerfile.scraper
-├── Dockerfile.rl
-│
-├── shared/                    # Shared Python package
-│   ├── __init__.py
-│   ├── config.py              # Pydantic Settings
-│   ├── schemas.py             # Shared Pydantic models
-│   ├── events.py              # Redis event definitions
-│   ├── logging.py             # Structured logging
-│   ├── db.py                  # DB connection factory
-│   ├── redis_client.py        # Redis with retry
-│   └── constants.py           # Channels, actions, etc.
-│
-├── scraper/                   # Microservice: Data collection
-│   ├── __init__.py
-│   ├── manager.py
-│   ├── worker.py
-│   └── parsers/
-│       └── lotusbook_parser.py
-│
-├── features/                  # Microservice: Feature engineering
-│   ├── __init__.py
-│   ├── pipeline.py
-│   ├── store.py
-│   ├── normalizer.py
-│   └── extractors/
-│
-├── rl/                        # Microservice: RL engine
-│   ├── __init__.py
-│   ├── environment.py
-│   ├── agent.py
-│   ├── trainer.py
-│   ├── reward.py
-│   ├── graduation.py
-│   └── curriculum.py
-│
-├── virtual_trading/           # Microservice: Virtual bet engine
-│   ├── __init__.py
-│   ├── engine.py
-│   ├── portfolio.py
-│   └── settlement.py
-│
-├── backend/                   # Microservice: API gateway
-│   ├── __init__.py
-│   ├── main.py
-│   ├── routers/
-│   ├── services/
-│   ├── models/
-│   ├── db/
-│   └── alembic/               # Database migrations
-│
-├── frontend/                  # Microservice: Dashboard
-│   ├── package.json
-│   ├── Dockerfile
-│   ├── app/
-│   ├── components/
-│   └── hooks/
-│
-├── tests/                     # All tests
-│   ├── unit/
-│   ├── integration/
-│   ├── rl/
-│   └── e2e/
-│
-├── infra/                     # Monitoring configs
-│   ├── prometheus/
-│   └── grafana/
-│
-├── models/                    # ML model artifacts
-│   └── checkpoints/
-│
-├── docs/                      # Documentation
-│   └── architecture/
-│
-├── start.ps1                  # Windows startup
-└── stop.ps1                   # Windows shutdown
-```
+## Layer 6: Dashboard & Operational Services
+
+### Microservices Overview
+
+| Service | Port | Command / Module | Responsibility |
+|---|---|---|---|
+| **Backend API** | 8001 | `uvicorn backend.main:app` | FastAPI REST gateway, WebSocket feeds, DB interface |
+| **Frontend UI** | 3000 | `npm run dev` (Next.js 14) | Real-time trading dashboard, charts, match controls |
+| **Scraper Manager** | Background | `python -m scraper.manager` | LotusBook scraping (`lotusbook.cc/cricket`), CDP WebSocket interceptor |
+| **RL Orchestrator** | Background | `python -m rl.orchestrator` | Autonomous lifecycle manager, weekly sync scheduler |
+| **TimescaleDB** | 5432 | PostgreSQL 15 + TimescaleDB | Persistent time-series & relational data |
+| **Redis** | 6379 | Redis 7+ | Real-time Pub/Sub broker & state cache |
+
+All service management is automated through the unified Windows PowerShell CLI: [`phoenix.ps1`](file:///c:/Users/sohai/Downloads/prediction-claude/phoenix.ps1).

@@ -1,4 +1,4 @@
-"""Feature extractors for the 66-feature observation vector."""
+"""Feature extractors for the 74-feature observation vector."""
 
 from features.extractors.odds_features import compute_odds_features
 from features.extractors.momentum_features import compute_momentum_features

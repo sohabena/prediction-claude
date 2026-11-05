@@ -6,6 +6,8 @@ from backend.models.match import MatchContextRecord
 from backend.models.bets import VirtualBetRecord
 from backend.models.training import TrainingMetricRecord
 from backend.models.graduation import GraduationSnapshot
+from backend.models.results import MatchResultRecord
+from backend.models.match_status import MatchTrainingStatus
 
 __all__ = [
     "Base",
@@ -14,4 +16,6 @@ __all__ = [
     "VirtualBetRecord",
     "TrainingMetricRecord",
     "GraduationSnapshot",
+    "MatchResultRecord",
+    "MatchTrainingStatus",
 ]

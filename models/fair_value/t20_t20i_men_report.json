@@ -1,0 +1,21 @@
+{
+  "n_ticks": 1627,
+  "fair": {
+    "brier": 0.1964578838804755,
+    "log_loss": 0.6933595492347588,
+    "ece": 0.12272032289441691
+  },
+  "market_implied": {
+    "brier": 0.2174261608022988,
+    "log_loss": 0.6498671115113375,
+    "ece": 0.1348362416361237
+  },
+  "key": "t20i_men",
+  "family": "t20",
+  "code_version": "160d9cf",
+  "train_split_hash": "8c063da154a6",
+  "holdout_split_hash": "bee370ecbe4a",
+  "n_train_matches": 240,
+  "n_holdout_matches": 52,
+  "caveat": "synthetic corpus: market price is a hand model; validate on recorded odds (S16)"
+}
