@@ -146,7 +146,7 @@ async def test_cycle_places_fills_and_settles(monkeypatch):
     assert report["candidates"] == 1
     assert report["considered"] == 1
     # S97: the two market-dynamics variants trade only with a model (none here), so they are not counted
-    assert report["intents"] >= len(variants) - 1 - len(pt.DYNAMICS_VARIANTS)  # every variant with a clear edge places one
+    assert report["intents"] >= len(variants) - 1 - len(pt.DYNAMICS_VARIANTS) - 1  # every variant with a clear edge places one (S107: not the tail)
     placed = [r for r in session.rows if r.status == "pending"]
     assert placed, "a cycle with a clear edge must place pending bets"
     assert all(r.decided_at == T0 and r.match_id == MID for r in placed)
@@ -155,7 +155,8 @@ async def test_cycle_places_fills_and_settles(monkeypatch):
     # S85: the placebo controls are placed too, at the reference's decision time; the model checks below use the
     # strategy rows only.
     first = {r.variant: r for r in placed if not is_placebo(r.variant)}
-    assert set(first) == {v.name for v in variants if not v.market_only and v.name not in pt.DYNAMICS_VARIANTS}
+    assert set(first) == {v.name for v in variants if not v.market_only and v.name not in pt.DYNAMICS_VARIANTS
+                          and v.name != pt.TAIL_VARIANT}  # S107: the tail places only on a chase state
     assert all(r.side == "BACK" and r.selection == "home" and r.price_limit <= 2.2 for r in first.values())
     assert {r.variant for r in placed if is_placebo(r.variant)} == {"placebo_random", "placebo_favourite"}
 
@@ -369,6 +370,7 @@ def test_build_variants_grid_and_control():
     assert names == [
         "w03_e03", "w03_e06", "w05_e03", "w05_e06", "w07_e03", "w07_e06", "market_only",
         "mkt_dyn", "mkt_dyn_e06",  # S97: the market-dynamics variants (w = 1)
+        "tail",  # S107: the chase-model variant (its own decision path)
         "placebo_random", "placebo_favourite",  # S85
     ]
     assert all(v.max_match_loss == 100_000.0 for v in variants)

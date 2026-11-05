@@ -14,6 +14,7 @@ Cricket overs are written ``"16.1"`` = 16 overs and 1 ball; the ball digit must 
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, fields
 from datetime import datetime, timezone
@@ -55,6 +56,13 @@ class ScoreState:
     result_text: str = ""  # the feed's result or status text, "" when none
     last_over_balls: tuple[str, ...] = ()
     teams: tuple[str, ...] = ()
+    # S107 part A: the players on the field, read from the same body. Shape:
+    #   {"batsmen": [{"name", "runs", "balls", "strike_rate", "on_strike"}] | None,
+    #    "bowler": {"name", "overs", "wickets", "runs"} | None,
+    #    "partnership": {"runs", "balls"} | None,
+    #    "last_out": {"name", "runs", "balls"} | None}
+    # A part the feed does not send, or sends unreadably, is None. Nothing is estimated.
+    players: Optional[dict] = None
 
     @property
     def is_finished(self) -> bool:
@@ -124,6 +132,90 @@ def _overs(value: Any) -> Optional[tuple[float, int]]:
     if ball > 5:
         return None
     return float(f"{whole}.{ball}"), whole * 6 + ball
+
+
+def _overs_number(value: Any) -> Optional[float]:
+    """A bowler's overs as the feed sends them: a number (``1.0``) or text (``"3.4"``). Ball digit must be 0 to 5."""
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return None
+    parsed = _overs(str(value))
+    return parsed[0] if parsed else None
+
+
+def _batsman(entry: Any) -> Optional[dict[str, Any]]:
+    """One batter at the crease. None when the name, runs or balls are unreadable."""
+    if not isinstance(entry, dict):
+        return None
+    name = _text(entry.get("name"))
+    runs = _int(entry.get("batsmanRuns"))
+    balls = _int(entry.get("balls"))
+    if not name or runs is None or balls is None:
+        return None
+    strike_rate = _float(entry.get("strikeRate"))
+    if strike_rate is not None and not math.isfinite(strike_rate):
+        strike_rate = None
+    on_strike = entry.get("isOnStrike")
+    return {
+        "name": name,
+        "runs": runs,
+        "balls": balls,
+        "strike_rate": strike_rate,
+        "on_strike": on_strike if isinstance(on_strike, bool) else None,
+    }
+
+
+def _batsmen(value: Any) -> Optional[list[dict[str, Any]]]:
+    """The batters at the crease. One unreadable entry refuses the whole list: a partial list could hide a batter."""
+    if not isinstance(value, list):
+        return None
+    out: list[dict[str, Any]] = []
+    for entry in value:
+        parsed = _batsman(entry)
+        if parsed is None:
+            return None
+        out.append(parsed)
+    return out
+
+
+def _bowler(value: Any) -> Optional[dict[str, Any]]:
+    if not isinstance(value, dict):
+        return None
+    name = _text(value.get("name"))
+    overs = _overs_number(value.get("overs"))
+    wickets = _int(value.get("wickets"))
+    runs = _int(value.get("bowlerRuns"))
+    if not name or overs is None or wickets is None or runs is None:
+        return None
+    return {"name": name, "overs": overs, "wickets": wickets, "runs": runs}
+
+
+def _partnership(batting: dict) -> Optional[dict[str, int]]:
+    runs = _int(batting.get("partnerShipScore"))
+    balls = _int(batting.get("partnerShipBalls"))
+    if runs is None or balls is None:
+        return None
+    return {"runs": runs, "balls": balls}
+
+
+def _last_out(value: Any) -> Optional[dict[str, Any]]:
+    if not isinstance(value, dict):
+        return None
+    name = _text(value.get("name"))
+    runs = _int(value.get("batsManRuns"))
+    balls = _int(value.get("balls"))
+    if not name or runs is None or balls is None:
+        return None
+    return {"name": name, "runs": runs, "balls": balls}
+
+
+def _players(stats: dict, batting: dict) -> dict[str, Any]:
+    """The four player parts of a score body (S107 part A). Each part is None when the feed does not give it."""
+    return {
+        "batsmen": _batsmen(stats.get("batsmen")),
+        "bowler": _bowler(stats.get("bowler")),
+        "partnership": _partnership(batting),
+        "last_out": _last_out(stats.get("lastBatsmanOut")),
+    }
 
 
 def _parse_utc(value: Any) -> Optional[datetime]:
@@ -209,6 +301,7 @@ def parse_score_v3(payload: Any) -> Optional[ScoreState]:
         result_text=result_text,
         last_over_balls=last_balls,
         teams=team_names,
+        players=_players(stats, batting),
     )
 
 
@@ -258,4 +351,5 @@ def to_context_row(
         "bowling_team": _bowling_team(state, team_home, team_away),
         "status": (MatchStatus.COMPLETED if finished else MatchStatus.LIVE).value,
         "match_format": state.match_format or "T20",
+        "players": state.players,
     }

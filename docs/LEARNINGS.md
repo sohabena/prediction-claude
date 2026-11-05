@@ -13,6 +13,28 @@ delete an entry; if it turns out wrong, add a later entry that corrects it.
 
 ## 2026-11-05
 
+**Tail bets built (S107, era I).** The live score feed sends the batters at the crease, the bowler, the partnership
+and the last batter out (`stats.batsmen`, `bowler`, `battingTeam.partnerShip*`, `lastBatsmanOut`); they are now
+stored in `match_context.players` (new nullable JSONB column). A chase model trained on 13,387 Cricsheet T20 chases
+(walk-forward 2015 to 2026) predicts P(chase wins) from runs needed, balls left and wickets in hand (`core`, log loss
+0.341 against 0.366 for the empirical table), plus the batters' runs, balls and career strike rate as of each match
+(`players`, 0.321 against 0.347 on matched rows; the gain is large and was not yet checked with a leakage
+ablation). The `tail` variant backs a side at 10.0 or longer only when the price is at least 1.2 times the model's
+fair odds, 2,000 a bet, at most 3 a match, never a lay, T20 only, and only in the last 60 balls: in the first replay
+two bets at 120 and 114 balls left backed the bowling side at 21.0 only because the state model does not know team
+strength, and lost. Replay (5 bets, 3 matches): -6,000, too few to judge.
+
+**The trader's cycle slowed from 15 s to 140-170 s because one old open bet set the price window for every match.**
+`since` is the oldest open bet's decision time minus 20 min; a pre-match bet on Sydney Thunder W v Perth Scorchers W
+decided 12 h before the start made every cycle read 12+ hours of prices and sizes for every candidate. Stalls of 8
+to 17 minutes followed (monitor `paper_trading` failed: last cycle 653 s old). S108 limits the window to bets that
+still need old prices. Rule: a per-cycle read must be bounded by what the cycle needs, never by the oldest row.
+**Correction, same day: the main cause was the scorecard, not the window.** After S108 cycles were still about 165 s;
+each trader read took under 0.1 s, but the dashboard, rebuilt inside the trading loop every minute, ran the scorecard
+query, and my S105 bookmaker-only check (a lateral subquery after the join to `v_match_odds`) ran once per price row:
+211 s per run. Rewritten as one grouped pass over the match-odds markets: 1.2 s, same counts (14 tradable settled
+matches, 9 for R1). Rule: time every new query on the real database, inside the loop that will run it.
+
 **Pre-match bets kept as optional (operator, era H from 08:12 UTC)**, after S106 had switched them off: the operator
 asked to "keep pre match bets, but not compulsory" (`PREMATCH_NEW_RISK = True`). A variant still bets only on an
 edge, within the pre-match half of the match budget; R1 says the pre-match model is worse than the close, so era H

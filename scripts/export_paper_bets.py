@@ -31,6 +31,7 @@ ERAS = [
     ("F", "2026-11-04 13:29", "S105: exchange market owns match_odds; bookmaker-only real matches are not traded"),
     ("G", "2026-11-05 07:41", "S106: model variants trade in play only (R1 failed pre-match); 30 bets a ceiling"),
     ("H", "2026-11-05 08:12", "Pre-match bets allowed again, optional (operator); in play as before"),
+    ("I", "2026-11-05 09:36", "S107 tail variant (long shots in the last 60 balls); S108 faster cycles; batters captured"),
 ]
 CONTROLS = {"market_only", "placebo_random", "placebo_favourite"}
 

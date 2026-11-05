@@ -158,6 +158,9 @@ MIGRATION_STATEMENTS = [
     # canonical match and every ordinary match stay NULL. Nullable, so old code keeps working.
     """ALTER TABLE match_training_status
        ADD COLUMN IF NOT EXISTS canonical_match_id TEXT""",
+    # S107 part A: batters, bowler, partnership and last wicket per score row (JSONB, nullable: old rows stay NULL).
+    """ALTER TABLE match_context
+       ADD COLUMN IF NOT EXISTS players JSONB""",
 ]
 
 INDEX_STATEMENTS = [

@@ -1,0 +1,469 @@
+{
+  "date": "20261105",
+  "version": "s107-chase-1",
+  "model_file": "models/chase/20261105.joblib",
+  "sklearn": "1.6.1",
+  "stats": {
+    "not_t20": 8472,
+    "t20_matches": 14721,
+    "chases": 13387,
+    "no_chase:method": 507,
+    "no_chase:no_result": 108,
+    "no_chase:not_two_innings": 212,
+    "no_chase:super_over": 99,
+    "no_chase:not_20_overs": 408
+  },
+  "exclusions": {
+    "method": 507,
+    "no_result": 108,
+    "not_two_innings": 212,
+    "super_over": 99,
+    "not_20_overs": 408
+  },
+  "n_rows": 753974,
+  "n_matches": 13387,
+  "subsampling": "all states of the last 60 legal balls; one state per over before that",
+  "walk_forward": {
+    "test_rows": 672164,
+    "test_chases": 12035,
+    "matched_rows": 627010,
+    "log_loss": {
+      "core": 0.3408931573309191,
+      "players_all_rows": 0.31546309965120173,
+      "players_matched": 0.3212314903948638,
+      "core_matched": 0.3470083960547917,
+      "empirical": 0.365858052993022,
+      "empirical_matched": 0.3703392206485742
+    },
+    "players_minus_core_matched": {
+      "estimate": -0.025871221760899014,
+      "ci_lower": -0.02974360566250201,
+      "ci_upper": -0.022079855714929663,
+      "se": 0.0019826994449826745,
+      "n_clusters": 11847,
+      "n_items": 11847,
+      "too_few_clusters": false,
+      "statistic": "mean",
+      "weighted": false,
+      "n_boot": 2000,
+      "seed": 20261103
+    },
+    "calibration": {
+      "core": [
+        {
+          "bin": "[0.00, 0.02)",
+          "rows": 115056,
+          "mean_predicted": 0.004732760902898845,
+          "observed": 0.003207133917396746
+        },
+        {
+          "bin": "[0.02, 0.05)",
+          "rows": 41649,
+          "mean_predicted": 0.03367535147162914,
+          "observed": 0.03250978414847896
+        },
+        {
+          "bin": "[0.05, 0.10)",
+          "rows": 44023,
+          "mean_predicted": 0.07362925125155187,
+          "observed": 0.08063966562933013
+        },
+        {
+          "bin": "[0.10, 0.20)",
+          "rows": 58397,
+          "mean_predicted": 0.14603435135935713,
+          "observed": 0.17702964193366097
+        },
+        {
+          "bin": "[0.20, 0.50)",
+          "rows": 106663,
+          "mean_predicted": 0.3409951176624035,
+          "observed": 0.3589342133635844
+        },
+        {
+          "bin": "[0.50, 0.80)",
+          "rows": 104557,
+          "mean_predicted": 0.6581360659949853,
+          "observed": 0.6404353606166971
+        },
+        {
+          "bin": "[0.80, 0.90)",
+          "rows": 53231,
+          "mean_predicted": 0.8528580073193737,
+          "observed": 0.8198981796321693
+        },
+        {
+          "bin": "[0.90, 0.95)",
+          "rows": 39261,
+          "mean_predicted": 0.9267879546006464,
+          "observed": 0.9057334250273809
+        },
+        {
+          "bin": "[0.95, 0.98)",
+          "rows": 35795,
+          "mean_predicted": 0.9660004113187602,
+          "observed": 0.9566419891046235
+        },
+        {
+          "bin": "[0.98, 1.00)",
+          "rows": 73532,
+          "mean_predicted": 0.9939034876017937,
+          "observed": 0.9944921938747756
+        }
+      ],
+      "players_matched": [
+        {
+          "bin": "[0.00, 0.02)",
+          "rows": 112763,
+          "mean_predicted": 0.005178883648786491,
+          "observed": 0.0031570639305445935
+        },
+        {
+          "bin": "[0.02, 0.05)",
+          "rows": 38195,
+          "mean_predicted": 0.03352623579496484,
+          "observed": 0.036235109307500984
+        },
+        {
+          "bin": "[0.05, 0.10)",
+          "rows": 39314,
+          "mean_predicted": 0.07335053508961104,
+          "observed": 0.08889962863102203
+        },
+        {
+          "bin": "[0.10, 0.20)",
+          "rows": 50288,
+          "mean_predicted": 0.1465004386156894,
+          "observed": 0.16510897231944002
+        },
+        {
+          "bin": "[0.20, 0.50)",
+          "rows": 93488,
+          "mean_predicted": 0.3399993002646104,
+          "observed": 0.36584374465172
+        },
+        {
+          "bin": "[0.50, 0.80)",
+          "rows": 92590,
+          "mean_predicted": 0.6580200011744698,
+          "observed": 0.6496921913813587
+        },
+        {
+          "bin": "[0.80, 0.90)",
+          "rows": 46033,
+          "mean_predicted": 0.8532608684179054,
+          "observed": 0.8309039167553711
+        },
+        {
+          "bin": "[0.90, 0.95)",
+          "rows": 34569,
+          "mean_predicted": 0.9269671934189175,
+          "observed": 0.9154734010240388
+        },
+        {
+          "bin": "[0.95, 0.98)",
+          "rows": 36671,
+          "mean_predicted": 0.9666370452770665,
+          "observed": 0.9572414169234545
+        },
+        {
+          "bin": "[0.98, 1.00)",
+          "rows": 83099,
+          "mean_predicted": 0.9932180582814302,
+          "observed": 0.9929963056113792
+        }
+      ],
+      "empirical": [
+        {
+          "bin": "[0.00, 0.02)",
+          "rows": 119773,
+          "mean_predicted": 0.00251965091685349,
+          "observed": 0.005385186978701377
+        },
+        {
+          "bin": "[0.02, 0.05)",
+          "rows": 25925,
+          "mean_predicted": 0.0336030212164166,
+          "observed": 0.034908389585342335
+        },
+        {
+          "bin": "[0.05, 0.10)",
+          "rows": 36508,
+          "mean_predicted": 0.07367703059709634,
+          "observed": 0.07313465541799058
+        },
+        {
+          "bin": "[0.10, 0.20)",
+          "rows": 58935,
+          "mean_predicted": 0.15038929808534232,
+          "observed": 0.1550352082803088
+        },
+        {
+          "bin": "[0.20, 0.50)",
+          "rows": 132485,
+          "mean_predicted": 0.35255722020765634,
+          "observed": 0.36298448881005396
+        },
+        {
+          "bin": "[0.50, 0.80)",
+          "rows": 109742,
+          "mean_predicted": 0.6612956932762998,
+          "observed": 0.6539793333454831
+        },
+        {
+          "bin": "[0.80, 0.90)",
+          "rows": 47555,
+          "mean_predicted": 0.8524075185706745,
+          "observed": 0.8287036063505415
+        },
+        {
+          "bin": "[0.90, 0.95)",
+          "rows": 35527,
+          "mean_predicted": 0.9264388811696923,
+          "observed": 0.8964449573563769
+        },
+        {
+          "bin": "[0.95, 0.98)",
+          "rows": 26593,
+          "mean_predicted": 0.9654086654569595,
+          "observed": 0.9364118377016508
+        },
+        {
+          "bin": "[0.98, 1.00)",
+          "rows": 79121,
+          "mean_predicted": 0.9968553140403185,
+          "observed": 0.9865522427674068
+        }
+      ],
+      "empirical_matched": [
+        {
+          "bin": "[0.00, 0.02)",
+          "rows": 103465,
+          "mean_predicted": 0.0026744808264666407,
+          "observed": 0.005683081235200309
+        },
+        {
+          "bin": "[0.02, 0.05)",
+          "rows": 23772,
+          "mean_predicted": 0.033619227512549685,
+          "observed": 0.035924617196702
+        },
+        {
+          "bin": "[0.05, 0.10)",
+          "rows": 33962,
+          "mean_predicted": 0.07370795665412878,
+          "observed": 0.0765561509922855
+        },
+        {
+          "bin": "[0.10, 0.20)",
+          "rows": 55511,
+          "mean_predicted": 0.15045632264088835,
+          "observed": 0.15971609230602943
+        },
+        {
+          "bin": "[0.20, 0.50)",
+          "rows": 125526,
+          "mean_predicted": 0.35244997669289496,
+          "observed": 0.3695330051144783
+        },
+        {
+          "bin": "[0.50, 0.80)",
+          "rows": 104973,
+          "mean_predicted": 0.6613735462892785,
+          "observed": 0.6622274299105484
+        },
+        {
+          "bin": "[0.80, 0.90)",
+          "rows": 45447,
+          "mean_predicted": 0.8523377468711948,
+          "observed": 0.8352806565889938
+        },
+        {
+          "bin": "[0.90, 0.95)",
+          "rows": 33905,
+          "mean_predicted": 0.9264663381414002,
+          "observed": 0.9039374723492111
+        },
+        {
+          "bin": "[0.95, 0.98)",
+          "rows": 25434,
+          "mean_predicted": 0.9653548085071962,
+          "observed": 0.9407879216796414
+        },
+        {
+          "bin": "[0.98, 1.00)",
+          "rows": 75015,
+          "mean_predicted": 0.9968547657165726,
+          "observed": 0.9873225354929014
+        }
+      ]
+    },
+    "tail": {
+      "core|P under 10%": {
+        "rows": 200728,
+        "mean_predicted": 0.02584820144540313,
+        "observed": 0.026269379458770076
+      },
+      "core|P over 90%": {
+        "rows": 148588,
+        "mean_predicted": 0.9694478548675942,
+        "observed": 0.9619215549034915
+      },
+      "players_matched|P under 10%": {
+        "rows": 190272,
+        "mean_predicted": 0.02495492752265053,
+        "observed": 0.02751324419778002
+      },
+      "players_matched|P over 90%": {
+        "rows": 154339,
+        "mean_predicted": 0.9720634669252908,
+        "observed": 0.967137275737176
+      },
+      "empirical|P under 10%": {
+        "rows": 182206,
+        "mean_predicted": 0.021199880944308563,
+        "observed": 0.023160598443519972
+      },
+      "empirical|P over 90%": {
+        "rows": 140924,
+        "mean_predicted": 0.9733870460247838,
+        "observed": 0.9546847946410831
+      }
+    },
+    "per_season": [
+      {
+        "season": 2015,
+        "test_matches": 398,
+        "train_matches": 1352,
+        "rows": 23752,
+        "ll_core": 0.34264869700386397,
+        "ll_players": 0.3604128486903349,
+        "ll_empirical": 0.3888392195035826,
+        "ll_players_matched": 0.3766482532532547,
+        "ll_core_matched": 0.35552711723291225
+      },
+      {
+        "season": 2016,
+        "test_matches": 553,
+        "train_matches": 1750,
+        "rows": 32984,
+        "ll_core": 0.36665487696482596,
+        "ll_players": 0.3617824605769649,
+        "ll_empirical": 0.40005810999633007,
+        "ll_players_matched": 0.3664396479448303,
+        "ll_core_matched": 0.3723252656869368
+      },
+      {
+        "season": 2017,
+        "test_matches": 492,
+        "train_matches": 2303,
+        "rows": 28988,
+        "ll_core": 0.3629998203733847,
+        "ll_players": 0.3649512465807453,
+        "ll_empirical": 0.3955528222302976,
+        "ll_players_matched": 0.3728873442723681,
+        "ll_core_matched": 0.36961572447992797
+      },
+      {
+        "season": 2018,
+        "test_matches": 789,
+        "train_matches": 2795,
+        "rows": 44630,
+        "ll_core": 0.33985027245580546,
+        "ll_players": 0.33068279856640587,
+        "ll_empirical": 0.38854100614586373,
+        "ll_players_matched": 0.3397498323475006,
+        "ll_core_matched": 0.3496308888920673
+      },
+      {
+        "season": 2019,
+        "test_matches": 1106,
+        "train_matches": 3584,
+        "rows": 62919,
+        "ll_core": 0.3335817164463058,
+        "ll_players": 0.325726346731044,
+        "ll_empirical": 0.36166952878492165,
+        "ll_players_matched": 0.3304777180884862,
+        "ll_core_matched": 0.33925876651022024
+      },
+      {
+        "season": 2020,
+        "test_matches": 493,
+        "train_matches": 4690,
+        "rows": 28844,
+        "ll_core": 0.36872017762643916,
+        "ll_players": 0.3566780133733277,
+        "ll_empirical": 0.3893306957153759,
+        "ll_players_matched": 0.3665391791797307,
+        "ll_core_matched": 0.3775120380922697
+      },
+      {
+        "season": 2021,
+        "test_matches": 1043,
+        "train_matches": 5183,
+        "rows": 59087,
+        "ll_core": 0.32554672358394754,
+        "ll_players": 0.3046105651334786,
+        "ll_empirical": 0.3490051996053867,
+        "ll_players_matched": 0.31069585385792753,
+        "ll_core_matched": 0.3321286665589515
+      },
+      {
+        "season": 2022,
+        "test_matches": 1227,
+        "train_matches": 6226,
+        "rows": 70331,
+        "ll_core": 0.3530779159248867,
+        "ll_players": 0.32587967125780526,
+        "ll_empirical": 0.3740775864562118,
+        "ll_players_matched": 0.32873698918712646,
+        "ll_core_matched": 0.35453390729543377
+      },
+      {
+        "season": 2023,
+        "test_matches": 1249,
+        "train_matches": 7453,
+        "rows": 67743,
+        "ll_core": 0.33309622165789504,
+        "ll_players": 0.3039244321787924,
+        "ll_empirical": 0.35262550902144835,
+        "ll_players_matched": 0.30949140473483283,
+        "ll_core_matched": 0.33843521627758577
+      },
+      {
+        "season": 2024,
+        "test_matches": 1605,
+        "train_matches": 8702,
+        "rows": 86889,
+        "ll_core": 0.32952980276316163,
+        "ll_players": 0.30240259188960034,
+        "ll_empirical": 0.34686885734481593,
+        "ll_players_matched": 0.3075280649098129,
+        "ll_core_matched": 0.33464245068222437
+      },
+      {
+        "season": 2025,
+        "test_matches": 1611,
+        "train_matches": 10307,
+        "rows": 87534,
+        "ll_core": 0.3496935983597527,
+        "ll_players": 0.2986430844768242,
+        "ll_empirical": 0.3718489700661355,
+        "ll_players_matched": 0.3035933301825599,
+        "ll_core_matched": 0.3551188100720553
+      },
+      {
+        "season": 2026,
+        "test_matches": 1469,
+        "train_matches": 11918,
+        "rows": 78463,
+        "ll_core": 0.3277237505793589,
+        "ll_players": 0.2740884314252892,
+        "ll_empirical": 0.34647451403745727,
+        "ll_players_matched": 0.2800177312469761,
+        "ll_core_matched": 0.33571768319561346
+      }
+    ]
+  },
+  "activation": "activated `models/chase/20261105.joblib` in current.json"
+}

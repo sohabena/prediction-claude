@@ -57,6 +57,9 @@ COPY scripts/synthetic_market.py /app/scripts/synthetic_market.py
 # S97 market-dynamics model (weekly, in the retrain run): dataset from the recordings, then training and activation
 COPY scripts/build_market_dynamics_dataset.py /app/scripts/build_market_dynamics_dataset.py
 COPY scripts/train_market_dynamics.py /app/scripts/train_market_dynamics.py
+# S107 chase model (tail variant): strategy/ and training/ above hold the code; the trainer script is copied for runs in
+# the image. The paper trader reads models/chase/ through the ./models bind mount (no COPY).
+COPY scripts/train_chase_model.py /app/scripts/train_chase_model.py
 
 # S72 paper trader (profile recording): virtual bets from the models; writes only to paper_bets
 # Whole package: the paper trader imports several of its modules (ledger, review, risk helpers)

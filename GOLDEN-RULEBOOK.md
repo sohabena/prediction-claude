@@ -244,7 +244,11 @@ to `odds_ticks_quarantine` (never deletes): post-settlement prices, cross-match 
      market; do not trade it without positive clustered CLV over many matches.
 4. **Session ("fancy") markets:** over/runs lines are recorded (224 lines on one match). A runs model from Cricsheet
    against an in-house line is a realistic edge. Not yet built.
-5. **Not available:** latency or courtsiding (we are 10 to 30 s behind the pictures), market making, anything learned
+5. **Long-shot ("tail") bets** (S107, era I, `docs/strategy/live-betting-expert-persona.md`): back a side at 10.0+
+   only when its price is at least 1.2 times the fair odds from the Cricsheet chase model (runs needed, balls left,
+   wickets in hand, batters at the crease), 2,000 a bet, at most 3 a match, last 60 balls of a T20 chase only, never
+   a lay. Base rates: need 30+ off 12 wins 2.1% (fair 48); 20+ off 6 wins 0.6% (fair 170). Untested live.
+6. **Not available:** latency or courtsiding (we are 10 to 30 s behind the pictures), market making, anything learned
    on a synthetic market.
 
 **The binding constraint is evidence, not code:** about 7 real matches a day are recorded, but only about a third
@@ -290,6 +294,7 @@ Sources: aussportsbetting BBL (free, manual download: the page has a bot check t
 | `.env` is tracked by git; `git add -A` put an API key into a local commit (caught before push) | Stage files by path; check `git diff --cached --stat` for `.env` before every commit |
 | A guessed API constant (OddsPapi market 101, football) would have imported nothing | Verify every API constant on one real response before a bulk run |
 | The placeholder rule matched books across days and quarantined 1,958 real prices | A "same value on many matches" rule needs a time window; a shared odds ladder is not a copy |
+| One pre-match bet placed 12 h early set every cycle's price window: cycles 15 s to 170 s | Bound each per-cycle read by what the cycle needs, never by the oldest row |
 | A write that hit no row was marked done | Mark a write done only once it is stored |
 
 ## 10. Working in this repo with Claude Code

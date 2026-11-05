@@ -248,6 +248,7 @@ class TestContextRow:
             "bowling_team": BOWLING,
             "status": "live",
             "match_format": "T20",
+            "players": s.players,  # S107 part A: checked field by field in test_s107a_players.py
         }
         assert set(row) == {c.name for c in MatchContextRecord.__table__.columns}
 

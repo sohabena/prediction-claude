@@ -27,6 +27,11 @@ A cycle (every 15 s from ``scripts/run_paper_trader.py``) does, in this order:
    ``market_dynamics``): the band price now plus the predicted 10-minute change. In play only; pre-match, or with no
    model file, they open no new risk. Everything else about them is the same decision and guard path.
 
+S107: the ``tail`` variant (``strategy.tail_bet``) has its own decision path. In play, in the second innings with a
+   fresh score, it backs a side priced 10.0 or longer when the chase model (``training.chase_model``) gives that side
+   a probability below the price over 1.2. It is recorded like every variant (source ``chase_model``, reason
+   ``tail``) and its tickets pass the S75 new-risk guards (as new risk). It never trades before the off.
+
 Nothing is kept in memory between cycles: positions, pending bets and the last trade time all come from the ledger,
 so a restart resumes exactly where the table says. Writes go only to ``paper_bets``. No real money, no site access.
 """
@@ -45,10 +50,13 @@ from typing import Any, Iterable, Mapping, Optional, Sequence
 from sqlalchemy import select, text
 
 from backend.models.paper_bets import PaperBet
-from strategy import model_edge, staking, trade_guards
+from strategy import model_edge, staking, tail_bet, trade_guards
 from strategy.base import MatchedBet, OrderIntent
+from strategy.live_context import gender_of
 from strategy.model_edge import Book, Variant
+from strategy.probability import _orient as orient_batting_side, derive_target  # S107: batting side and target
 from strategy.trade_guards import GuardConfig
+from training import chase_model as chase
 from training.dataset import STALE_LIMIT_S, _book, _price_series, match_family  # _book/_price_series: the S58 rule
 from virtual_trading import paper_ledger as ledger
 from virtual_trading import paper_review
@@ -79,6 +87,10 @@ DYNAMICS_VARIANTS = frozenset(DYNAMICS_MIN_EDGE)
 # False after R1 failed pre-match, then the same day asked to keep pre-match bets as optional (era H): True. Bets are
 # never forced either way; a variant bets only on an edge, within the pre-match half of the match budget.
 PREMATCH_NEW_RISK = True
+# S107: the tail variant (strategy.tail_bet). Its probability is the chase model's (training.chase_model).
+TAIL_VARIANT = tail_bet.VARIANT
+# run_cycle's default for ``chase_model``: load models/chase/current.json at the start of each cycle (None: no model).
+LOAD_CURRENT: Any = object()
 
 
 # ----------------------------------------------------------------------------- variants (one place)
@@ -107,7 +119,8 @@ def build_variants(max_match_loss: float = MAX_MATCH_LOSS) -> tuple[Variant, ...
         Variant(paper_review.PLACEBO_FAVOURITE, w=0.0, min_edge=0.03, max_match_loss=max_match_loss, market_only=True,
                 placebo="favourite"),
     ]
-    return tuple(grid + [control] + dynamics + placebos)
+    tail = [Variant(TAIL_VARIANT, w=1.0, min_edge=0.0, max_match_loss=max_match_loss)]  # S107: own decision path
+    return tuple(grid + [control] + dynamics + tail + placebos)
 
 
 def placebo_random_choice(match_id: str, decided_at: datetime, variant_name: str) -> tuple[str, str]:
@@ -341,6 +354,28 @@ def ledger_state(rows: Sequence[Any]) -> tuple[dict[tuple[str, str], Book], set[
     return books, pending, last
 
 
+def price_window_start(open_rows: Iterable[Any], starts: Mapping[str, Any], now: datetime) -> datetime:
+    """S108: the earliest price this cycle needs. A pending bet needs prices from its decision (the 60 s fill), a
+    filled bet without CLV needs them around its reference (10 min after an in-play fill; the off for a pre-match bet
+    once the off has passed). Bets with CLV recorded, or pre-match bets before their off, need nothing old.
+
+    Before S108 the window went back to the oldest open bet's decision: one pre-match bet placed 12 h before its match
+    made every cycle read 12 h of prices for every candidate, and cycles slowed from 15 s to 140-170 s (2026-11-05).
+    """
+    since = now - PENDING_LOOKBACK
+    for row in open_rows:
+        if row.status == "pending":
+            since = min(since, row.decided_at - PENDING_LOOKBACK)
+        elif row.status == "filled" and row.clv is None and row.filled_at is not None:
+            if row.in_play:
+                since = min(since, row.filled_at + CLV_DELAY - PENDING_LOOKBACK)
+            else:
+                off = starts.get(row.match_id)
+                if off is not None and off <= now:
+                    since = min(since, off - PENDING_LOOKBACK)
+    return since
+
+
 async def _open_rows(session: Any) -> list[Any]:
     stmt = select(PaperBet).where(PaperBet.status.in_(["pending", "filled"]))
     return list((await session.execute(stmt)).scalars().all())
@@ -397,7 +432,9 @@ class DbFeed:
             return []
         stmt = text(
             "SELECT match_id, time, is_live, score, wickets, overs, innings, balls_remaining, batting_team, "
-            "bowling_team, run_rate, req_run_rate, match_format, status FROM match_context "
+            "bowling_team, run_rate, req_run_rate, match_format, status, "
+            # S107: the batters, read through to_jsonb so the trader runs on a database without the column (NULL there)
+            "to_jsonb(match_context) -> 'players' AS players FROM match_context "
             "WHERE match_id = ANY(:ids) AND time >= :since AND time <= :now ORDER BY match_id, time"
         )
         rows = (await self.session.execute(stmt, {"ids": list(match_ids), "since": since, "now": now})).mappings()
@@ -426,6 +463,69 @@ class DbFeed:
             if mid not in out or row["result_type"] == "win":
                 out[mid] = dict(row)
         return out
+
+
+# ----------------------------------------------------------------------------- tail variant (S107)
+def _tail_intents(
+    chase_model: Any,
+    probability: Any,
+    cand: Candidate,
+    rows: Sequence[Mapping[str, Any]],
+    state: Optional[Sequence[Mapping[str, Any]]],
+    book: Mapping[str, Any],
+    position: Book,
+    last_at: Optional[datetime],
+    now: datetime,
+    sides: Mapping[str, int],
+    *,
+    suspended: bool,
+    cap: float,
+) -> tuple[list[OrderIntent], Optional[float], str, dict[str, Any]]:
+    """The tail variant's order for one candidate (``strategy.tail_bet``), priced by the chase model.
+
+    Returns (intents, P(home wins) or None, source, detail). ``detail["reason"]`` says why there is no order ("bet" when
+    there is one); ``detail["estimate"]`` is the model that priced the state (``players`` or ``core``). Pre-match, without
+    a fresh score or without a chase model there is no order.
+    """
+    detail: dict[str, Any] = {"reason": "", "estimate": None}
+    if chase_model is None:
+        detail["reason"] = "no_model"
+        return [], None, "", detail
+    if not cand.in_play:
+        detail["reason"] = "not_in_play"
+        return [], None, "", detail
+    if suspended:
+        detail["reason"] = "suspended"
+        return [], None, "", detail
+    if state is None or not rows:
+        detail["reason"] = "no_state"
+        return [], None, "", detail
+    latest = rows[-1]
+    if not tail_bet.chase_format_ok(latest):  # the chase model is trained on 20-over T20 only
+        detail["reason"] = "not_t20"
+        return [], None, "", detail
+    gender = gender_of(cand.team_home, cand.team_away, cand.competition)
+    batting_side = orient_batting_side(latest.get("batting_team"), cand.team_home, cand.team_away, gender,
+                                       getattr(probability, "normalize_team", None))
+    snap = tail_bet.snapshot(latest, target=derive_target(rows), batting_side=batting_side,
+                             players=latest.get("players"))
+    if snap is None:
+        detail["reason"] = "no_snapshot"
+        return [], None, "", detail
+    batters = (snap.striker, snap.non_striker) if snap.striker is not None and snap.non_striker is not None else None
+    est = chase_model.estimate(runs_needed=snap.runs_needed, balls_left=snap.balls_left,
+                               wickets_left=snap.wickets_left, batters=batters)
+    p_home = tail_bet.home_probability(est.p, snap.batting_side)
+    intent, reason = tail_bet.decide(
+        book, p_home, in_play=cand.in_play, now=now.timestamp(), tickets=position.trades, per_side=sides,
+        last_tail_at=last_at.timestamp() if last_at is not None else None, position=position, cap=cap,
+    )
+    detail.update(
+        reason=reason, estimate=est.source, p_chase=est.p, p_core=est.p_core, p_players=est.p_players,
+        p_empirical=est.p_empirical, batting_side=snap.batting_side, runs_needed=snap.runs_needed,
+        balls_left=snap.balls_left, wickets_left=snap.wickets_left,
+    )
+    return ([intent] if intent is not None else []), p_home, "chase_model", detail
 
 
 # ----------------------------------------------------------------------------- one cycle
@@ -466,6 +566,7 @@ async def run_cycle(
     size_cap: bool = False,  # S87: off until the unit of the shown size is verified (decision 2026-11-03)
     reference: str = paper_review.DEFAULT_REFERENCE,  # S85: the variant whose decisions the placebos copy
     market_dynamics: Any = None,  # S97: a model_for(match_id) source (strategy.market_dynamics); None: no model
+    chase_model: Any = LOAD_CURRENT,  # S107: the chase model for the tail variant (None: no model)
 ) -> dict[str, Any]:
     """One decision cycle. Returns the report (JSON-serialisable) that the loop writes to the log.
 
@@ -478,6 +579,9 @@ async def run_cycle(
         raise ValueError("now must be timezone-aware")
     suspended_set = frozenset(suspended)
     guard_refusals: Counter = Counter()
+    if chase_model is LOAD_CURRENT:
+        chase_model = chase.load_current()  # S107: the active chase model, or None (no tail bets)
+    tail_counts: Counter = Counter()
 
     # 1. Candidates and the ledger's open bets (their matches need prices too, for fills and CLV).
     last_prices = await feed.last_prices(now)
@@ -488,9 +592,7 @@ async def run_cycle(
     candidates, skipped = select_candidates(registry, last_prices, now, include_simulated)
 
     # 2. As-of prices from the earliest point any open bet or candidate needs.
-    since = now - PENDING_LOOKBACK
-    for row in open_rows:
-        since = min(since, row.decided_at - PENDING_LOOKBACK)
+    since = price_window_start(open_rows, starts, now)
     price_ids = sorted({c.match_id for c in candidates} | open_ids)
     raw_prices = await feed.price_rows(price_ids, since) if price_ids else []
     cache = PriceCache(raw_prices)
@@ -531,6 +633,10 @@ async def run_cycle(
     settled_counts = Counter(r.status for r in settled_rows)
     open_rows = await _open_rows(session)
     books, pending, last_trade = ledger_state(open_rows)
+    tail_sides: dict[str, Counter] = {}  # S107: tail tickets on each match, per selection (filled and pending)
+    for row in open_rows:
+        if row.variant == TAIL_VARIANT:
+            tail_sides.setdefault(row.match_id, Counter())[row.selection] += 1
 
     # 4. Decisions for each candidate, per variant.
     ctx_since = min([c.match_start_time for c in candidates], default=now) - CONTEXT_LEAD
@@ -613,36 +719,50 @@ async def run_cycle(
             if key in pending:
                 pending_skips += 1
                 continue
-            if variant.name in DYNAMICS_VARIANTS:
-                # S97: the model's own probability (None pre-match or without a model: no new risk, as market_only)
-                p_model_used = dyn_p
-                source_used = "market_dynamics" if dyn_p is not None else "market_only"
-            else:
-                if unpriced_in_play and not variant.market_only:
-                    guard_refusals["inplay_without_state"] += 1
-                closed_prematch = prematch_off and not variant.market_only  # S106
-                if closed_prematch:
-                    guard_refusals["prematch_off"] += 1
-                no_model = unpriced_in_play or closed_prematch
-                p_model_used = None if no_model else est.p_model
-                source_used = "market_only" if no_model else est.source
             position = books.get(key, Book())
             last = last_trade.get(key)
-            decide_as = replace(variant, max_trades_per_match=0) if variant.name in suspended_set else variant
-            intents = model_edge.decide(
-                decide_as,
-                p_model_used,
-                est.p_market,
-                book,
-                position,
-                now=now.timestamp(),
-                last_trade_at=last.timestamp() if last is not None else None,
-                in_play=cand.in_play,
-            )
+            tail_detail: Optional[dict[str, Any]] = None
+            if variant.name == TAIL_VARIANT:
+                # S107: the tail variant has its own decision path: the chase model, not model_edge.decide
+                intents, p_model_used, source_used, tail_detail = _tail_intents(
+                    chase_model, probability, cand, rows, state, book, position, last, now,
+                    tail_sides.get(cand.match_id, Counter()), suspended=variant.name in suspended_set,
+                    cap=variant.match_cap(cand.in_play),
+                )
+                tail_counts[tail_detail["reason"]] += 1
+                if tail_detail.get("estimate"):
+                    tail_counts[f"estimate:{tail_detail['estimate']}"] += 1
+            else:
+                if variant.name in DYNAMICS_VARIANTS:
+                    # S97: the model's own probability (None pre-match or without a model: no new risk, as market_only)
+                    p_model_used = dyn_p
+                    source_used = "market_dynamics" if dyn_p is not None else "market_only"
+                else:
+                    if unpriced_in_play and not variant.market_only:
+                        guard_refusals["inplay_without_state"] += 1
+                    closed_prematch = prematch_off and not variant.market_only  # S106
+                    if closed_prematch:
+                        guard_refusals["prematch_off"] += 1
+                    no_model = unpriced_in_play or closed_prematch
+                    p_model_used = None if no_model else est.p_model
+                    source_used = "market_only" if no_model else est.source
+                decide_as = replace(variant, max_trades_per_match=0) if variant.name in suspended_set else variant
+                intents = model_edge.decide(
+                    decide_as,
+                    p_model_used,
+                    est.p_market,
+                    book,
+                    position,
+                    now=now.timestamp(),
+                    last_trade_at=last.timestamp() if last is not None else None,
+                    in_play=cand.in_play,
+                )
             kept = []
             for intent in intents:
+                # S107: a tail ticket is new risk for the guards (its reason "tail" is not one they know)
+                guard_view = replace(intent, reason="enter") if variant.name == TAIL_VARIANT else intent
                 refusal = trade_guards.intent_refusal(
-                    intent,
+                    guard_view,
                     book=book,
                     ages=ages,
                     in_play=cand.in_play,
@@ -671,6 +791,8 @@ async def run_cycle(
                 "p_model": p_model_used,
                 "p_market": est.p_market,
             }
+            if tail_detail is not None and state is not None:
+                context_for_rows["score_state"] = _jsonable({**rows[-1], "chase": tail_detail})  # S107
             for intent in intents:
                 p_sel = p_blend if intent.selection == "home" else 1.0 - p_blend
                 # Edge at the decision price (the limit is set where only half the minimum edge remains)
@@ -798,6 +920,7 @@ async def run_cycle(
         "primary": primary,
         "suspended": sorted(suspended_set),
         "market_dynamics": {"loaded": market_dynamics is not None, **dict(dynamics_counts)},  # S97
+        "tail": {"loaded": chase_model is not None, **dict(tail_counts)},  # S107
     }
 
 
@@ -858,6 +981,7 @@ async def run_once(
 __all__ = [
     "Candidate",
     "DYNAMICS_VARIANTS",
+    "TAIL_VARIANT",
     "DbFeed",
     "PriceCache",
     "build_variants",

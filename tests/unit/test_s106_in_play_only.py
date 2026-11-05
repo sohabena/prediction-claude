@@ -24,7 +24,9 @@ START_INPLAY = T0 - timedelta(hours=1)  # already off: in play
 START_PREMATCH = T0 + timedelta(hours=2)  # not off: pre-match
 NEW_RISK = {"enter", "add", "flip"}
 # Strategy variants: the ones S106 closes before the off. The control and the S97 dynamics variants are not among them.
-STRATEGY = [v for v in pt.build_variants() if not v.market_only and not v.placebo and v.name not in pt.DYNAMICS_VARIANTS]
+# S107: the tail variant has its own decision path (the chase model) and is not closed by the pre-match rule.
+STRATEGY = [v for v in pt.build_variants() if not v.market_only and not v.placebo and v.name not in pt.DYNAMICS_VARIANTS
+            and v.name != pt.TAIL_VARIANT]
 STRATEGY_NAMES = {v.name for v in STRATEGY}
 REFERENCE = "w05_e03"
 
