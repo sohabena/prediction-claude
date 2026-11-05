@@ -151,9 +151,10 @@ to `odds_ticks_quarantine` (never deletes): post-settlement prices, cross-match 
   land outside the book and created false edges for the market-only control (2026-11-03).
 - **Pre-match model** (`models/prematch/{t20,odi}_v3.joblib`, trained on 23,193 Cricsheet matches): T20 log loss
   0.6499 vs Elo 0.6540; ODI about equal to Elo. **Beating Elo says nothing about beating the market.**
-- **R1 on 619 BBL matches (2026-11-04, historical closing odds): fails.** Market 0.680, model 0.685, Elo 0.700;
-  model minus market +0.005 (CI -0.010 to +0.021); a model-market blend adds nothing. In a high-profile league the
-  pre-match model has no edge over the close; test low-profile competitions before trusting any pre-match signal.
+- **R1 fails decisively (2026-11-05, 1,382 T20 matches: BBL file plus OddsPapi 2026).** Model minus market log loss
+  +0.047 (CI +0.033 to +0.061); men +0.029 (CI +0.017 to +0.043); women +0.178; a model-market blend is also worse
+  (+0.010); backing the model at the close loses 11 to 13%. Low-profile qualifiers are no better. **The pre-match
+  model is worse than the market everywhere it was tested: a pre-match signal from it is negative expected value.**
 - **Coverage gap:** Cricsheet has no data for Afghanistan, Ford Trophy, Emirates D20, NCL GT20 and some domestic
   women's events, so many recorded matches have no model view. Story S78 (ratings from our own prices) addresses it.
 - **In-play model** (trained ball by ball on Cricsheet) has never been shown to beat the LotusBook in-play price. On
@@ -222,7 +223,8 @@ to `odds_ticks_quarantine` (never deletes): post-settlement prices, cross-match 
 ## 8. Where profit can come from (ranked), and leads not yet tested
 
 1. **A better model on slow horizons** (pre-match, toss, in-play states the market under-prices), strongest in
-   low-profile competitions with lazy prices. The primary thesis; unproven.
+   low-profile competitions with lazy prices. The primary thesis. **Pre-match: failed** (R1 on 1,382 T20 matches,
+   2026-11-05, low-profile qualifiers included). In-play states and ODI are not yet tested against historical odds.
 2. **Market behaviour:** over-reaction after wickets and big overs, drift. Tested from 2026-11-04 as the
    market-dynamics model (S97, variants `mkt_dyn`, `mkt_dyn_e06`: odds movement plus scoreboard, no ratings). First
    result on 14 matches held out: no edge (CLV about 0). It keeps paper trading and retrains weekly.

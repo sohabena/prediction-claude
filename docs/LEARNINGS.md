@@ -11,6 +11,20 @@ delete an entry; if it turns out wrong, add a later entry that corrects it.
 
 ---
 
+## 2026-11-05
+
+**R1 fails decisively on 1,382 T20 matches: the pre-match model is worse than the closing market.** OddsPapi download
+finished (2026-01-01 to 2026-11-03: 6,770 records, 2,635 real matches, 1xbet / bet365 / Pinnacle; 16,998 price-1.0
+entries skipped, the API's suspended or settled marker). Verified: contract, duplicates, look-ahead all clean;
+median margin 5.3%; closing calibration slope 1.09 on 655 matches; 42% link to Cricsheet (many low-level fixtures
+are not in Cricsheet; Cricsheet itself covers 2026). R1 with the BBL file, walk-forward out-of-sample: all 1,382
+matches model minus market log loss **+0.047 (95% CI +0.033 to +0.061)**; men 1,214 matches +0.029 (+0.017 to
++0.043); women 168 matches +0.178; a season-wise model-market blend +0.010 (+0.006 to +0.015, also worse); flat
+backing at the close where the model differs by 3 / 6 points ROI -11% / -13%. Low-profile qualifiers are no better
+for the model (Asia, Africa, Americas sub-regional qualifiers +0.13 to +0.28). Reading: the Cricsheet ratings model
+carries no information the closing price lacks, in high- or low-profile T20; the primary thesis (section 8.1) fails
+for pre-match. Rule: a pre-match signal from this model is negative expected value; do not trade it.
+
 ## 2026-11-04
 
 **The placeholder rule quarantined 1,958 real prices.** `placeholder_flags` flagged any four-price book seen on 3+
