@@ -13,6 +13,17 @@ delete an entry; if it turns out wrong, add a later entry that corrects it.
 
 ## 2026-11-05
 
+**Pre-match bets kept as optional (operator, era H from 08:12 UTC)**, after S106 had switched them off: the operator
+asked to "keep pre match bets, but not compulsory" (`PREMATCH_NEW_RISK = True`). A variant still bets only on an
+edge, within the pre-match half of the match budget; R1 says the pre-match model is worse than the close, so era H
+pre-match results are reported apart and watched.
+
+**Long-shot base rates from 13,756 Cricsheet T20 chases** (for the operator's "1.01 lottery ticket" idea, written up
+in `docs/strategy/live-betting-expert-persona.md`): need 20+ off the last 6 balls 0.59% won (fair odds 170); need
+30+ off 12 2.1% (48); need 50+ off 24 4.5% (22); need 60+ off 30 5.0% (20). A small back on the outsider pays only
+when offered above those odds. Our recordings (27 settled matches): 22 sides touched 10.0+ in play and 2 came back;
+8 touched 20.0+ and none did. Rule: a long shot is a bet only when its price beats the base rate, never by habit.
+
 **Operator decision: model variants trade in play only; 30 bets is a ceiling, not a target** (S106, era G). After
 R1 failed pre-match, no strategy variant opens risk before the off (`PREMATCH_NEW_RISK = False`); placebos follow.
 Replay to 2026-11-05 00:00: pre-match bets per variant went from 5 to 32 to 0 (they had lost 44,700 to 100,000 per

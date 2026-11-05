@@ -128,16 +128,17 @@ def _placed(session):
 # ---------------------------------------------------------------- the constant
 
 
-def test_prematch_new_risk_is_off_by_default():
+def test_prematch_new_risk_is_on_by_operator_decision():
     """Operator decision, 2026-11-05."""
-    assert pt.PREMATCH_NEW_RISK is False
+    assert pt.PREMATCH_NEW_RISK is True  # operator, 2026-11-05: pre-match bets kept, optional (era H)
 
 
 # ---------------------------------------------------------------- cycle: pre-match, no new risk
 
 
 @pytest.mark.asyncio
-async def test_prematch_strategy_variants_place_nothing_and_count_prematch_off():
+async def test_prematch_strategy_variants_place_nothing_and_count_prematch_off(monkeypatch):
+    monkeypatch.setattr(pt, "PREMATCH_NEW_RISK", False)  # the S106 switched-off path
     session = MemorySession()
     feed = FakeFeed(registry=[_registry(START_PREMATCH)], prices=[_price(T0 - MIN / 2)], last={MID: T0})
     report = await pt.run_cycle(session, feed, FakeProbability(p_model=0.9), pt.build_variants(), now=T0)
@@ -165,8 +166,9 @@ async def test_prematch_strategy_variants_trade_again_when_the_switch_is_on(monk
 
 
 @pytest.mark.asyncio
-async def test_prematch_green_up_is_still_allowed_on_an_existing_position():
+async def test_prematch_green_up_is_still_allowed_on_an_existing_position(monkeypatch):
     """Before the off a strategy variant with a pre-match position may still green up: reduce, never new risk."""
+    monkeypatch.setattr(pt, "PREMATCH_NEW_RISK", False)  # the S106 switched-off path
     session = MemorySession(rows=[r for v in STRATEGY for r in _green_up_position(v.name)])
     feed = FakeFeed(registry=[_registry(START_PREMATCH)],
                     prices=[_price(T0 - timedelta(seconds=30), back_home=2.0, lay_home=2.1, back_away=2.0,
@@ -182,10 +184,11 @@ async def test_prematch_green_up_is_still_allowed_on_an_existing_position():
 
 
 @pytest.mark.asyncio
-async def test_prematch_market_only_control_keeps_its_probability():
+async def test_prematch_market_only_control_keeps_its_probability(monkeypatch):
     """The control is not a strategy variant: before the off it keeps the model probability it always had (recorded
     with source prematch, not market_only) and may green up on its own pre-match position. It is not counted as
     prematch_off."""
+    monkeypatch.setattr(pt, "PREMATCH_NEW_RISK", False)  # the S106 switched-off path
     session = MemorySession(rows=_green_up_position("market_only"))
     feed = FakeFeed(registry=[_registry(START_PREMATCH)],
                     prices=[_price(T0 - timedelta(seconds=30), back_home=2.0, lay_home=2.1, back_away=2.0,
@@ -203,6 +206,7 @@ async def test_prematch_market_only_control_keeps_its_probability():
 async def test_prematch_placebos_open_no_new_risk_but_copy_reductions(monkeypatch):
     """The reference's pre-match green-up is copied by the placebos only as a reduction: a flat placebo may not enter.
     With the constant True the same copy opens risk, so the placebo guard is what stops it."""
+    monkeypatch.setattr(pt, "PREMATCH_NEW_RISK", False)  # the S106 switched-off path
     session = MemorySession(rows=_green_up_position(REFERENCE))
     feed = FakeFeed(registry=[_registry(START_PREMATCH)],
                     prices=[_price(T0 - timedelta(seconds=30), back_home=2.0, lay_home=2.1, back_away=2.0,

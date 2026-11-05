@@ -74,9 +74,11 @@ EDGE_GRID = (0.03, 0.06)
 # S97: the market-dynamics variants and their minimum edge. Their probability is the model's, not the blend's (w = 1).
 DYNAMICS_MIN_EDGE = {"mkt_dyn": 0.03, "mkt_dyn_e06": 0.06}
 DYNAMICS_VARIANTS = frozenset(DYNAMICS_MIN_EDGE)
-# S106 (operator, 2026-11-05): no new risk before the off. A strategy variant gets no model probability before the off, so
-# it may only reduce or green up a pre-match position; the placebos follow the reference. True restores pre-match trading.
-PREMATCH_NEW_RISK = False
+# S106 (operator, 2026-11-05): False means no new risk before the off (a strategy variant then gets no model
+# probability pre-match and may only reduce or green up; the placebos follow the reference). The operator first set it
+# False after R1 failed pre-match, then the same day asked to keep pre-match bets as optional (era H): True. Bets are
+# never forced either way; a variant bets only on an edge, within the pre-match half of the match budget.
+PREMATCH_NEW_RISK = True
 
 
 # ----------------------------------------------------------------------------- variants (one place)
