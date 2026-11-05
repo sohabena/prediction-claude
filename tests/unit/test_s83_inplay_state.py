@@ -237,7 +237,8 @@ async def test_in_play_with_fresh_score_and_inplay_source_trades_normally():
 
 
 @pytest.mark.asyncio
-async def test_pre_match_decisions_use_the_prematch_model_as_before():
+async def test_pre_match_decisions_use_the_prematch_model_as_before(monkeypatch):
+    monkeypatch.setattr(pt, "PREMATCH_NEW_RISK", True)  # S106: pre-match entry is off by default; this tests it on
     session = MemorySession()
     feed = FakeFeed(registry=[_registry(START_PREMATCH)], prices=[_price(T0 - MIN / 2)], last={MID: T0})
     report = await pt.run_cycle(session, feed, FakeProbability(p_model=0.9), pt.build_variants(), now=T0)
@@ -254,8 +255,9 @@ async def test_pre_match_decisions_use_the_prematch_model_as_before():
 
 
 @pytest.mark.asyncio
-async def test_switch_at_the_off_pre_match_model_then_market_only():
+async def test_switch_at_the_off_pre_match_model_then_market_only(monkeypatch):
     """Before the off the pre-match model enters. From the off, with no live score, the same variants may not add."""
+    monkeypatch.setattr(pt, "PREMATCH_NEW_RISK", True)  # S106: pre-match entry is off by default; this tests it on
     session = MemorySession()
     variants = pt.build_variants()
     prob = FakeProbability(p_model=0.9)

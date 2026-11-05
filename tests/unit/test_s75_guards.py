@@ -237,7 +237,8 @@ async def test_in_play_stale_book_refuses_new_risk_and_a_fresh_book_does_not():
 
 
 @pytest.mark.asyncio
-async def test_recent_decisions_rate_limit_one_variant_and_not_the_others():
+async def test_recent_decisions_rate_limit_one_variant_and_not_the_others(monkeypatch):
+    monkeypatch.setattr(pt, "PREMATCH_NEW_RISK", True)  # S106: pre-match entry is off by default
     session = MemorySession([_row(decided_at=T0 - timedelta(seconds=s), status="unfilled") for s in (300, 200, 100)])
     feed = _trader_feed(s72._book_for(0.5))
     report = await pt.run_cycle(session, feed, s72.FakeProbability(p_model=0.9), pt.build_variants(), now=T0)

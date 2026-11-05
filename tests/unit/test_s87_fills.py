@@ -359,7 +359,8 @@ def _two_cycle_scenario(feed, *, fill_delay=timedelta(seconds=60), size_cap=True
     return session, report
 
 
-def test_cycle_cuts_each_fill_to_the_size_shown_at_the_fill_time():
+def test_cycle_cuts_each_fill_to_the_size_shown_at_the_fill_time(monkeypatch):
+    monkeypatch.setattr(pt, "PREMATCH_NEW_RISK", True)  # S106: pre-match entry is off by default
     feed = SizedFeed(sizes=[_size_row(T0 + timedelta(seconds=30), selection="home", back=2.2, back_size=150.0)])
     session, report = _two_cycle_scenario(feed)
     filled = [r for r in session.rows if r.status == "filled" and not review.is_placebo(r.variant)]  # S85: model rows
@@ -371,7 +372,8 @@ def test_cycle_cuts_each_fill_to_the_size_shown_at_the_fill_time():
     assert report["fills"]["size_capped"] == len(filled)
 
 
-def test_cycle_does_not_use_a_size_shown_after_the_fill_time():
+def test_cycle_does_not_use_a_size_shown_after_the_fill_time(monkeypatch):
+    monkeypatch.setattr(pt, "PREMATCH_NEW_RISK", True)  # S106: pre-match entry is off by default
     # the size at 61 s is huge, but a bet decided at 0 s fills at 60 s: the 30 s size of 150 is the one that counts
     feed = SizedFeed(sizes=[
         _size_row(T0 + timedelta(seconds=30), selection="home", back=2.2, back_size=150.0),
@@ -382,7 +384,8 @@ def test_cycle_does_not_use_a_size_shown_after_the_fill_time():
     assert filled and all(r.stake == pytest.approx(150.0) for r in filled)
 
 
-def test_cycle_with_size_cap_off_fills_the_asked_stake():
+def test_cycle_with_size_cap_off_fills_the_asked_stake(monkeypatch):
+    monkeypatch.setattr(pt, "PREMATCH_NEW_RISK", True)  # S106: pre-match entry is off by default
     feed = SizedFeed(sizes=[_size_row(T0 + timedelta(seconds=30), selection="home", back=2.2, back_size=150.0)])
     session, report = _two_cycle_scenario(feed, size_cap=False)
     filled = [r for r in session.rows if r.status == "filled"]
@@ -390,7 +393,8 @@ def test_cycle_with_size_cap_off_fills_the_asked_stake():
     assert "size_capped" not in report["fills"]
 
 
-def test_feed_without_size_rows_keeps_the_pre_s87_fill():
+def test_feed_without_size_rows_keeps_the_pre_s87_fill(monkeypatch):
+    monkeypatch.setattr(pt, "PREMATCH_NEW_RISK", True)  # S106: pre-match entry is off by default
     feed = s72.FakeFeed()
     session, report = _two_cycle_scenario(feed)
     filled = [r for r in session.rows if r.status == "filled"]
@@ -398,7 +402,8 @@ def test_feed_without_size_rows_keeps_the_pre_s87_fill():
     assert report["fills"] == {"filled": len(filled), "unfilled": 0}
 
 
-def test_cycle_with_no_size_known_caps_at_the_default_and_marks_it():
+def test_cycle_with_no_size_known_caps_at_the_default_and_marks_it(monkeypatch):
+    monkeypatch.setattr(pt, "PREMATCH_NEW_RISK", True)  # S106: pre-match entry is off by default
     feed = SizedFeed(sizes=[])  # the match page has no size for the runner
     session, _report = _two_cycle_scenario(feed)
     filled = [r for r in session.rows if r.status == "filled"]
@@ -408,7 +413,8 @@ def test_cycle_with_no_size_known_caps_at_the_default_and_marks_it():
         assert row.fill_note == "size_unknown"
 
 
-def test_cycle_honours_a_120_second_delay():
+def test_cycle_honours_a_120_second_delay(monkeypatch):
+    monkeypatch.setattr(pt, "PREMATCH_NEW_RISK", True)  # S106: pre-match entry is off by default
     feed = SizedFeed(sizes=[_size_row(T0 + timedelta(seconds=30), selection="home", back=2.2, back_size=150.0)])
     session, report = _two_cycle_scenario(feed, fill_delay=timedelta(seconds=120))
     assert report["fills"]["filled"] == 0 and session.rows and all(r.status == "pending" for r in session.rows)
@@ -523,7 +529,8 @@ def test_db_init_adds_the_s87_columns_with_if_not_exists():
     assert "ADD COLUMN IF NOT EXISTS fill_note TEXT" in statements
 
 
-def test_daily_report_renders_the_fills_and_sizes_table():
+def test_daily_report_renders_the_fills_and_sizes_table(monkeypatch):
+    monkeypatch.setattr(pt, "PREMATCH_NEW_RISK", True)  # S106: pre-match entry is off by default
     from backend.models.paper_bets import PaperBet as Bet
     from scripts import paper_report as pr
 

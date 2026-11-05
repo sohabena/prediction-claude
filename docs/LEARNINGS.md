@@ -13,6 +13,17 @@ delete an entry; if it turns out wrong, add a later entry that corrects it.
 
 ## 2026-11-05
 
+**Operator decision: model variants trade in play only; 30 bets is a ceiling, not a target** (S106, era G). After
+R1 failed pre-match, no strategy variant opens risk before the off (`PREMATCH_NEW_RISK = False`); placebos follow.
+Replay to 2026-11-05 00:00: pre-match bets per variant went from 5 to 32 to 0 (they had lost 44,700 to 100,000 per
+variant); in-play results changed too, because in play now starts from a flat book (w07_e06 +77,653 to +76,782,
+w05_e06 -1,234 to -31,441); every interval spans zero on 7 to 11 matches.
+
+**The market-only control can never open a position.** Its probability is the band midpoint, which lies inside
+both runners' implied ranges, so no takeable price has a positive edge: 0 intents in both replays, and a search of
+10,000 band-consistent books found no entry. It still tests reduce and green-up, not entries. Rule: a control that
+cannot trade is not a control; the placebos are the real comparison.
+
 **R1 fails decisively on 1,382 T20 matches: the pre-match model is worse than the closing market.** OddsPapi download
 finished (2026-01-01 to 2026-11-03: 6,770 records, 2,635 real matches, 1xbet / bet365 / Pinnacle; 16,998 price-1.0
 entries skipped, the API's suspended or settled marker). Verified: contract, duplicates, look-ahead all clean;

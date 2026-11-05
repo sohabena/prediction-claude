@@ -29,6 +29,7 @@ ERAS = [
     ("D", "2026-11-03 12:36", "Current strategy: S83 in-play rule, S90 tickets, corrected price view, placebos"),
     ("E", "2026-11-04 02:50", "Adds the market-dynamics variants (mkt_dyn, mkt_dyn_e06); twin matches linked (S96)"),
     ("F", "2026-11-04 13:29", "S105: exchange market owns match_odds; bookmaker-only real matches are not traded"),
+    ("G", "2026-11-05 07:41", "S106: model variants trade in play only (R1 failed pre-match); 30 bets a ceiling"),
 ]
 CONTROLS = {"market_only", "placebo_random", "placebo_favourite"}
 

@@ -131,7 +131,8 @@ def _ledger_book(session, variant, mid=MID):
 
 
 @pytest.mark.asyncio
-async def test_cycle_places_fills_and_settles():
+async def test_cycle_places_fills_and_settles(monkeypatch):
+    monkeypatch.setattr(pt, "PREMATCH_NEW_RISK", True)  # S106: pre-match entry is off by default
     session = FakeSession()
     feed = FakeFeed(
         registry=[_registry()],
@@ -183,7 +184,8 @@ async def test_cycle_places_fills_and_settles():
 
 
 @pytest.mark.asyncio
-async def test_cap_holds_across_cycles():
+async def test_cap_holds_across_cycles(monkeypatch):
+    monkeypatch.setattr(pt, "PREMATCH_NEW_RISK", True)  # S106: pre-match entry is off by default
     variants = _variants()
     session = FakeSession()
     feed = FakeFeed(registry=[_registry()], last={})
@@ -272,7 +274,8 @@ async def test_restart_respects_cap_from_existing_positions():
 
 
 @pytest.mark.asyncio
-async def test_pending_bet_blocks_a_new_decision():
+async def test_pending_bet_blocks_a_new_decision(monkeypatch):
+    monkeypatch.setattr(pt, "PREMATCH_NEW_RISK", True)  # S106: pre-match entry is off by default
     variants = _variants()
     session = FakeSession()
     feed = FakeFeed(registry=[_registry()], prices=[_price(T0 - MIN)], last={MID: T0})

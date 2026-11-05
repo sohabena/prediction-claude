@@ -145,7 +145,8 @@ def test_suspended_placebo_opens_no_new_risk_but_reduces():
 
 # ----------------------------------------------------------------------------- run_cycle: timing, stakes, guards
 @pytest.mark.asyncio
-async def test_placebo_random_has_the_reference_time_and_stake():
+async def test_placebo_random_has_the_reference_time_and_stake(monkeypatch):
+    monkeypatch.setattr(pt, "PREMATCH_NEW_RISK", True)  # S106: pre-match entry is off by default
     session = s72.FakeSession()
     feed = s72.FakeFeed(registry=[s72._registry()], prices=[s72._price(T0 - MIN)], last={MID: T0})
     report = await _run(session, feed, pt.build_variants())
@@ -161,7 +162,8 @@ async def test_placebo_random_has_the_reference_time_and_stake():
 
 
 @pytest.mark.asyncio
-async def test_placebo_favourite_backs_the_favourite_with_the_reference_stake():
+async def test_placebo_favourite_backs_the_favourite_with_the_reference_stake(monkeypatch):
+    monkeypatch.setattr(pt, "PREMATCH_NEW_RISK", True)  # S106: pre-match entry is off by default
     session = s72.FakeSession()
     feed = s72.FakeFeed(registry=[s72._registry()], prices=[s72._price(T0 - MIN)], last={MID: T0})
     await _run(session, feed, pt.build_variants())
@@ -195,7 +197,8 @@ async def test_placebos_do_nothing_when_the_reference_is_not_in_the_run():
 
 
 @pytest.mark.asyncio
-async def test_placebo_decisions_reproduce_across_runs():
+async def test_placebo_decisions_reproduce_across_runs(monkeypatch):
+    monkeypatch.setattr(pt, "PREMATCH_NEW_RISK", True)  # S106: pre-match entry is off by default
     placed = []
     for _ in range(2):
         session = s72.FakeSession()
@@ -209,7 +212,8 @@ async def test_placebo_decisions_reproduce_across_runs():
 
 
 @pytest.mark.asyncio
-async def test_placebos_fill_and_settle_like_other_variants():
+async def test_placebos_fill_and_settle_like_other_variants(monkeypatch):
+    monkeypatch.setattr(pt, "PREMATCH_NEW_RISK", True)  # S106: pre-match entry is off by default
     variants = pt.build_variants()
     session = s72.FakeSession()
     feed = s72.FakeFeed(registry=[s72._registry()], prices=[s72._price(T0 - MIN)], last={MID: T0})
@@ -228,7 +232,8 @@ async def test_placebos_fill_and_settle_like_other_variants():
 
 
 @pytest.mark.asyncio
-async def test_placebos_hold_the_cap_across_cycles():
+async def test_placebos_hold_the_cap_across_cycles(monkeypatch):
+    monkeypatch.setattr(pt, "PREMATCH_NEW_RISK", True)  # S106: pre-match entry is off by default
     variants = [
         Variant("ref", w=0.5, min_edge=0.03, max_match_loss=20_000.0),
         Variant("placebo_random", w=0.0, min_edge=0.03, max_match_loss=20_000.0, market_only=True, placebo="random"),

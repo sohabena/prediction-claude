@@ -268,7 +268,8 @@ def test_load_state_is_empty_when_missing_or_corrupt(tmp_path):
 
 # ----------------------------------------------------------------------------- the trader honours the state
 @pytest.mark.asyncio
-async def test_suspended_variant_opens_no_new_risk_and_the_others_still_trade():
+async def test_suspended_variant_opens_no_new_risk_and_the_others_still_trade(monkeypatch):
+    monkeypatch.setattr(pt, "PREMATCH_NEW_RISK", True)  # S106: pre-match entry is off by default
     variants = pt.build_variants()
     session = s72.FakeSession()
     feed = s72.FakeFeed(registry=[s72._registry()], prices=[s72._price(s72.T0 - s72.MIN)], last={s72.MID: s72.T0})

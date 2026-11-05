@@ -13,13 +13,16 @@ A cycle (every 15 s from ``scripts/run_paper_trader.py``) does, in this order:
    ``model_edge.decide`` (S70) per variant with the position rebuilt from the ledger. A (variant, match) pair with a
    pending bet is skipped. In play without a fresh in-play score (S83), a model variant gets no model probability:
    it may reduce or green up, never enter, add or flip, and each such variant-match is counted as
-   ``inplay_without_state``. Each intent then faces the new-risk guards (S75: staleness, spread, flip cooldown, rate).
+   ``inplay_without_state``. S106: before the off a strategy variant gets the same treatment (``PREMATCH_NEW_RISK``
+   False), counted as ``prematch_off``. The market-only control keeps its probability. Each intent then faces the
+   new-risk guards (S75: staleness, spread, flip cooldown, rate).
 5. Record each intent that passes as a pending row in ``paper_bets`` with its decision context (S71). Every refusal
    is counted by reason in the cycle report (``guard_refusals``).
 6. Placebo controls (S85), after the model variants, for each candidate the reference variant placed an intent on this
    cycle: ``placebo_random`` places one intent with the reference's stake on a seeded-random side and selection,
    ``placebo_favourite`` backs the market favourite with that stake. Priced and capped by ``model_edge.placebo_ticket``
    and checked by the S75 new-risk guards. They use the market probability only, so the source is ``market_only``.
+   S106: before the off they open no new risk either (``PREMATCH_NEW_RISK`` False), so they copy only reductions.
    S97: the ``mkt_dyn`` and ``mkt_dyn_e06`` variants take their probability from the market-dynamics model (source
    ``market_dynamics``): the band price now plus the predicted 10-minute change. In play only; pre-match, or with no
    model file, they open no new risk. Everything else about them is the same decision and guard path.
@@ -71,6 +74,9 @@ EDGE_GRID = (0.03, 0.06)
 # S97: the market-dynamics variants and their minimum edge. Their probability is the model's, not the blend's (w = 1).
 DYNAMICS_MIN_EDGE = {"mkt_dyn": 0.03, "mkt_dyn_e06": 0.06}
 DYNAMICS_VARIANTS = frozenset(DYNAMICS_MIN_EDGE)
+# S106 (operator, 2026-11-05): no new risk before the off. A strategy variant gets no model probability before the off, so
+# it may only reduce or green up a pre-match position; the placebos follow the reference. True restores pre-match trading.
+PREMATCH_NEW_RISK = False
 
 
 # ----------------------------------------------------------------------------- variants (one place)
@@ -594,8 +600,9 @@ async def run_cycle(
             continue
         # S83: in play, a model probability is used only from the in-play model with a fresh live score (source
         # ``inplay``). Otherwise the model variants are priced as market-only: model_edge gets no p_model, so only
-        # reduce and green-up can trade. Pre-match decisions are unchanged.
+        # reduce and green-up can trade. Before the off, S106 (PREMATCH_NEW_RISK False) does the same for strategy variants.
         unpriced_in_play = cand.in_play and est.source != "inplay"
+        prematch_off = not cand.in_play and not PREMATCH_NEW_RISK  # S106
         reference_intents: list[OrderIntent] = []
         for variant in variants:
             if variant.placebo:
@@ -611,8 +618,12 @@ async def run_cycle(
             else:
                 if unpriced_in_play and not variant.market_only:
                     guard_refusals["inplay_without_state"] += 1
-                p_model_used = None if unpriced_in_play else est.p_model
-                source_used = "market_only" if unpriced_in_play else est.source
+                closed_prematch = prematch_off and not variant.market_only  # S106
+                if closed_prematch:
+                    guard_refusals["prematch_off"] += 1
+                no_model = unpriced_in_play or closed_prematch
+                p_model_used = None if no_model else est.p_model
+                source_used = "market_only" if no_model else est.source
             position = books.get(key, Book())
             last = last_trade.get(key)
             decide_as = replace(variant, max_trades_per_match=0) if variant.name in suspended_set else variant
@@ -712,7 +723,7 @@ async def run_cycle(
                     selection=selection,
                     stake=ref_intent.stake,
                     in_play=cand.in_play,
-                    new_risk=variant.name not in suspended_set,
+                    new_risk=variant.name not in suspended_set and (cand.in_play or PREMATCH_NEW_RISK),  # S106
                 )
                 if intent is None:
                     continue
