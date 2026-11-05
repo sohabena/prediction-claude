@@ -82,7 +82,7 @@ LAY = staking.LAY
 HOME = "home"
 AWAY = "away"
 REASONS = ("enter", "add", "reduce", "flip", "green_up")
-NEW_RISK_REASONS = frozenset({"enter", "add", "flip"})
+NEW_RISK_REASONS = frozenset({"enter", "add", "flip", "tail"})
 _EPS = 1e-9
 # Takeable-price keys, as in strategy.staking.BOOK_KEYS: (selection, side, key), in evaluation order.
 _KEYS = (
@@ -119,6 +119,9 @@ class Variant:
     ticket_reserve: int = 2  # S90: when this many or fewer are left, only risk-reducing tickets
     no_trade_share: float = 0.4  # S90: no-trade band = this share of max_trade_risk (in balance units)
     prematch_budget_share: float = 0.5  # S90: pre-match worst case may not exceed this share of max_match_loss
+    min_tradable_odds: float = 1.35  # S109: minimum decimal odds for new-risk LAY
+    max_tradable_odds: float = 4.00  # S109: maximum decimal odds for new-risk BACK
+    max_adverse_drift: float = 0.30  # S110: maximum adverse price drift allowed when adding to a position
 
     def __post_init__(self) -> None:
         _require(0.0 <= self.w <= 1.0, f"w must be in [0, 1], got {self.w!r}")
@@ -141,6 +144,9 @@ class Variant:
             f"prematch_budget_share must be in [0, 1], got {self.prematch_budget_share!r}",
         )
         _require(self.placebo in ("", "random", "favourite"), f"placebo must be '', 'random' or 'favourite', got {self.placebo!r}")
+        _require(math.isfinite(self.min_tradable_odds) and self.min_tradable_odds > 1.0, f"min_tradable_odds must be > 1.0, got {self.min_tradable_odds!r}")
+        _require(math.isfinite(self.max_tradable_odds) and self.max_tradable_odds > self.min_tradable_odds, f"max_tradable_odds must be > min_tradable_odds, got {self.max_tradable_odds!r}")
+        _require(math.isfinite(self.max_adverse_drift) and self.max_adverse_drift >= 0.0, f"max_adverse_drift must be >= 0.0, got {self.max_adverse_drift!r}")
 
     @property
     def no_trade_band(self) -> float:
@@ -361,17 +367,33 @@ def _move_to(
         # Enter from flat or extend the balance's side: new risk, capped per ticket.
         if not new_risk:
             return None
+        if sized.side == LAY and sized.price < variant.min_tradable_odds:
+            return None
+        if sized.side == BACK and sized.price >= variant.max_tradable_odds:
+            return None
         reason = "enter" if abs(balance) <= _EPS else "add"
+        if reason == "add":
+            if balance > _EPS and book.away_pnl < -_EPS:
+                entry_odds = 1.0 + (book.home_pnl / -book.away_pnl)
+                if sized.side == BACK and entry_odds > 1.0 and sized.price > entry_odds * (1.0 + variant.max_adverse_drift):
+                    return None
+            elif balance < -_EPS and book.home_pnl < -_EPS:
+                entry_odds = 1.0 + (book.away_pnl / -book.home_pnl)
+                if sized.side == BACK and entry_odds > 1.0 and sized.price > entry_odds * (1.0 + variant.max_adverse_drift):
+                    return None
         stake = min(_human(abs(gap) / per_unit), risk_room)
         return _ticket(book, sized, limit, stake, reason, cap, variant)
     # Moves toward zero: the part that closes the current balance is a reduce; any part past zero is new risk.
     close = _human(min(abs(balance), abs(gap)) / per_unit)
     opened = 0.0
-    if new_risk and abs(gap) > abs(balance):
+    corridor_ok = not ((sized.side == LAY and sized.price < variant.min_tradable_odds) or (sized.side == BACK and sized.price >= variant.max_tradable_odds))
+    if new_risk and corridor_ok and abs(gap) > abs(balance):
         opened = min(_human((abs(gap) - abs(balance)) / per_unit), risk_room)
     if opened > 0.0:
         return _ticket(book, sized, limit, close + opened, "flip", cap, variant)
-    return _ticket(book, sized, limit, close, "reduce", cap, variant)
+    if close > 0.0:
+        return _ticket(book, sized, limit, close, "reduce", cap, variant)
+    return None
 
 
 def _green_up(variant: Variant, book: Book, cands: list[_Cand], cap: float) -> Optional[OrderIntent]:
@@ -439,7 +461,7 @@ def decide(
     # Target: the Kelly position on the best candidate; the ticket moves the balance toward it (either direction).
     best: Optional[_Cand] = None
     for cand in cands:
-        if cand.edge <= 0.0 or cand.edge < variant.min_edge:
+        if cand.edge <= 0.0 or cand.edge < variant.min_edge or (cand.side == LAY and cand.price < variant.min_tradable_odds) or (cand.side == BACK and cand.price >= variant.max_tradable_odds):
             continue
         if best is None or cand.edge > best.edge:
             best = cand
@@ -493,11 +515,25 @@ def placebo_ticket(
     sized, limit = _sized(variant, cand)
     cap = variant.match_cap(in_play)
     effect = vh - va  # change of the balance per unit of stake, at the decision price
+    book = position
     balance = position.balance
     if abs(balance) <= _EPS or _sign(balance) == _sign(effect):
         if not new_risk:
             return None
+        if sized.side == LAY and sized.price < variant.min_tradable_odds:
+            return None
+        if sized.side == BACK and sized.price >= variant.max_tradable_odds:
+            return None
         reason = "enter" if abs(balance) <= _EPS else "add"
+        if reason == "add":
+            if balance > _EPS and book.away_pnl < -_EPS:
+                entry_odds = 1.0 + (book.home_pnl / -book.away_pnl)
+                if sized.side == BACK and entry_odds > 1.0 and sized.price > entry_odds * (1.0 + variant.max_adverse_drift):
+                    return None
+            elif balance < -_EPS and book.home_pnl < -_EPS:
+                entry_odds = 1.0 + (book.away_pnl / -book.home_pnl)
+                if sized.side == BACK and entry_odds > 1.0 and sized.price > entry_odds * (1.0 + variant.max_adverse_drift):
+                    return None
         risk_per_unit = 1.0 if sized.side == BACK else sized.price - 1.0
         size = min(stake, variant.max_trade_risk / risk_per_unit)
     else:

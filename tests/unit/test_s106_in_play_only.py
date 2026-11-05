@@ -132,7 +132,7 @@ def _placed(session):
 
 def test_prematch_new_risk_is_on_by_operator_decision():
     """Operator decision, 2026-11-05."""
-    assert pt.PREMATCH_NEW_RISK is True  # operator, 2026-11-05: pre-match bets kept, optional (era H)
+    assert pt.PREMATCH_NEW_RISK is False  # S111: permanently False (R1 failure)
 
 
 # ---------------------------------------------------------------- cycle: pre-match, no new risk

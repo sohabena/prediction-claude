@@ -171,11 +171,16 @@ l/environment.py, 	ests/unit/test_s31_adverse_selection.py |
 | [S33](S33-closing-line-value-clv-auditor.md) | Closing Line Value (CLV) and price efficiency auditor | P1 | Sonnet | — | irtual_trading/settlement.py, shared/metrics.py, scripts/audit_clv.py, 	ests/unit/test_s33_clv_auditor.py |
 | [S34](S34-frontend-ui-ratings-and-ev-transparency.md) | Frontend UI transparency: Display Team Elo, Venue Priors, and Real-Time EV Breakdown | P2 | Sonnet | S26, S27 | ackend/routers/match_router.py, ackend/routers/trading_router.py, rontend/app/matches/page.tsx, rontend/app/trading/page.tsx, 	ests/unit/test_s34_ui_endpoints.py |
 
+| [S109](S109-odds-validity-corridor.md) | Odds validity corridor: ban new-risk LAY below 1.35 and BACK above 4.00 | P0 | Sonnet | S75, S90 | `strategy/trade_guards.py`, `strategy/model_edge.py`, `tests/unit/test_s109_odds_corridor.py` |
+| [S110](S110-prevent-adverse-drift-averaging.md) | Freeze adverse position averaging: do not add to collapsing positions | P0 | Sonnet | S70, S109 | `strategy/model_edge.py`, `tests/unit/test_s110_adverse_drift.py` |
+| [S111](S111-enforce-inplay-only-prematch-off.md) | Enforce in-play only: permanently disable pre-match new risk | P0 | Haiku | S106 | `virtual_trading/paper_trader.py`, `GOLDEN-RULEBOOK.md`, `tests/unit/test_s111_prematch_off.py` |
+
 ## Parallelisation waves
 
 Stories in the same wave own disjoint files and can run concurrently.
 
 - **Wave 1 (parallel):** S01, S02, S03, S05, S08
+- **Wave 25 (Profitability Remediation):** S109 (odds corridor, `trade_guards.py` & `model_edge.py`), S110 (adverse drift averaging freeze, `model_edge.py`), S111 (in-play only pre-match off, `paper_trader.py` & `GOLDEN-RULEBOOK.md`). S109 and S110 order: S109 first, then S110; S111 runs in parallel.
 - **Wave 2 (parallel):** S04 (needs S03 merged), S06 (needs S05 merged), S07 (needs S01+S02)
 - **Wave 3:** S09 (needs S02, S03, S04) — S02 and S09 share a file, never run them together
 - **Wave 4:** S10

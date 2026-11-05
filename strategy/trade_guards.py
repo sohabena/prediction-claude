@@ -30,7 +30,7 @@ from strategy.model_edge import AWAY, HOME, NEW_RISK_REASONS
 from training.market import band_bounds
 
 BOOK_REFUSALS = ("no_band", "band_contradiction", "crossed_book", "p_market_outside_band")
-NEW_RISK_REFUSALS = ("stale_book", "spread_too_wide", "flip_cooldown", "trade_rate")
+NEW_RISK_REFUSALS = ("stale_book", "spread_too_wide", "flip_cooldown", "trade_rate", "lay_odds_too_low", "back_odds_too_high")
 REFUSAL_REASONS = BOOK_REFUSALS + NEW_RISK_REFUSALS
 _TOL = 1e-12
 
@@ -45,6 +45,8 @@ class GuardConfig:
     max_trades_per_window: int = 3  # N decisions per match and variant ...
     trade_window_s: float = 600.0  # ... in a rolling window of this many seconds
     flip_cooldown_s: float = 300.0  # no flip within this long of the last flip
+    min_new_risk_lay_odds: float = 1.35  # S109: reject new-risk LAY below this odds threshold
+    max_new_risk_back_odds: float = 4.00  # S109: reject new-risk standard BACK at or above this threshold
 
     def __post_init__(self) -> None:
         if not (math.isfinite(self.max_spread) and self.max_spread >= 0.0):
@@ -55,6 +57,10 @@ class GuardConfig:
                 raise ValueError(f"{name} must be >= 0, got {value!r}")
         if self.max_trades_per_window < 0:
             raise ValueError(f"max_trades_per_window must be >= 0, got {self.max_trades_per_window!r}")
+        for name in ("min_new_risk_lay_odds", "max_new_risk_back_odds"):
+            value = getattr(self, name)
+            if not (math.isfinite(value) and value > 1.0):
+                raise ValueError(f"{name} must be > 1.0, got {value!r}")
 
     @property
     def history_seconds(self) -> float:
@@ -129,6 +135,14 @@ def intent_refusal(
     in_window = sum(1 for ts, _reason in recent if now - cfg.trade_window_s < ts <= now)
     if in_window >= cfg.max_trades_per_window:
         return "trade_rate"
+    # S109: odds corridor limits for new risk (reduce and green_up are already exempt above)
+    price_key = f"lay_{intent.selection}" if intent.side == "LAY" else f"back_{intent.selection}"
+    order_price = _price(book.get(price_key)) or _price(getattr(intent, "price_limit", None))
+    if order_price is not None:
+        if intent.side == "LAY" and order_price < cfg.min_new_risk_lay_odds:
+            return "lay_odds_too_low"
+        if intent.side == "BACK" and getattr(intent, "reason", "") != "tail" and order_price >= cfg.max_new_risk_back_odds:
+            return "back_odds_too_high"
     return None
 
 

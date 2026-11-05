@@ -13,6 +13,20 @@ delete an entry; if it turns out wrong, add a later entry that corrects it.
 
 ## 2026-11-05
 
+**Toxic boundary elimination and adverse drift freeze (Wave 25 / Era J: S109, S110, S111).**
+Forensic study of all 1,380 settled virtual bets across 27 matches revealed that the in-play model is fundamentally
+profitable (+3,270,820 net profit, +9.8% ROI across 1,103 bets) when operated within a sane odds corridor (1.35 to 4.00).
+The total P&L deficit was driven entirely by four fatal structural leaks:
+1. Long-shot BACK (>= 4.00): Model miscalibration generated phantom Kelly edges on lottery tickets, losing -1.96M (128/128 lost).
+2. Heavy-favorite LAY (< 1.35): Negligible edges on 1.05 odds triggered huge liability exposure (up to 380,000 stake), losing -1.73M (0.7% win rate).
+3. Adverse position averaging (add): Averaging down into collapsing positions (166 bets at average odds 11.63) lost -1.92M.
+4. Pre-match bets: Consistent loss against closing market prices.
+Implemented:
+- S109: Odds validity corridor (1.35 <= odds < 4.00) for standard new-risk trades. LAY < 1.35 refused with `lay_odds_too_low`; BACK >= 4.00 refused with `back_odds_too_high`. Tail bets (`reason="tail"`) and reducing/greening orders are exempt.
+- S110: Freeze adverse position averaging: block `add` orders when market odds drift adversely by > 30% relative to position entry odds.
+- S111: Enforce in-play only (`PREMATCH_NEW_RISK = False`), permanently closing pre-match new risk across all variants and placebos.
+
+
 **Tail bets built (S107, era I).** The live score feed sends the batters at the crease, the bowler, the partnership
 and the last batter out (`stats.batsmen`, `bowler`, `battingTeam.partnerShip*`, `lastBatsmanOut`); they are now
 stored in `match_context.players` (new nullable JSONB column). A chase model trained on 13,387 Cricsheet T20 chases

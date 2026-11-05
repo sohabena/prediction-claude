@@ -86,7 +86,8 @@ DYNAMICS_VARIANTS = frozenset(DYNAMICS_MIN_EDGE)
 # probability pre-match and may only reduce or green up; the placebos follow the reference). The operator first set it
 # False after R1 failed pre-match, then the same day asked to keep pre-match bets as optional (era H): True. Bets are
 # never forced either way; a variant bets only on an edge, within the pre-match half of the match budget.
-PREMATCH_NEW_RISK = True
+# S111: permanently False (pre-match model fails R1 vs closing market)
+PREMATCH_NEW_RISK = False
 # S107: the tail variant (strategy.tail_bet). Its probability is the chase model's (training.chase_model).
 TAIL_VARIANT = tail_bet.VARIANT
 # run_cycle's default for ``chase_model``: load models/chase/current.json at the start of each cycle (None: no model).
@@ -760,7 +761,7 @@ async def run_cycle(
             kept = []
             for intent in intents:
                 # S107: a tail ticket is new risk for the guards (its reason "tail" is not one they know)
-                guard_view = replace(intent, reason="enter") if variant.name == TAIL_VARIANT else intent
+                guard_view = intent
                 refusal = trade_guards.intent_refusal(
                     guard_view,
                     book=book,
