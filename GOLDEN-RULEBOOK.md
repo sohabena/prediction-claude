@@ -117,10 +117,9 @@ user `phoenix`.
 - The settled market (verified 2026-11-03): exchange runners turn `winner` / `loser` **while the market is still
   `suspended`**; the `_BR` market then closes with runners `suspended`. Match pages stay open 30 min after a result
   (`MARKET_COMPLETED_LINGER_S`) to capture this.
-- Tie and no-result wording from the site is **not yet verified**. A scoreboard "tied" is **not** the match-odds
-  result when a super over decides it: the exchange market ("Winner (incl. super over)") settles on the super-over
-  winner, so the market's `winner` beats a scoreboard tie (Hobart v Melbourne Renegades W, 2026-11-04: 231 bets were
-  wrongly voided).
+- Tie and no-result wording from the site is **not yet verified**. **A tie is a tie (operator, 2026-11-04): the
+  super over does not decide our bets, so they are void**, even though the exchange market ("Winner (incl. super
+  over)") names the super-over winner (Hobart v Melbourne Renegades W: 231 bets void).
 - A match that vanishes waits 45 min before it is called `unresolved` (innings breaks drop matches off the listing).
 - Missing results are listed daily; enter them from a public scorecard with `scripts/set_result.py` or the UI Data
   page. Hand-entered results (`public_scorecard`, `manual_fix`) are never overwritten by the detector. The detector

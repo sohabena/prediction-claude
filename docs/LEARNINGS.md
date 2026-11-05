@@ -19,8 +19,8 @@ matches anywhere in the window, but real prices sit on one ladder and recur acro
 matches out of `odds_ticks` since 2026-11-03; only 81 were the true default book (1.92/1.99/2.02/2.10). The monitor
 FAILed on 3 rows of 50/100 v 1.01/1.02 (Central Stags, New Zealand v India, West Indies A). Fix: a book is a
 placeholder only if it is the known default, or 3+ matches show it within 15 minutes (measured: 5 and 15 minutes
-keep exactly the 81 default rows). The 1,958 rows are kept in `odds_ticks_quarantine`; moving them back waits for the
-operator. Rule: a "same value on many matches" rule needs a time window; a shared ladder is not a copy.
+keep exactly the 81 default rows). With the operator's approval, 1,961 rows were moved back to `odds_ticks` (no key
+clash); the quarantine keeps the 81 default-book rows. Rule: a "same value on many matches" rule needs a time window; a shared ladder is not a copy.
 
 **A tie decided by a super over was recorded as a tie, voiding 231 bets.** Hobart Hurricanes W v Melbourne Renegades
 W (lb_36266944, WBBL): the result detector parsed the scoreboard's "tied" comment at 11:25:53 and wrote `tie`
@@ -28,7 +28,8 @@ W (lb_36266944, WBBL): the result detector parsed the scoreboard's "tied" commen
 (incl. super over)" and settled at 11:32 with Melbourne Renegades W `winner`. Settled on the market, the strategy
 variants would have lost 418,349 on it (mkt_dyn +44,910, w07_* -100,000 each); the placebos +48,575 (favourite) and
 -14,368 (random). Rule: a scoreboard tie is not a match-odds result when the market names a winner (super over);
-the market settlement decides. Correction of the result and the 231 bets is waiting for the operator's approval.
+the market settlement decides. **Superseded the same day by the operator's decision: "in betting super over doesn't
+matter"; a tie stays a tie and the bets stay void.** The result and the 231 void bets were left as they are.
 
 **OddsPapi verified on real responses** (operator's free key). Cricket is sport 27; the match-winner market is **271**
 ("Winner (incl. super over)", outcomes 271 = participant 1, 272 = participant 2), not 101 (football's 1X2, the
