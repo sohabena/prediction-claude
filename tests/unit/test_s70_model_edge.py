@@ -378,3 +378,28 @@ def test_auto_green_up_does_not_fire_when_equalized_profit_would_be_negative():
     intents = _run(v_green, 0.5, 0.35, prices, book)
     # Does not trigger green_up at a loss
     assert not any(i.reason == "green_up" for i in intents)
+
+
+def test_guard_double_negative_blocks_trades_creating_double_loss():
+    # S113: If a trade would result in both outcomes being negative, reject it
+    v_guarded = Variant(name="test_guarded", w=0.5, min_edge=0.03, guard_double_negative=True, bankroll=1_000_000.0)
+    # Position: Home +10,000, Away -10,000
+    book = Book(home_pnl=10_000.0, away_pnl=-10_000.0, trades=1)
+    # Market moved adversely: home is now an underdog (lay 3.0). An adverse reduce or flip would lock double loss
+    prices = {"back_home": 2.8, "lay_home": 3.0, "back_away": 1.45, "lay_away": 1.50}
+    intents = _run(v_guarded, 0.2, 0.3, prices, book)
+    # Any order that would result in home < 0 and away < 0 is blocked
+    for i in intents:
+        vh = 1.0 - i.price_limit if i.side == LAY and i.selection == HOME else (i.price_limit - 1.0 if i.side == BACK and i.selection == HOME else (-1.0 if i.side == BACK else 1.0))
+        va = 1.0 if i.side == LAY and i.selection == HOME else (-1.0 if i.side == BACK and i.selection == HOME else (i.price_limit - 1.0 if i.side == BACK else 1.0 - i.price_limit))
+        assert not (book.home_pnl + i.stake * vh < 0 and book.away_pnl + i.stake * va < 0)
+
+
+def test_hard_ticket_limit_enforced_strictly():
+    # S113: Once budget is closed, hard_ticket_limit prevents any further orders
+    v_hard = Variant(name="test_hard", w=0.5, min_edge=0.03, ticket_budget=15, ticket_reserve=2, hard_ticket_limit=True)
+    # 13 trades out of 15 means 2 left -> budget is closed (15 - 13 <= 2)
+    book = Book(home_pnl=70_000.0, away_pnl=30_000.0, trades=13)
+    prices = {"back_home": 2.0, "lay_home": 2.1, "back_away": 2.0, "lay_away": 2.1}
+    intents = _run(v_hard, 0.5, 0.5, prices, book)
+    assert intents == []

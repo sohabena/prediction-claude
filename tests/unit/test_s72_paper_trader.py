@@ -371,6 +371,7 @@ def test_build_variants_grid_and_control():
         "w03_e03", "w03_e06", "w05_e03", "w05_e06", "w07_e03", "w07_e06", "market_only",
         "mkt_dyn", "mkt_dyn_e06",  # S97: the market-dynamics variants (w = 1)
         "w05_e06_green",  # S112: auto green-up variant adopting w05_e06 with profit lock-in
+        "bmodel_green_v1", "bmodel_scalp_v1",  # S113: stake-aware specialist bmodels
         "tail",  # S107: the chase-model variant (its own decision path)
         "placebo_random", "placebo_favourite",  # S85
     ]

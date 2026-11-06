@@ -1,0 +1,222 @@
+{
+  "date": "20261106",
+  "version": "s97-1",
+  "model_file": "models/market_dynamics/20261106.joblib",
+  "sklearn": "1.6.1",
+  "dataset": {
+    "file": "dataset.csv",
+    "rows": 1392,
+    "matches": 6,
+    "matches_with_score_rows": 2,
+    "rows_with_scoreboard": 370,
+    "rows_without_scoreboard": 1022,
+    "dropped": {
+      "snapshots_label_window_gap": 421,
+      "snapshots_no_band": 868,
+      "snapshots_no_fresh_price": 2633
+    }
+  },
+  "evaluation": {
+    "rows": 1392,
+    "matches": 6,
+    "mae_model": 0.08121221908968539,
+    "mae_zero": 0.06765420167948814,
+    "direction_rows_over_spread": 984,
+    "direction_accuracy_over_spread": 0.5823170731707317,
+    "by_theta": {
+      "0.01": {
+        "trades": 155,
+        "matches_with_trades": 6,
+        "trades_per_match": 25.833333333333332,
+        "back_share": 0.9096774193548387,
+        "clv": {
+          "estimate": -0.014166042656735269,
+          "ci_lower": -0.023775218982504606,
+          "ci_upper": -0.0017643344397221994,
+          "matches": 6,
+          "trades": 155,
+          "too_few_matches": true
+        },
+        "placebo_clv": {
+          "estimate": -0.022856952570575843,
+          "ci_lower": -0.026159088626303797,
+          "ci_upper": -0.01705981737694327,
+          "matches": 6,
+          "trades": 155,
+          "too_few_matches": true
+        },
+        "excess_over_placebo": {
+          "estimate": 0.015738322823385446,
+          "ci_lower": 0.002089493174349356,
+          "ci_upper": 0.03439071633672831,
+          "matches": 6,
+          "too_few_matches": true
+        }
+      },
+      "0.02": {
+        "trades": 155,
+        "matches_with_trades": 6,
+        "trades_per_match": 25.833333333333332,
+        "back_share": 0.896774193548387,
+        "clv": {
+          "estimate": -0.014615604744391096,
+          "ci_lower": -0.022824687764487303,
+          "ci_upper": -0.002423972037206283,
+          "matches": 6,
+          "trades": 155,
+          "too_few_matches": true
+        },
+        "placebo_clv": {
+          "estimate": -0.021263975995482,
+          "ci_lower": -0.025702693252572385,
+          "ci_upper": -0.015065232953620672,
+          "matches": 6,
+          "trades": 155,
+          "too_few_matches": true
+        },
+        "excess_over_placebo": {
+          "estimate": 0.013979470086017678,
+          "ci_lower": 0.0003715387585730712,
+          "ci_upper": 0.03410156348809118,
+          "matches": 6,
+          "too_few_matches": true
+        }
+      },
+      "0.03": {
+        "trades": 146,
+        "matches_with_trades": 6,
+        "trades_per_match": 24.333333333333332,
+        "back_share": 0.8767123287671232,
+        "clv": {
+          "estimate": -0.012890854628105833,
+          "ci_lower": -0.022672482968704402,
+          "ci_upper": -0.00025020586393836587,
+          "matches": 6,
+          "trades": 146,
+          "too_few_matches": true
+        },
+        "placebo_clv": {
+          "estimate": -0.012593714330519031,
+          "ci_lower": -0.020744440872174797,
+          "ci_upper": -0.0007033112423378888,
+          "matches": 6,
+          "trades": 146,
+          "too_few_matches": true
+        },
+        "excess_over_placebo": {
+          "estimate": -0.0030961834389806858,
+          "ci_lower": -0.015076281498272396,
+          "ci_upper": 0.009456833089502311,
+          "matches": 6,
+          "too_few_matches": true
+        }
+      },
+      "0.05": {
+        "trades": 101,
+        "matches_with_trades": 6,
+        "trades_per_match": 16.833333333333332,
+        "back_share": 0.9108910891089109,
+        "clv": {
+          "estimate": -0.008230618394438293,
+          "ci_lower": -0.02705215210117846,
+          "ci_upper": 0.016033863441170915,
+          "matches": 6,
+          "trades": 101,
+          "too_few_matches": true
+        },
+        "placebo_clv": {
+          "estimate": -0.0279456781033826,
+          "ci_lower": -0.051611748776134114,
+          "ci_upper": -0.015760844341203815,
+          "matches": 6,
+          "trades": 101,
+          "too_few_matches": true
+        },
+        "excess_over_placebo": {
+          "estimate": 0.05519611598949337,
+          "ci_lower": 0.0046898655351998155,
+          "ci_upper": 0.13985025265550813,
+          "matches": 6,
+          "too_few_matches": true
+        }
+      }
+    },
+    "by_scoreboard": {
+      "with_scoreboard": {
+        "rows": 370,
+        "matches": 2,
+        "trades": {
+          "trades": 35,
+          "matches_with_trades": 2,
+          "trades_per_match": 17.5,
+          "back_share": 0.7714285714285715,
+          "clv": {
+            "estimate": 0.0004399936357543163,
+            "ci_lower": -0.0117311173804979,
+            "ci_upper": 0.07346665973326762,
+            "matches": 2,
+            "trades": 35,
+            "too_few_matches": true
+          },
+          "placebo_clv": {
+            "estimate": -0.019065268595318104,
+            "ci_lower": -0.024581876172988452,
+            "ci_upper": 0.014034376870703991,
+            "matches": 2,
+            "trades": 35,
+            "too_few_matches": true
+          },
+          "excess_over_placebo": {
+            "estimate": 0.03614152082752709,
+            "ci_lower": 0.012850758792490553,
+            "ci_upper": 0.05943228286256363,
+            "matches": 2,
+            "too_few_matches": true
+          }
+        }
+      },
+      "no_scoreboard": {
+        "rows": 1022,
+        "matches": 5,
+        "trades": {
+          "trades": 124,
+          "matches_with_trades": 5,
+          "trades_per_match": 24.8,
+          "back_share": 0.9354838709677419,
+          "clv": {
+            "estimate": -0.019042820279851002,
+            "ci_lower": -0.026956704878638948,
+            "ci_upper": -0.01227519150691483,
+            "matches": 5,
+            "trades": 124,
+            "too_few_matches": true
+          },
+          "placebo_clv": {
+            "estimate": -0.034287775347079094,
+            "ci_lower": -0.03726675840315163,
+            "ci_upper": -0.028642854317898075,
+            "matches": 5,
+            "trades": 124,
+            "too_few_matches": true
+          },
+          "excess_over_placebo": {
+            "estimate": 0.008338453714148306,
+            "ci_lower": -0.008513362347385764,
+            "ci_upper": 0.021869184979519462,
+            "matches": 5,
+            "too_few_matches": true
+          }
+        }
+      }
+    },
+    "mae_ratio": 1.2004017056387475
+  },
+  "activation": {
+    "activated": false,
+    "reason": "--no-activate: current.json not changed",
+    "active_before": "models/market_dynamics/20261104.joblib",
+    "compared_matches": 6,
+    "candidate_clv": -0.014615604744391096,
+    "current_clv": -0.00794435463599705
+  }
+}

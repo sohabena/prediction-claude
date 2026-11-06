@@ -123,6 +123,8 @@ class Variant:
     max_tradable_odds: float = 4.00  # S109: maximum decimal odds for new-risk BACK
     max_adverse_drift: float = 0.30  # S110: maximum adverse price drift allowed when adding to a position
     auto_green_up: bool = False  # S112: lock profit across both sides as soon as market moves favorably
+    guard_double_negative: bool = False  # S113: reject trades that create negative P&L on both outcomes
+    hard_ticket_limit: bool = False  # S113: enforce strict ticket budget including hedges
 
     def __post_init__(self) -> None:
         _require(0.0 <= self.w <= 1.0, f"w must be in [0, 1], got {self.w!r}")
@@ -334,6 +336,21 @@ def _ticket(
     size = min(stake, room)
     if not size >= max(SIGNAL_MIN_STAKE, variant.min_trade_stake):
         return None
+
+    if variant.guard_double_negative:
+        # Check projected P&L on both outcomes after this trade
+        new_home = book.home_pnl + size * sized.vh
+        new_away = book.away_pnl + size * sized.va
+        # If both outcomes would be negative:
+        if new_home < -_EPS and new_away < -_EPS:
+            # If current book is not already negative on both sides:
+            # Strictly refuse to enter a guaranteed double-negative book!
+            if not (book.home_pnl < -_EPS and book.away_pnl < -_EPS):
+                return None
+            # If current book was already double negative, only allow if worst case strictly improves
+            if min(new_home, new_away) <= min(book.home_pnl, book.away_pnl) + _EPS:
+                return None
+
     return OrderIntent(sized.side, sized.selection, limit, size, reason)
 
 
@@ -448,6 +465,9 @@ def decide(
     cooling = last_trade_at is not None and now - last_trade_at < variant.cooldown_s
     gated = cooling or book.trades >= variant.max_trades_per_match
     budget_open = variant.ticket_budget - book.trades > variant.ticket_reserve
+    if variant.hard_ticket_limit and not budget_open:
+        # S113: Hard ticket ceiling: strictly no more trades (including hedges) past ticket budget
+        return []
     new_risk = new_risk_ok and not gated and budget_open
     cap = variant.match_cap(in_play)
 

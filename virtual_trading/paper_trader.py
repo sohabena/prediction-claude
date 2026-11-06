@@ -81,7 +81,11 @@ W_GRID = (0.3, 0.5, 0.7)
 EDGE_GRID = (0.03, 0.06)
 # S97: the market-dynamics variants and their minimum edge. Their probability is the model's, not the blend's (w = 1).
 DYNAMICS_MIN_EDGE = {"mkt_dyn": 0.03, "mkt_dyn_e06": 0.06}
-DYNAMICS_VARIANTS = frozenset(DYNAMICS_MIN_EDGE)
+# S113: New institutional specialist bmodels (Stake-Aware, Auto-Green, Churn Protected)
+BMODEL_GREEN_V1 = "bmodel_green_v1"
+BMODEL_SCALP_V1 = "bmodel_scalp_v1"
+BMODEL_VARIANTS = frozenset({BMODEL_GREEN_V1, BMODEL_SCALP_V1})
+DYNAMICS_VARIANTS = frozenset(DYNAMICS_MIN_EDGE) | {BMODEL_SCALP_V1}
 # S106 (operator, 2026-11-05): False means no new risk before the off (a strategy variant then gets no model
 # probability pre-match and may only reduce or green up; the placebos follow the reference). The operator first set it
 # False after R1 failed pre-match, then the same day asked to keep pre-match bets as optional (era H): True. Bets are
@@ -92,7 +96,7 @@ PREMATCH_NEW_RISK = False
 TAIL_VARIANT = tail_bet.VARIANT
 # S112: the auto-green-up variant (adopting w05_e06 with profit lock-in)
 GREEN_VARIANT = "w05_e06_green"
-GREEN_VARIANTS = frozenset({GREEN_VARIANT})
+GREEN_VARIANTS = frozenset({GREEN_VARIANT, BMODEL_GREEN_V1, BMODEL_SCALP_V1})
 # run_cycle's default for ``chase_model``: load models/chase/current.json at the start of each cycle (None: no model).
 LOAD_CURRENT: Any = object()
 
@@ -124,8 +128,30 @@ def build_variants(max_match_loss: float = MAX_MATCH_LOSS) -> tuple[Variant, ...
                 placebo="favourite"),
     ]
     green = [Variant(GREEN_VARIANT, w=0.5, min_edge=0.06, max_match_loss=max_match_loss, auto_green_up=True)]
+    bmodels = [
+        Variant(
+            BMODEL_GREEN_V1,
+            w=0.5,
+            min_edge=0.06,
+            max_match_loss=max_match_loss,
+            auto_green_up=True,
+            guard_double_negative=True,
+            hard_ticket_limit=True,
+            ticket_budget=15,
+        ),
+        Variant(
+            BMODEL_SCALP_V1,
+            w=1.0,
+            min_edge=0.06,
+            max_match_loss=max_match_loss,
+            auto_green_up=True,
+            guard_double_negative=True,
+            hard_ticket_limit=True,
+            ticket_budget=15,
+        ),
+    ]
     tail = [Variant(TAIL_VARIANT, w=1.0, min_edge=0.0, max_match_loss=max_match_loss)]  # S107: own decision path
-    return tuple(grid + [control] + dynamics + green + tail + placebos)
+    return tuple(grid + [control] + dynamics + green + bmodels + tail + placebos)
 
 
 def placebo_random_choice(match_id: str, decided_at: datetime, variant_name: str) -> tuple[str, str]:
@@ -1002,6 +1028,9 @@ __all__ = [
     "TAIL_VARIANT",
     "GREEN_VARIANT",
     "GREEN_VARIANTS",
+    "BMODEL_GREEN_V1",
+    "BMODEL_SCALP_V1",
+    "BMODEL_VARIANTS",
     "DbFeed",
     "PriceCache",
     "build_variants",
