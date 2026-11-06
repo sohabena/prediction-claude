@@ -153,14 +153,19 @@ def test_model_edge_without_p_model_still_reduces():
     position = Book(home_pnl=400_000.0, away_pnl=-10_000.0, trades=1)
     for variant in MODEL_VARIANTS:
         intents = model_edge.decide(variant, None, 0.45, prices, position, now=0.0, last_trade_at=None)
-        assert [i.reason for i in intents] == ["reduce"], variant.name
-        assert intents[0].side == "LAY" and intents[0].selection == "home"
+        expected_reason = "green_up" if variant.auto_green_up else "reduce"
+        assert [i.reason for i in intents] == [expected_reason], variant.name
+        if variant.auto_green_up:
+            assert intents[0].side == "BACK" and intents[0].selection == "away"
+        else:
+            assert intents[0].side == "LAY" and intents[0].selection == "home"
     # A small balance would be crossed: the flip is blocked without a model (S83), and S90 cuts it to its close-out
     # part, a reduce towards flat. Never new risk.
     small = Book(home_pnl=10_000.0, away_pnl=-10_000.0, trades=1)
     for variant in MODEL_VARIANTS:
         intents = model_edge.decide(variant, None, 0.45, prices, small, now=0.0, last_trade_at=None)
-        assert [i.reason for i in intents] in ([], ["reduce"]), variant.name
+        expected_reasons = ([], ["green_up"]) if variant.auto_green_up else ([], ["reduce"])
+        assert [i.reason for i in intents] in expected_reasons, variant.name
 
 
 def test_model_edge_without_p_model_still_greens_up():

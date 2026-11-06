@@ -90,6 +90,9 @@ DYNAMICS_VARIANTS = frozenset(DYNAMICS_MIN_EDGE)
 PREMATCH_NEW_RISK = False
 # S107: the tail variant (strategy.tail_bet). Its probability is the chase model's (training.chase_model).
 TAIL_VARIANT = tail_bet.VARIANT
+# S112: the auto-green-up variant (adopting w05_e06 with profit lock-in)
+GREEN_VARIANT = "w05_e06_green"
+GREEN_VARIANTS = frozenset({GREEN_VARIANT})
 # run_cycle's default for ``chase_model``: load models/chase/current.json at the start of each cycle (None: no model).
 LOAD_CURRENT: Any = object()
 
@@ -120,8 +123,9 @@ def build_variants(max_match_loss: float = MAX_MATCH_LOSS) -> tuple[Variant, ...
         Variant(paper_review.PLACEBO_FAVOURITE, w=0.0, min_edge=0.03, max_match_loss=max_match_loss, market_only=True,
                 placebo="favourite"),
     ]
+    green = [Variant(GREEN_VARIANT, w=0.5, min_edge=0.06, max_match_loss=max_match_loss, auto_green_up=True)]
     tail = [Variant(TAIL_VARIANT, w=1.0, min_edge=0.0, max_match_loss=max_match_loss)]  # S107: own decision path
-    return tuple(grid + [control] + dynamics + tail + placebos)
+    return tuple(grid + [control] + dynamics + green + tail + placebos)
 
 
 def placebo_random_choice(match_id: str, decided_at: datetime, variant_name: str) -> tuple[str, str]:
@@ -996,6 +1000,8 @@ __all__ = [
     "Candidate",
     "DYNAMICS_VARIANTS",
     "TAIL_VARIANT",
+    "GREEN_VARIANT",
+    "GREEN_VARIANTS",
     "DbFeed",
     "PriceCache",
     "build_variants",

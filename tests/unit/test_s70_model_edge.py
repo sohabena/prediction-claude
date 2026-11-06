@@ -337,3 +337,44 @@ def test_trades_below_the_minimum_trade_stake_are_dropped():
     v = Variant(name="min", w=1.0, min_edge=0.03, bankroll=10_000.0, max_trade_risk=1e12, no_trade_share=0.0)  # tiny Kelly stakes
     prices = {"back_home": 1.9, "lay_home": 2.0, "back_away": 2.2, "lay_away": 2.3}
     assert decide(v, 0.6, 0.5, prices, Book(), now=NOW, last_trade_at=None) == []
+
+
+# ----------------------------------------------------------------------------- S112: auto green-up
+def test_auto_green_up_variant_locks_profit_when_opportunity_arises():
+    v_green = Variant(name="test_green", w=0.5, min_edge=0.03, auto_green_up=True)
+    # Suppose we previously backed home @ 2.5 with stake 20,000
+    # Home PnL = +30,000, Away PnL = -20,000. Balance = +50,000.
+    book = Book(home_pnl=30_000, away_pnl=-20_000, trades=1)
+
+    # Market odds for Lay Home drop to 1.60:
+    # Greening up with LAY home: stake = 50,000 / 1.60 = 31,250.
+    # Home PnL: 30,000 - 31,250 * 0.60 = +11,250
+    # Away PnL: -20,000 + 31,250 = +11,250
+    # Common profit = +11,250 > 0!
+    prices = {"back_home": 1.55, "lay_home": 1.60, "back_away": 2.6, "lay_away": 2.7}
+    intents = _run(v_green, 0.6, 0.6, prices, book)
+    assert len(intents) == 1
+    assert intents[0].reason == "green_up"
+    assert intents[0].side == LAY
+    assert intents[0].selection == HOME
+    assert intents[0].stake == pytest.approx(31_250)
+
+    # Apply the fill: outcome PnLs equalise and locked profit is strictly positive
+    book.apply(_fill(intents[0].side, intents[0].selection, 1.60, intents[0].stake))
+    assert book.locked == pytest.approx(11_250)
+    assert book.worst() == 0.0
+
+    # Once locked, auto_green_up stops taking new risk on this match
+    assert _run(v_green, 0.6, 0.6, prices, book) == []
+
+
+def test_auto_green_up_does_not_fire_when_equalized_profit_would_be_negative():
+    v_green = Variant(name="test_green", w=0.5, min_edge=0.03, auto_green_up=True)
+    # Backed home @ 2.0 with stake 25,000 -> Home PnL +25,000, Away PnL -25,000
+    book = Book(home_pnl=25_000, away_pnl=-25_000, trades=1)
+
+    # Market moved against us: Lay Home is at 3.0. Greening up would result in common PnL < 0
+    prices = {"back_home": 2.8, "lay_home": 3.0, "back_away": 1.45, "lay_away": 1.50}
+    intents = _run(v_green, 0.5, 0.35, prices, book)
+    # Does not trigger green_up at a loss
+    assert not any(i.reason == "green_up" for i in intents)

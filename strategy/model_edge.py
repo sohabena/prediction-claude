@@ -122,6 +122,7 @@ class Variant:
     min_tradable_odds: float = 1.35  # S109: minimum decimal odds for new-risk LAY
     max_tradable_odds: float = 4.00  # S109: maximum decimal odds for new-risk BACK
     max_adverse_drift: float = 0.30  # S110: maximum adverse price drift allowed when adding to a position
+    auto_green_up: bool = False  # S112: lock profit across both sides as soon as market moves favorably
 
     def __post_init__(self) -> None:
         _require(0.0 <= self.w <= 1.0, f"w must be in [0, 1], got {self.w!r}")
@@ -396,7 +397,13 @@ def _move_to(
     return None
 
 
-def _green_up(variant: Variant, book: Book, cands: list[_Cand], cap: float) -> Optional[OrderIntent]:
+def _green_up(
+    variant: Variant,
+    book: Book,
+    cands: list[_Cand],
+    cap: float,
+    min_common: Optional[float] = None,
+) -> Optional[OrderIntent]:
     """Equalise the outcome P&Ls with the candidate that leaves the highest common P&L."""
     balance = book.balance
     best: Optional[tuple[float, _Cand, float]] = None
@@ -406,6 +413,8 @@ def _green_up(variant: Variant, book: Book, cands: list[_Cand], cap: float) -> O
             continue  # this trade would not reduce the balance
         stake = -balance / effect
         common = book.home_pnl + stake * cand.vh
+        if min_common is not None and common < min_common:
+            continue
         if best is None or common > best[0]:
             best = (common, cand, stake)
     if best is None:
@@ -442,9 +451,18 @@ def decide(
     new_risk = new_risk_ok and not gated and budget_open
     cap = variant.match_cap(in_play)
 
+    if variant.auto_green_up and book.locked > _EPS and abs(balance) <= variant.no_trade_band:
+        # S112: Profit is already locked and balanced across all outcomes on this match. Stop trading.
+        return []
+
     if abs(balance) > _EPS:
         favoured = HOME if balance > 0.0 else AWAY
         hold = _find(cands, favoured, BACK)
+        # S112: Auto green-up: lock in guaranteed profit across both outcomes as soon as market moves favorably
+        if variant.auto_green_up:
+            gu_intent = _green_up(variant, book, cands, cap, min_common=_EPS)
+            if gu_intent is not None:
+                return [gu_intent]
         if hold is not None and hold.edge <= -variant.hedge_edge:
             # Reduce or flip: the favoured outcome is now overpriced, so the target is the opposite side.
             opposite = _find(cands, favoured, LAY)
