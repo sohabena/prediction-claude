@@ -38,7 +38,9 @@ from scripts.quarantine_ticks import RULES, classify  # noqa: E402
 from scripts.link_twins import (  # noqa: E402
     CANONICAL_COLUMN_SQL, TWIN_ROWS_SQL, MigrationMissing, build_plan, link_now, unlinked_links,
 )
-from scripts.results_reconciliation import RESULTS_SQL, select_missing  # noqa: E402
+from scripts.results_reconciliation import (  # noqa: E402
+    MULTIDAY_WINDOW, RESULTS_SQL, is_multiday, select_missing,
+)
 from shared.logging import setup_logging  # noqa: E402
 from training.registry import DEFAULT_ROOT, DRIFT_MIN_SETTLED, Registry, drift_assessment, read_jsonl  # noqa: E402
 
@@ -671,8 +673,21 @@ async def check_results(fetch: Fetch, p: dict[str, Any]) -> dict[str, Any]:
     # SRL included: its results are recorded too (S50). S96: a non-canonical twin is left out; its canonical match
     # carries the result.
     real = [r for r in await fetch("results", p) if r.get("canonical_match_id") is None]
-    stale = [r for r in real if _num(r["age_s"]) is not None
-             and _num(r["age_s"]) > RESULT_STALE_S and not r["has_result"] and r.get("went_live") is not False]
+
+    def _is_stale(r: Mapping[str, Any]) -> bool:
+        if _num(r.get("age_s")) is None or _num(r.get("age_s")) <= RESULT_STALE_S:
+            return False
+        if r.get("has_result") or r.get("went_live") is False:
+            return False
+        if is_multiday(r.get("competition")):
+            start = r.get("match_start_time")
+            start_dt = (start if start.tzinfo else start.replace(tzinfo=timezone.utc)) if isinstance(start, datetime) else None
+            now_dt = p["now"]
+            if start_dt and now_dt - start_dt <= MULTIDAY_WINDOW:
+                return False
+        return True
+
+    stale = [r for r in real if _is_stale(r)]
     # An 'unresolved' row for a match that is still being recorded is provisional (it left the listing for a while,
     # e.g. an innings break); it only counts once the match has been quiet for RESULT_PROVISIONAL_S.
     # A tie, no result or abandonment has no winner by definition (S76: entered from public scorecards). A simulated

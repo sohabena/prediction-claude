@@ -451,6 +451,23 @@ def test_build_matches_hides_simulated_by_default_and_counts_missing_results() -
     assert any(m["match_id"] == "srl_1" and m["simulated"] for m in with_sim["matches"])
 
 
+def test_build_matches_multiday_awaits_result_during_overnight_break() -> None:
+    # Test match: Day 1 stumps 8 hours ago (last tick 8 h old, start 14 h old)
+    test_row = _tick_row(
+        match_id="lb_test",
+        competition="Test Matches",
+        match_start_time=NOW - timedelta(hours=14),
+        actual_start_time=NOW - timedelta(hours=14),
+        first_live_tick=NOW - timedelta(hours=14),
+        last_tick=NOW - timedelta(hours=8),
+    )
+    out = data_api.build_matches([test_row], NOW, 3, include_simulated=False)
+    m = out["matches"][0]
+    assert m["state"] == "finished"
+    assert m["result_status"] == "awaiting"  # stays awaiting across multiday window
+    assert out["summary"]["missing_result"] == 0
+
+
 def test_matches_endpoint_reads_in_a_read_only_transaction(monkeypatch: pytest.MonkeyPatch) -> None:
     sessions: list[FakeSession] = []
     rows = [_tick_row(live_now=True, actual_start_time=NOW - timedelta(minutes=5), first_live_tick=NOW - timedelta(minutes=5))]

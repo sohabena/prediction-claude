@@ -165,6 +165,35 @@ def test_three_hour_rule_boundary():
     assert missing[0]["age_hours"] == pytest.approx(3.1)
 
 
+def test_multiday_matches_not_missing_during_overnight_breaks():
+    # Multi-day test match: Day 1 stumps 8 hours ago (match started 14 hours ago).
+    test_match = _res_row(
+        "test_day1",
+        hours=8.0,
+        competition="Test Matches",
+        match_start_time=NOW - timedelta(hours=14),
+    )
+    # Another test match: started 6 days ago (exceeded 5.5 day multiday window).
+    expired_test = _res_row(
+        "test_expired",
+        hours=20.0,
+        competition="ICC World Test Championship",
+        match_start_time=NOW - timedelta(days=6),
+    )
+    # T20 match: silent for 8 hours (should be missing)
+    t20_match = _res_row(
+        "t20_match",
+        hours=8.0,
+        competition="Nepal Premier League",
+        match_start_time=NOW - timedelta(hours=11),
+    )
+    missing = rr.select_missing([test_match, expired_test, t20_match], NOW)
+    missing_ids = {m["match_id"] for m in missing}
+    assert "test_day1" not in missing_ids  # within 5.5 days: NOT missing
+    assert "test_expired" in missing_ids  # older than 5.5 days: missing
+    assert "t20_match" in missing_ids  # standard match over 3 hours: missing
+
+
 def test_srl_is_excluded_by_registry_flag_and_by_name():
     rows = [
         _res_row("flag", is_simulated=True),
@@ -258,6 +287,20 @@ def test_results_missing_is_ok_when_nothing_is_missing():
     rows = [_res_row("recent", hours=1.0), _res_row("done", hours=5.0, has_result=True, result_type="tie")]
     check = asyncio.run(dqm.check_results_missing(_monitor_fetch(rows), {"now": NOW}))
     assert check["status"] == "ok" and check["value"] == 0
+
+
+def test_check_results_ignores_multiday_overnight_break():
+    # Test match silent for 8 hours overnight, started 14 hours ago (well within 5.5 days)
+    test_row = _res_row(
+        "test_match",
+        hours=8.0,
+        competition="Test Matches",
+        match_start_time=NOW - timedelta(hours=14),
+        went_live=True,
+    )
+    check = asyncio.run(dqm.check_results(_monitor_fetch([test_row]), {"now": NOW}))
+    assert check["status"] == "ok"
+    assert check["value"] == 0
 
 
 def test_results_missing_is_registered_appended_and_reads_the_results_query():

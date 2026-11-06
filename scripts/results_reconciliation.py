@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import re
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -29,8 +30,13 @@ if str(ROOT) not in sys.path:
 from scraper.match_filter import is_simulated_name  # noqa: E402
 
 STALE_AFTER = timedelta(hours=3)  # S76: a real match silent for longer than this with no result is missing
+MULTIDAY_WINDOW = timedelta(days=5, hours=12)  # Multi-day matches (Tests, First-Class) take up to 5 days
 LOOKBACK = timedelta(days=7)  # the report's window; the monitor uses its own window (24 h)
 SETTLED_RESULT_TYPES = frozenset({"win", "tie", "no_result", "abandoned"})
+MULTIDAY_RE = re.compile(
+    r"\b(test|tests|first[- ]class|ranji|sheffield|county champ|plunket|quaid[- ]e[- ]azam|4[- ]day|four[- ]day)\b",
+    re.IGNORECASE,
+)
 
 # One row per match with ticks in the window: last tick, names, registry flags and the stored result (if any).
 # Parameters: :since (window start), :now (reference time). Read-only.
@@ -79,6 +85,11 @@ def is_real(row: Mapping[str, Any]) -> bool:
     return not is_simulated_name(row.get("competition"), row.get("team_home"), row.get("team_away"))
 
 
+def is_multiday(competition: Optional[str]) -> bool:
+    """True for Test and First-Class matches that span multiple days (up to 5 days)."""
+    return bool(MULTIDAY_RE.search(competition or ""))
+
+
 def has_decided_result(row: Mapping[str, Any]) -> bool:
     """True for a stored win (with a winner), tie, no_result or abandoned result."""
     result_type = str(row.get("result_type") or "").strip().lower()
@@ -112,6 +123,10 @@ def select_missing(
         if row.get("went_live") is False:
             continue  # never in play: nothing to settle yet
         start = row.get("match_start_time")
+        if is_multiday(row.get("competition")):
+            ref_time = _aware(start) if isinstance(start, datetime) else last
+            if ref_time and now - ref_time <= MULTIDAY_WINDOW:
+                continue
         missing.append({
             "match_id": str(row["match_id"]),
             "team_home": row.get("team_home") or "",

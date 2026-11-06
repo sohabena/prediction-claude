@@ -118,6 +118,10 @@ def result_status(row: Mapping[str, Any], state: str, decided: bool, now: dateti
     if state == "pre-match":
         return "not_started"
     last = utc(row.get("last_tick"))
+    if rec.is_multiday(row.get("competition")):
+        start = utc(row.get("actual_start_time")) or utc(row.get("match_start_time")) or last
+        if start is not None and now - start <= rec.MULTIDAY_WINDOW:
+            return "awaiting"
     if last is None or now - last > rec.STALE_AFTER:
         return "missing"
     return "awaiting"
