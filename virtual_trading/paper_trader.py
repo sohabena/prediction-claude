@@ -766,8 +766,10 @@ async def run_cycle(
             else:
                 if variant.name in DYNAMICS_VARIANTS:
                     # S97: the model's own probability (None pre-match or without a model: no new risk, as market_only)
-                    p_model_used = dyn_p
-                    source_used = "market_dynamics" if dyn_p is not None else "market_only"
+                    # S108: in play only when the match has actual in-play state (est.source == "inplay")
+                    no_dyn_model = unpriced_in_play or dyn_p is None
+                    p_model_used = None if no_dyn_model else dyn_p
+                    source_used = "market_dynamics" if p_model_used is not None else "market_only"
                 else:
                     if unpriced_in_play and not variant.market_only:
                         guard_refusals["inplay_without_state"] += 1

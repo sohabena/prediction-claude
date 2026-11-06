@@ -124,6 +124,7 @@ class ScraperManager:
         self._tick_validator = TickValidator()
         self._live_match_tracker = LiveMatchTracker()
         self._seen_match_ids: set[str] = set()
+        self._known_start_times: dict[str, datetime] = {}
         self._scrape_approved_ids: set[str] = set()  # cached from DB
         self._completed_match_ids: set[str] = set()
         self._last_stored_fingerprint: dict[str, str] = {}  # matches with results
@@ -513,12 +514,20 @@ class ScraperManager:
             # are registered with scrape_status "simulated" and is_simulated=True
             if event.match_id not in self._seen_match_ids:
                 self._seen_match_ids.add(event.match_id)
+                if event.scheduled_time:
+                    self._known_start_times[event.match_id] = event.scheduled_time
                 await self._upsert_training_status(event, auto_approve_enabled=auto_approve_enabled)
                 if not event.competition:
                     self._registry_without_competition.add(event.match_id)
-            elif event.competition and event.match_id in self._registry_without_competition:
-                # Registered before the listing menu arrived: fill the competition once it is known
-                self._registry_without_competition.discard(event.match_id)
+            elif (
+                (event.competition and event.match_id in self._registry_without_competition)
+                or (event.scheduled_time is not None and self._known_start_times.get(event.match_id) != event.scheduled_time)
+            ):
+                # Registered before competition arrived or schedule updated on match day
+                if event.competition:
+                    self._registry_without_competition.discard(event.match_id)
+                if event.scheduled_time:
+                    self._known_start_times[event.match_id] = event.scheduled_time
                 await self._upsert_training_status(event, auto_approve_enabled=auto_approve_enabled)
 
             # ── RECORD GATE (S37): approval no longer decides recording ──
@@ -1461,8 +1470,11 @@ class ScraperManager:
         try:
             async with get_session() as session:
                 from sqlalchemy import select as sa_select
+                from sqlalchemy.orm import undefer
                 existing = await session.execute(
-                    sa_select(MatchTrainingStatus).where(
+                    sa_select(MatchTrainingStatus)
+                    .options(undefer(MatchTrainingStatus.actual_start_time), undefer(MatchTrainingStatus.actual_start_source))
+                    .where(
                         MatchTrainingStatus.match_id == event.match_id
                     )
                 )

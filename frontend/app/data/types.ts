@@ -42,7 +42,7 @@ export interface MissingResultsResponse {
 }
 
 // GET /api/data/matches?days=3&include_simulated=true|false
-export type MatchState = "live" | "pre-match" | "finished";
+export type MatchState = "live" | "pre-match" | "stumps" | "finished";
 export type ResultStatus = "decided" | "not_started" | "missing" | "awaiting";
 
 export interface MatchResultInfo {
@@ -74,6 +74,7 @@ export interface RecordedMatch {
 export interface MatchesSummary {
   live: number;
   "pre-match": number;
+  stumps?: number;
   finished: number;
   missing_result: number;
 }

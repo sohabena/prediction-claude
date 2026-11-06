@@ -31,7 +31,7 @@ router = APIRouter()
 logger = setup_logging("router_data")
 
 LIVE_FRESH = timedelta(minutes=15)  # a live match with no tick this long is not live (the monitor's live freshness)
-STATE_RANK = {"live": 0, "pre-match": 1, "finished": 2}
+STATE_RANK = {"live": 0, "pre-match": 1, "stumps": 2, "finished": 3}
 
 MATCHES_SQL = text(
     """
@@ -98,15 +98,27 @@ async def get_health() -> dict[str, Any]:
 
 # ----------------------------------------------------------------------------- matches
 def match_state(row: Mapping[str, Any], now: datetime) -> str:
-    """live: the newest tick says in play and is fresh. finished: started (or first seen live) and not live now.
+    """live: the newest tick says in play and is fresh.
+    stumps: multi-day match started, not currently live, within the multiday window and without a decided result.
+    finished: started (or first seen live) and not live now.
     pre-match: not started yet, or never seen live with no start recorded."""
     last = utc(row.get("last_tick"))
     if row.get("live_now") and last is not None and now - last <= LIVE_FRESH:
         return "live"
     start = utc(row.get("actual_start_time")) or utc(row.get("match_start_time"))
     if start is not None:
-        return "pre-match" if start > now else "finished"
-    return "pre-match" if row.get("first_live_tick") is None else "finished"
+        if start > now:
+            return "pre-match"
+        if rec.is_multiday(row.get("competition")) and not rec.has_decided_result(row) and now - start <= rec.MULTIDAY_WINDOW:
+            return "stumps"
+        return "finished"
+    if row.get("first_live_tick") is None:
+        return "pre-match"
+    if rec.is_multiday(row.get("competition")) and not rec.has_decided_result(row):
+        first = utc(row.get("first_live_tick"))
+        if first is not None and now - first <= rec.MULTIDAY_WINDOW:
+            return "stumps"
+    return "finished"
 
 
 def result_status(row: Mapping[str, Any], state: str, decided: bool, now: datetime) -> str:
@@ -164,7 +176,7 @@ def build_matches(rows: Sequence[Mapping[str, Any]], now: datetime, days: int, i
     epoch = datetime.min.replace(tzinfo=timezone.utc)
     items.sort(key=lambda i: utc(i["last_tick"]) or epoch, reverse=True)
     items.sort(key=lambda i: STATE_RANK[i["state"]])
-    summary = {"live": 0, "pre-match": 0, "finished": 0, "missing_result": 0}
+    summary = {"live": 0, "pre-match": 0, "stumps": 0, "finished": 0, "missing_result": 0}
     for i in items:
         summary[i["state"]] += 1
         if i["result_status"] == "missing":

@@ -54,10 +54,11 @@ export function RecordedMatches({
   const all = data?.matches ?? [];
   const matches = all.filter((m) => (filter === "real" ? !m.simulated : filter === "srl" ? m.simulated : true));
 
-  const counts = { live: 0, "pre-match": 0, finished: 0, missing: 0, awaiting: 0 };
+  const counts = { live: 0, "pre-match": 0, stumps: 0, finished: 0, missing: 0, awaiting: 0 };
   for (const m of matches) {
     if (m.state === "live") counts.live += 1;
     else if (m.state === "pre-match") counts["pre-match"] += 1;
+    else if (m.state === "stumps") counts.stumps += 1;
     else if (m.state === "finished") counts.finished += 1;
     if (m.result_status === "missing") counts.missing += 1;
     if (m.result_status === "awaiting") counts.awaiting += 1;
@@ -67,6 +68,7 @@ export function RecordedMatches({
     { label: "Matches", value: matches.length, className: "text-zinc-100" },
     { label: "Live", value: counts.live, className: "text-emerald-400" },
     { label: "Pre-match", value: counts["pre-match"], className: "text-sky-400" },
+    ...(counts.stumps > 0 ? [{ label: "Stumps", value: counts.stumps, className: "text-amber-300" }] : []),
     { label: "Finished", value: counts.finished, className: "text-zinc-200" },
     { label: "Awaiting result", value: counts.awaiting, className: "text-amber-400" },
     { label: "Missing result", value: counts.missing, className: counts.missing > 0 ? "text-red-400" : "text-zinc-200" },
@@ -96,7 +98,7 @@ export function RecordedMatches({
     >
       {error && <ErrorBanner message={error} stale={!!data} />}
 
-      <dl className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+      <dl className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-flow-col lg:auto-cols-fr">
         {summaryCards.map((c) => (
           <div key={c.label} className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-3">
             <dt className="text-[11px] uppercase tracking-widest text-zinc-500">{c.label}</dt>

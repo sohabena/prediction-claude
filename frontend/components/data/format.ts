@@ -92,6 +92,8 @@ export function stateTone(state: string): string {
       return "bg-emerald-500/10 border-emerald-500/40 text-emerald-400";
     case "pre-match":
       return "bg-sky-500/10 border-sky-500/40 text-sky-400";
+    case "stumps":
+      return "bg-amber-500/10 border-amber-500/40 text-amber-300";
     case "finished":
       return "bg-zinc-700/40 border-zinc-600 text-zinc-300";
     default:

@@ -420,6 +420,14 @@ def test_match_state_live_pre_match_and_finished() -> None:
     assert data_api.match_state(_tick_row(), NOW) == "pre-match"  # starts in two hours
     assert data_api.match_state(_tick_row(match_start_time=NOW - timedelta(hours=3), first_live_tick=NOW - timedelta(hours=3)), NOW) == "finished"
     assert data_api.match_state(_tick_row(match_start_time=None), NOW) == "pre-match"  # no start, never seen live
+    test_stumps = _tick_row(
+        competition="Test Matches",
+        match_start_time=NOW - timedelta(days=1),
+        actual_start_time=NOW - timedelta(days=1),
+        first_live_tick=NOW - timedelta(days=1),
+        last_tick=NOW - timedelta(hours=8),
+    )
+    assert data_api.match_state(test_stumps, NOW) == "stumps"
 
 
 def test_build_matches_hides_simulated_by_default_and_counts_missing_results() -> None:
@@ -438,7 +446,7 @@ def test_build_matches_hides_simulated_by_default_and_counts_missing_results() -
     ids = [m["match_id"] for m in out["matches"]]
     assert "srl_1" not in ids and out["count"] == 4
     assert ids[0] == "lb_live"  # live first
-    assert out["summary"] == {"live": 1, "pre-match": 0, "finished": 3, "missing_result": 1}
+    assert out["summary"] == {"live": 1, "pre-match": 0, "stumps": 0, "finished": 3, "missing_result": 1}
     ended = next(m for m in out["matches"] if m["match_id"] == "lb_just_ended")
     assert ended["state"] == "finished" and ended["result_status"] == "awaiting"  # under 3 h silent: not missing
     gone = next(m for m in out["matches"] if m["match_id"] == "lb_gone")
@@ -463,9 +471,10 @@ def test_build_matches_multiday_awaits_result_during_overnight_break() -> None:
     )
     out = data_api.build_matches([test_row], NOW, 3, include_simulated=False)
     m = out["matches"][0]
-    assert m["state"] == "finished"
+    assert m["state"] == "stumps"
     assert m["result_status"] == "awaiting"  # stays awaiting across multiday window
     assert out["summary"]["missing_result"] == 0
+    assert out["summary"]["stumps"] == 1
 
 
 def test_matches_endpoint_reads_in_a_read_only_transaction(monkeypatch: pytest.MonkeyPatch) -> None:
