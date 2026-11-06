@@ -33,6 +33,7 @@ from backend.models import (  # noqa: F401 - ensure all models are registered
 from backend.models.odds import OddsTickHistorical  # noqa: F401
 from backend.models.odds_quarantine import OddsTickQuarantine  # noqa: F401
 from backend.models.paper_bets import PaperBet  # noqa: F401 - S71 paper ledger (plain table)
+from backend.models.market_ticks import MarketTick  # noqa: F401
 from shared.config import get_settings
 from shared.logging import setup_logging
 
