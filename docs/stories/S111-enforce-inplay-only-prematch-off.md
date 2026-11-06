@@ -25,3 +25,4 @@ the R1 held-out evidence that pre-match ratings models are decisively inferior t
 3. **Tests (`tests/unit/test_s111_prematch_off.py`):**
    - Verify that `PREMATCH_NEW_RISK` is `False`.
    - Verify that no strategy variant generates pre-match new risk intents.
+

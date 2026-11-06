@@ -207,6 +207,28 @@ class BlendModel:
         }
         return out
 
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "BlendModel":
+        """Reconstruct a fitted BlendModel from a latest.json dict or posterior summary."""
+        import numpy as np
+        model = cls(prior_sd=data.get("prior_sd"))
+        post = data.get("posterior", {})
+        if post and data.get("fitted"):
+            model.fitted = True
+            model.n_train = int(data.get("usable_rows", 0))
+            a_mean = float(post["a"]["mean"])
+            b_mean = float(post["b"]["mean"])
+            c_mean = float(post["c"]["mean"])
+            seg_means = [float(post.get("segments", {}).get(name, {}).get("mean", 0.0)) for name in BLEND_SEGMENTS]
+            model.beta = np.array([a_mean, b_mean - 1.0, c_mean] + seg_means, dtype=float)
+
+            a_sd = float(post["a"]["sd"])
+            b_sd = float(post["b"]["sd"])
+            c_sd = float(post["c"]["sd"])
+            seg_sds = [float(post.get("segments", {}).get(name, {}).get("sd", DEFAULT_PRIOR_SD["d"])) for name in BLEND_SEGMENTS]
+            model.cov = np.diag(np.square(np.array([a_sd, b_sd, c_sd] + seg_sds, dtype=float)))
+        return model
+
 
 # --------------------------------------------------------------------------- walk-forward
 def walk_forward(rows: Sequence[BlendRow], *, prior_sd: Optional[Mapping[str, float]] = None,

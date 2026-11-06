@@ -153,11 +153,13 @@ class ProbabilityService:
         inplay_models: Optional[Mapping[str, Any]],
         *,
         normalize_team: Optional[Callable[[str], Optional[str]]] = None,
+        blend_model: Optional[Any] = None,
     ) -> None:
         self.ratings = ratings
         self.prematch_models: Dict[str, Any] = dict(prematch_models or {})
         self.inplay_models: Dict[str, Any] = dict(inplay_models or {})
         self.normalize_team = normalize_team
+        self.blend_model = blend_model
         self._rest: Optional[RestIndex] = None
         self._pm_cache: Dict[tuple, Dict[str, float]] = {}
         self._pre_cache: Dict[tuple, Optional[float]] = {}
@@ -192,7 +194,7 @@ class ProbabilityService:
             else:
                 reasons.append(f"inplay:{reason}")
         if p_model is None:
-            p_model, reason = self._prematch(match, family, day)
+            p_model, reason = self._prematch(match, family, day, p_market=p_market)
             if p_model is not None:
                 source = "prematch"
             else:
@@ -207,7 +209,7 @@ class ProbabilityService:
         )
 
     # ----------------------------------------------------------------- pre-match path
-    def _prematch(self, match: Mapping[str, Any], family: str, day: str) -> Tuple[Optional[float], str]:
+    def _prematch(self, match: Mapping[str, Any], family: str, day: str, p_market: Optional[float] = None) -> Tuple[Optional[float], str]:
         if self.ratings is None:
             return None, "no_ratings"
         model = self.prematch_models.get(family)
@@ -233,7 +235,46 @@ class ProbabilityService:
                 p = None
             self._pre_cache[key] = None if p is None or not math.isfinite(p) else float(p)
         p = self._pre_cache[key]
-        return (p, "") if p is not None else (None, "not_rated")
+        if p is None:
+            return (None, "not_rated")
+
+        # S61 / S103 Market Blend: if blend_model is active and market probability is known, apply the calibrated blend
+        if self.blend_model is not None and p_market is not None and 0.01 < p_market < 0.99:
+            try:
+                from training.blend import BlendRow
+                segs = []
+                if family == "t20":
+                    segs.append("family_t20")
+                elif family == "odi":
+                    segs.append("family_odi")
+                elif family == "test":
+                    segs.append("family_test")
+                gen = gender_of(home, away, competition)
+                if gen == "female":
+                    segs.append("gender_women")
+                tier_val = match.get("pm_tier", match.get("tier", 1))
+                if int(tier_val or 1) == 1:
+                    segs.append("tier_2")
+                if p_market >= 0.5:
+                    segs.append("market_favourite")
+                if p_market < 0.25:
+                    segs.append("market_longshot")
+                row = BlendRow(
+                    match_id=str(match.get("match_id") or ""),
+                    snapshot_id="live",
+                    date=day,
+                    p_market=float(p_market),
+                    p_model=float(p),
+                    home_won=None,
+                    segments=tuple(segs),
+                )
+                p_blend, _ = self.blend_model.predict_one(row)
+                if math.isfinite(p_blend):
+                    p = float(p_blend)
+            except Exception as exc:
+                logger.warning("blend_predict_failed", error=type(exc).__name__)
+
+        return (p, "")
 
     def _rest_index(self) -> RestIndex:
         if self._rest is None:

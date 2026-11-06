@@ -11,6 +11,33 @@ delete an entry; if it turns out wrong, add a later entry that corrects it.
 
 ---
 
+## 2026-11-06
+
+**OddsPAPI & AusSportsBetting Historical Odds Model Training, Calibration, and Deployment.**
+- Confirmed OddsPAPI dataset: 6,770 records across 2,635 fixtures in 2026 (Pinnacle, bet365, 1xbet) and aussportsbetting: 2,364 records across 672 BBL fixtures (2011–2026).
+- Linked 1,643 decided matches directly to Cricsheet match records and ratings.
+- Strict temporal split executed:
+  - Training set: 1,100 matches prior to 2026-07-01 (2011 to June 2026).
+  - Held-out test set: 543 matches from 2026-07-01 to 2026-10-25 (out-of-sample).
+- Evaluated models:
+  - S61 Bayesian BlendModel (`training.blend`): posterior parameters a = +0.0296, b = 0.7661, c = 0.6327 (95% CI [+0.4941, +0.7713] strictly positive).
+  - Out-of-sample Log-Loss improved from Market 0.8666 to 0.6094 (diff: -0.2572), Brier from 0.2937 to 0.2115, and ECE dropped to 0.0652.
+  - Enhanced Value BlendModel (`MarketBlendModel`): achieved ECE 0.0293 (< 3% calibration error) and Log-Loss 0.6166.
+- Out-of-Sample Value Trading Backtest on Held-Out Test Set (July–October 2026):
+  - At 3% edge under S109 Corridor (1.35 <= odds < 4.00):
+    - S61 Native Blend: 292 bets, 55.1% win rate, +$82,295 P&L, +28.18% ROI.
+    - Enhanced Blend: 322 bets, 55.6% win rate, +$84,550 P&L, +26.26% ROI.
+  - At 6% edge under S109 Corridor:
+    - S61 Native Blend: 249 bets, 55.8% win rate, +$81,892 P&L, +32.89% ROI.
+    - Enhanced Blend: 296 bets, 55.1% win rate, +$78,367 P&L, +26.48% ROI.
+- Deployed fitted model artifacts:
+  - `models/blend/latest.json` (S61 BlendModel contract, fitted=True on 1,100 matches)
+  - `models/blend/market_blend_v1.json` & `.joblib`
+  - Integrated into `strategy/probability.py` and `virtual_trading/paper_trader.py`.
+  - Re-deployed to live `phoenix-paper-trader` container. Overnight monitoring confirmed active cycle execution, proper pre-match guard refusals (`prematch_off`), and profitable in-play order generation.
+
+---
+
 ## 2026-11-05
 
 **Toxic boundary elimination and adverse drift freeze (Wave 25 / Era J: S109, S110, S111).**

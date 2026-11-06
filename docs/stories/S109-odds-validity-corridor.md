@@ -39,3 +39,4 @@ A forensic breakdown of all settled paper bets across 11 matches revealed two se
    - Verify `reduce` and `green_up` pass even at 1.05 or 10.0.
    - Verify `tail` variant BACK intents pass at 10.0+.
    - Verify `model_edge.decide` respects the odds limits.
+

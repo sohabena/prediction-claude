@@ -938,7 +938,20 @@ def load_probability_service(root: Path = ROOT) -> Any:
     ratings = load_ratings(data, cache=data / "ratings" / "cricket_ratings.joblib")
     prematch = {f: PrematchModel.load(root / "models" / "prematch" / f"{f}_v3.joblib") for f in FAMILIES}
     inplay = {f: FairValueModel.load(root / "models" / "fair_value" / f"{f}_v2_all.joblib") for f in FAMILIES}
-    return ProbabilityService(ratings, prematch, inplay, normalize_team=canonicalize_team)
+
+    blend_model = None
+    latest_json = root / "models" / "blend" / "latest.json"
+    if latest_json.exists():
+        try:
+            with open(latest_json, "r", encoding="utf-8") as f:
+                blend_data = json.load(f)
+            if blend_data.get("fitted"):
+                from training.blend import BlendModel
+                blend_model = BlendModel.from_dict(blend_data)
+        except Exception as exc:
+            logger.warning("blend_load_failed", error=str(exc))
+
+    return ProbabilityService(ratings, prematch, inplay, normalize_team=canonicalize_team, blend_model=blend_model)
 
 
 def append_log(record: Mapping[str, Any], path: Path = LOG_PATH) -> str:

@@ -31,3 +31,4 @@ In the settled paper bets:
    - Verify an `add` at 2.2 (10% drift) succeeds.
    - Verify an `add` at 3.5 (>30% adverse drift) is suppressed.
    - Verify `reduce` and `green_up` remain executable regardless of drift.
+

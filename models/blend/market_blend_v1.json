@@ -1,0 +1,43 @@
+{
+  "model_type": "MarketBlendModel",
+  "version": "1.0.0",
+  "regularization_C": 5.0,
+  "intercept": 0.7245260334097152,
+  "coefficients": {
+    "delta_elo_mkt": 0.7718290418148165,
+    "xi_diff": -0.4768974655597063,
+    "tier": -0.0752176729061576,
+    "is_women": -0.20182207590901066,
+    "is_t20": -0.5808503062225683,
+    "overround_excess": -0.6170509179987519,
+    "is_favourite": -0.19693482906153872
+  },
+  "feature_names": [
+    "delta_elo_mkt",
+    "xi_diff",
+    "tier",
+    "is_women",
+    "is_t20",
+    "overround_excess",
+    "is_favourite"
+  ],
+  "generated_at": "2026-11-06T07:52:28.371473+00:00",
+  "n_train": 1100,
+  "n_test": 543,
+  "train_dates": [
+    "2011-12-16",
+    "2026-06-30"
+  ],
+  "test_dates": [
+    "2026-07-01",
+    "2026-10-25"
+  ],
+  "test_metrics": {
+    "log_loss_market": 0.8665842736384115,
+    "log_loss_blend": 0.6165750384996183,
+    "brier_market": 0.29372166932329635,
+    "brier_blend": 0.21497789859478958,
+    "ece_market": 0.16220637556758077,
+    "ece_blend": 0.029284192605520898
+  }
+}
