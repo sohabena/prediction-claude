@@ -106,7 +106,7 @@ class APIConfig(BaseSettings):
     """Backend API settings."""
 
     port: int = 8001
-    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001,*"
+    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001,http://localhost:3002,http://127.0.0.1:3002,*"
     auth_enabled: bool = False
     api_key: str = "change_me_in_production"
 

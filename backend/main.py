@@ -57,6 +57,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.api.cors_origin_list,
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -65,6 +66,19 @@ app.add_middleware(
 # Prometheus metrics (graceful no-op if prometheus_client not installed)
 from backend.observability.metrics import add_metrics_middleware
 add_metrics_middleware(app)
+
+
+from fastapi import Request
+from fastapi.responses import JSONResponse
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.error("Unhandled exception processing %s %s: %s", request.method, request.url, exc, exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error", "error": str(exc)},
+    )
 
 # Include routers
 app.include_router(health.router, prefix="/api", tags=["Health"])

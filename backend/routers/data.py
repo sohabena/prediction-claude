@@ -182,8 +182,12 @@ async def get_matches(
 ) -> dict[str, Any]:
     """Recorded matches with ticks in the last ``days`` days."""
     now = datetime.now(timezone.utc)
-    async with read_only_session() as session:
-        rows = [dict(r) for r in (await session.execute(MATCHES_SQL, {"since": now - timedelta(days=days)})).mappings().all()]
+    rows = []
+    try:
+        async with read_only_session() as session:
+            rows = [dict(r) for r in (await session.execute(MATCHES_SQL, {"since": now - timedelta(days=days)})).mappings().all()]
+    except Exception as exc:
+        logger.warning("Database unavailable for matches: %s", exc)
     return jsonable(build_matches(rows, now, days, include_simulated))
 
 
@@ -192,8 +196,12 @@ async def get_matches(
 async def get_missing_results() -> dict[str, Any]:
     """Real matches with a recent tick, silent for over 3 h, and no decided result (the S76 list)."""
     now = datetime.now(timezone.utc)
-    async with read_only_session() as session:
-        items = await rec.missing_results(session, now)
+    items = []
+    try:
+        async with read_only_session() as session:
+            items = await rec.missing_results(session, now)
+    except Exception as exc:
+        logger.warning("Database unavailable for missing results: %s", exc)
     return jsonable({
         "generated_at": now,
         "count": len(items),

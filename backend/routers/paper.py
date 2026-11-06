@@ -257,8 +257,11 @@ async def get_live() -> dict[str, Any]:
     ids = logged_match_ids(cycle)
     inputs = dict(EMPTY_INPUTS)
     if ids:
-        async with read_only_session() as session:
-            inputs = await load_live_inputs(session, ids, now)
+        try:
+            async with read_only_session() as session:
+                inputs = await load_live_inputs(session, ids, now)
+        except Exception as exc:
+            logger.warning("Database unavailable for live paper inputs: %s", exc)
     return jsonable(build_live(now=now, cycle=cycle, inputs=inputs, budgets=ticket_budgets()))
 
 
@@ -391,5 +394,9 @@ async def load_evidence_inputs(now: datetime) -> dict[str, Any]:
 async def get_evidence() -> dict[str, Any]:
     """The S88 headline: tradable settled matches, excess over placebo, R1 to R3 progress, the in-play gate, fills."""
     now = datetime.now(timezone.utc)
-    data = await load_evidence_inputs(now)
+    try:
+        data = await load_evidence_inputs(now)
+    except Exception as exc:
+        logger.warning("Database unavailable for evidence inputs: %s", exc)
+        data = {}
     return jsonable(build_evidence(data, now, latest_daily_report()))
