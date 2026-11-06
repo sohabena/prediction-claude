@@ -1471,6 +1471,18 @@ class ScraperManager:
                     # Update start time if it was missing and we now have it
                     if record.match_start_time is None and event.scheduled_time is not None:
                         record.match_start_time = event.scheduled_time
+                    elif event.scheduled_time is not None and record.actual_start_time is None:
+                        # Update start time if listing text has an updated schedule (e.g. from provisional to confirmed on match day)
+                        # unless market JSON already provided an authoritative openDate
+                        has_json_start = event.match_id in self._market_store().get("json_start", {})
+                        if not has_json_start and record.match_start_time != event.scheduled_time:
+                            logger.info(
+                                "match_start_time_updated_from_listing",
+                                match_id=event.match_id,
+                                old_start=record.match_start_time.isoformat() if record.match_start_time else None,
+                                new_start=event.scheduled_time.isoformat(),
+                            )
+                            record.match_start_time = event.scheduled_time
                     # Fill a competition that was unknown when the row was created (listing menu, S56)
                     if not record.competition and event.competition:
                         record.competition = event.competition
