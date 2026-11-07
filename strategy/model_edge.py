@@ -130,6 +130,7 @@ class Variant:
     reentry_loss_margin: float = 0.25  # S115: share of match cap allowed as loss margin for high-edge re-entries
     high_scenario_edge: float = 0.06  # S115: edge threshold defining a "very high scenario" to unlock loss margin
     min_green_profit: float = 2_000.0  # S115: target minimum common profit before green-up (unless edge decays)
+    allow_adds: bool = True  # S119: if False, disables averaging down (single-bullet entry for green models)
 
     def __post_init__(self) -> None:
         _require(0.0 <= self.w <= 1.0, f"w must be in [0, 1], got {self.w!r}")
@@ -343,7 +344,8 @@ def _ticket(
     """One intent: the stake shrunk to the cap, dropped below the minimum."""
     room = _cap_room(book.home_pnl, book.away_pnl, sized.vh, sized.va, cap)
     size = min(stake, room)
-    if not size >= max(SIGNAL_MIN_STAKE, variant.min_trade_stake):
+    min_stake = SIGNAL_MIN_STAKE if reason == "reduce" else max(SIGNAL_MIN_STAKE, variant.min_trade_stake)
+    if not size >= min_stake:
         return None
 
     if variant.guard_double_negative:
@@ -400,6 +402,8 @@ def _move_to(
             return None
         reason = "enter" if abs(balance) <= _EPS else "add"
         if reason == "add":
+            if not variant.allow_adds:
+                return None
             if balance > _EPS and book.away_pnl < -_EPS:
                 entry_odds = 1.0 + (book.home_pnl / -book.away_pnl)
                 if sized.side == BACK and entry_odds > 1.0 and sized.price > entry_odds * (1.0 + variant.max_adverse_drift):
@@ -507,12 +511,13 @@ def decide(
                 if gu_intent is not None:
                     return [gu_intent]
         if hold is not None and hold.edge <= -variant.hedge_edge:
-            # Reduce or flip: the favoured outcome is now overpriced, so the target is the opposite side.
+            # S119: Risk-cutting stop-loss / reduce: cut losing positions toward flat even when opposite has no positive alpha
             opposite = _find(cands, favoured, LAY)
-            if opposite is None or opposite.edge <= 0.0:
-                return []
-            intent = _move_to(variant, book, _kelly_target(variant, opposite), [opposite], cap, new_risk)
-            return [intent] if intent is not None else []
+            if opposite is not None:
+                target = _kelly_target(variant, opposite) if opposite.edge > 0.0 else 0.0
+                intent = _move_to(variant, book, target, [opposite], cap, new_risk=False if opposite.edge <= 0.0 else new_risk)
+                if intent is not None:
+                    return [intent]
         if hold is not None and hold.edge < variant.hedge_edge and book.locked > _EPS:
             if abs(balance) <= variant.no_trade_band:
                 return []

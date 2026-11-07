@@ -50,6 +50,7 @@ from typing import Any, Iterable, Mapping, Optional, Sequence
 from sqlalchemy import select, text
 
 from backend.models.paper_bets import PaperBet
+from scraper.match_filter import is_tier1_match
 from strategy import model_edge, staking, tail_bet, trade_guards
 from strategy.base import MatchedBet, OrderIntent
 from strategy.live_context import gender_of
@@ -147,17 +148,19 @@ def build_variants(max_match_loss: float = MAX_MATCH_LOSS) -> tuple[Variant, ...
         Variant(paper_review.PLACEBO_FAVOURITE, w=0.0, min_edge=0.03, max_match_loss=max_match_loss, market_only=True,
                 placebo="favourite"),
     ]
-    green = [Variant(GREEN_VARIANT, w=0.5, min_edge=0.06, max_match_loss=max_match_loss, auto_green_up=True, guard_double_negative=True)]
-    # S116: Multi-Cycle Green Compounding with Pure House Money & Max Lay Odds Guards
+    green = [Variant(GREEN_VARIANT, w=0.5, min_edge=0.06, max_match_loss=max_match_loss, max_trade_risk=15_000.0, auto_green_up=True, guard_double_negative=True, allow_adds=False)]
+    # S119: Institutional Risk Guards: Single-Bullet Entry (no adds), Capped Lay Odds (<=2.50), Downsized Per-Trade Risk
     bmodels = [
         Variant(
             BMODEL_GREEN_V1,
             w=0.5,
             min_edge=0.06,
             max_match_loss=max_match_loss,
+            max_trade_risk=15_000.0,
             auto_green_up=True,
             multi_cycle_green=True,
-            max_lay_odds=2.80,
+            allow_adds=False,
+            max_lay_odds=2.50,
             min_green_profit=2_500.0,
             guard_double_negative=True,
             hard_ticket_limit=True,
@@ -168,8 +171,10 @@ def build_variants(max_match_loss: float = MAX_MATCH_LOSS) -> tuple[Variant, ...
             w=1.0,
             min_edge=0.06,
             max_match_loss=max_match_loss,
+            max_trade_risk=15_000.0,
             auto_green_up=True,
             multi_cycle_green=True,
+            allow_adds=False,
             max_lay_odds=2.50,
             min_green_profit=2_000.0,
             guard_double_negative=True,
@@ -181,9 +186,10 @@ def build_variants(max_match_loss: float = MAX_MATCH_LOSS) -> tuple[Variant, ...
             w=1.0,
             min_edge=0.03,
             max_match_loss=max_match_loss,
-            max_trade_risk=15_000.0,
+            max_trade_risk=10_000.0,
             auto_green_up=True,
             multi_cycle_green=True,
+            allow_adds=False,
             max_lay_odds=2.50,
             min_green_profit=1_000.0,
             guard_double_negative=True,
@@ -195,11 +201,13 @@ def build_variants(max_match_loss: float = MAX_MATCH_LOSS) -> tuple[Variant, ...
             w=0.6,
             min_edge=0.04,
             max_match_loss=max_match_loss,
+            max_trade_risk=15_000.0,
             min_tradable_odds=1.70,
             max_tradable_odds=3.00,
-            max_lay_odds=3.00,
+            max_lay_odds=2.50,
             auto_green_up=True,
             multi_cycle_green=True,
+            allow_adds=False,
             min_green_profit=2_000.0,
             guard_double_negative=True,
             hard_ticket_limit=True,
@@ -210,13 +218,14 @@ def build_variants(max_match_loss: float = MAX_MATCH_LOSS) -> tuple[Variant, ...
             w=0.4,
             min_edge=0.08,
             max_match_loss=max_match_loss,
-            max_trade_risk=20_000.0,
+            max_trade_risk=15_000.0,
             min_tradable_odds=2.10,
-            max_tradable_odds=3.80,
-            max_lay_odds=3.00,
+            max_tradable_odds=3.50,
+            max_lay_odds=2.50,
             auto_green_up=True,
             multi_cycle_green=True,
-            min_green_profit=3_000.0,
+            allow_adds=False,
+            min_green_profit=2_500.0,
             guard_double_negative=True,
             hard_ticket_limit=True,
             ticket_budget=10,
@@ -226,11 +235,13 @@ def build_variants(max_match_loss: float = MAX_MATCH_LOSS) -> tuple[Variant, ...
             w=0.5,
             min_edge=0.04,
             max_match_loss=max_match_loss,
+            max_trade_risk=15_000.0,
             min_tradable_odds=1.35,
             max_tradable_odds=2.50,
             max_lay_odds=2.50,
             auto_green_up=True,
             multi_cycle_green=True,
+            allow_adds=False,
             min_green_profit=2_000.0,
             guard_double_negative=True,
             hard_ticket_limit=True,
@@ -272,6 +283,7 @@ def select_candidates(
     last_price_at: Mapping[str, datetime],
     now: datetime,
     include_simulated: bool = False,
+    tier1_only: bool = False,
 ) -> tuple[list[Candidate], dict[str, int]]:
     """Matches to trade this cycle, and the count of each reason a registry row was left out."""
     out: list[Candidate] = []
@@ -303,6 +315,13 @@ def select_candidates(
             continue
         if start - now > PREMATCH_WINDOW:
             skipped["too_early"] += 1
+            continue
+        # S119: Strict Tier-1 Real Cricket Gatekeeper (WBBL, BBL, IPL, Tests, ODIs, T20Is only)
+        comp = row.get("competition")
+        home = row.get("team_home")
+        away = row.get("team_away")
+        if tier1_only and not is_tier1_match(comp, home, away):
+            skipped["not_tier1"] += 1
             continue
         out.append(
             Candidate(
@@ -677,6 +696,7 @@ async def run_cycle(
     *,
     now: Optional[datetime] = None,
     include_simulated: bool = False,
+    tier1_only: bool = True,
     suspended: Iterable[str] = (),
     primary: Optional[str] = None,
     guards: GuardConfig = GuardConfig(),
@@ -707,7 +727,7 @@ async def run_cycle(
     open_ids = {r.match_id for r in open_rows}
     registry = await feed.registry(sorted(set(last_prices) | open_ids))
     starts = {str(r["match_id"]): r.get("actual_start_time") or r.get("match_start_time") for r in registry}
-    candidates, skipped = select_candidates(registry, last_prices, now, include_simulated)
+    candidates, skipped = select_candidates(registry, last_prices, now, include_simulated, tier1_only=tier1_only)
 
     # 2. As-of prices from the earliest point any open bet or candidate needs.
     since = price_window_start(open_rows, starts, now)
@@ -1087,6 +1107,7 @@ async def run_once(
     variants: Sequence[Variant],
     *,
     include_simulated: bool = False,
+    tier1_only: bool = True,
     log_path: Path = LOG_PATH,
 ) -> dict[str, Any]:
     """One cycle in one database transaction (committed on success, rolled back on error)."""
@@ -1102,6 +1123,7 @@ async def run_once(
             probability,
             variants,
             include_simulated=include_simulated,
+            tier1_only=tier1_only,
             suspended=paper_review.suspended_names(state),
             primary=state.get("primary"),
             reference=paper_review.reference_name(state),

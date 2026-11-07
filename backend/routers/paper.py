@@ -31,6 +31,7 @@ from backend.routers.readonly import (
     reports_dir,
     utc,
 )
+from scraper.match_filter import is_tier1_match
 from scripts import paper_report as rep
 from shared.logging import setup_logging
 from virtual_trading import paper_review as review
@@ -202,6 +203,11 @@ def build_live(
     for m in matches:
         mid = m["match_id"]
         reg = registry.get(mid, {})
+        comp = m.get("competition") or reg.get("competition") or ""
+        home = m.get("team_home") or reg.get("team_home") or ""
+        away = m.get("team_away") or reg.get("team_away") or ""
+        if not is_tier1_match(comp, home, away):
+            continue
         variants = []
         for p in m["positions"]:
             name = p["variant"]
@@ -479,6 +485,11 @@ async def get_signals(limit: int = 150, match_id: Optional[str] = None) -> dict[
     
     matches_list = []
     for m in match_records:
+        comp = m.get("competition") or ""
+        home = m.get("team_home") or ""
+        away = m.get("team_away") or ""
+        if not is_tier1_match(comp, home, away):
+            continue
         score_val = m.get("score")
         wickets_val = m.get("wickets")
         overs_val = m.get("overs")
@@ -498,6 +509,11 @@ async def get_signals(limit: int = 150, match_id: Optional[str] = None) -> dict[
 
     signals = []
     for r in records:
+        comp = r.get("competition") or ""
+        home = r.get("team_home") or ""
+        away = r.get("team_away") or ""
+        if not is_tier1_match(comp, home, away):
+            continue
         decided_at = r.get("decided_at")
         age = age_seconds(decided_at, now)
         price = float(r.get("price") or 0.0)

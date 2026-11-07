@@ -70,6 +70,85 @@ def is_simulated_name(*names: str | None) -> bool:
     return False
 
 
+# S119: Strict Tier-1 Real Cricket Whitelist and Blacklist
+_TIER1_SIMULATED_RE = re.compile(
+    r"\b(srl|simulated|virtual|e-?cricket|e-?sports|esports|cyber|fantasy)\b",
+    re.IGNORECASE,
+)
+
+_TIER1_MINOR_BLACKLIST_RE = re.compile(
+    r"\b(u19|u-19|under[\s-]?19|legends?|veterans?|practice|warm[\s-]?up|exhibition|nepal|"
+    r"victoria\s*t20|abu\s*dhabi\s*t10|kwibuka|sub[\s-]?regional|pro50|ford\s*trophy|plunket|"
+    r"senior\s*women|club|t20\s*south\s*africa\s*cup)\b",
+    re.IGNORECASE,
+)
+
+_TIER1_COMPETITIONS_RE = re.compile(
+    r"("
+    # Major Franchises
+    r"\bwbbl\b|women'?s\s*big\s*bash|"
+    r"\bbbl\b|big\s*bash|"
+    r"\bipl\b|indian\s*premier|tata\s*ipl|"
+    r"\bwpl\b|women'?s\s*premier|"
+    r"\bpsl\b|pakistan\s*super|"
+    r"\bcpl\b|caribbean\s*premier|"
+    r"the\s*hundred|\bhundred\b|"
+    r"\bsa20\b|sa\s*20|"
+    r"\bmlc\b|major\s*league\s*cricket|"
+    r"\bilt20\b|international\s*league\s*t20|"
+    # Top-Tier Internationals
+    r"one\s*day\s*internationals?|\bodi\b|\bodis\b|"
+    r"test\s*matches?|\btest\b|\bwtc\b|world\s*test\s*championship|"
+    r"t20\s*internationals?|\bt20i\b|womens?\s*international\s*twenty20|"
+    r"icc\s*cricket\s*world\s*cup|icc\s*world\s*cup|world\s*cup|champions\s*trophy|"
+    r"icc\s*(men'?s|women'?s)?\s*t20\s*world\s*cup|"
+    r"asia\s*cup"
+    r")",
+    re.IGNORECASE,
+)
+
+_TOP_NATIONS = frozenset({
+    "india", "australia", "england", "new zealand", "south africa",
+    "pakistan", "west indies", "sri lanka", "bangladesh", "afghanistan",
+    "ireland", "zimbabwe", "netherlands", "scotland"
+})
+
+
+def is_tier1_match(
+    competition: str | None,
+    team_home: str | None = None,
+    team_away: str | None = None,
+) -> bool:
+    """Strict gatekeeper for Tier-1 real cricket.
+
+    Accepts:
+    - Major Premier Franchise Leagues: WBBL, BBL, IPL, WPL, PSL, CPL, The Hundred, SA20, MLC, ILT20
+    - Top International Cricket: Men's & Women's Tests, ODIs, T20Is, ICC World Cups, Champions Trophy, WTC
+
+    Rejects:
+    - ALL Simulated Reality Leagues (SRL, Virtual, Esports, Cyber)
+    - Low-tier, amateur, youth, or regional leagues (Nepal Premier League, Victoria T20, Abu Dhabi T10, etc.)
+    """
+    comp = str(competition or "").strip()
+    home = str(team_home or "").strip()
+    away = str(team_away or "").strip()
+    all_text = f"{comp} {home} {away}"
+
+    if _TIER1_SIMULATED_RE.search(all_text):
+        return False
+    if _TIER1_MINOR_BLACKLIST_RE.search(all_text):
+        return False
+    if _TIER1_COMPETITIONS_RE.search(comp):
+        return True
+
+    norm_home = re.sub(r"\s*(w|women|\(w\))$", "", home.lower()).strip()
+    norm_away = re.sub(r"\s*(w|women|\(w\))$", "", away.lower()).strip()
+    if norm_home in _TOP_NATIONS and norm_away in _TOP_NATIONS:
+        return True
+
+    return False
+
+
 # ============================================================
 # Layer 2: Team Name Database (imported from shared.constants)
 # ============================================================
