@@ -1,5 +1,7 @@
 import type { EvidenceResponse, ExcessCell, VariantEvidence } from "@/app/evidence/types";
 import { fmtInterval, fmtMatchesBets, fmtMoney, fmtPct, fmtPp } from "./format";
+import { getModelMeta } from "@/lib/modelMeta";
+import { ModelInfoPopover } from "@/components/common/ModelInfoPopover";
 
 function TooFew() {
   return (
@@ -84,10 +86,10 @@ export function StrategyTable({ data }: { data: EvidenceResponse }) {
         <div className="stat-card text-sm text-zinc-400">No strategy variants reported yet.</div>
       ) : (
         <div className="stat-card overflow-x-auto p-0">
-          <table className="w-full min-w-[640px] text-left text-sm">
+          <table className="w-full min-w-[760px] text-left text-sm">
             <thead className="border-b border-zinc-800 text-xs uppercase tracking-wider text-zinc-400">
               <tr>
-                <th scope="col" className="px-4 py-3 font-semibold">Variant</th>
+                <th scope="col" className="px-4 py-3 font-semibold">Model / Strategy</th>
                 <th scope="col" className="px-4 py-3 font-semibold">Pre-match CLV excess</th>
                 <th scope="col" className="px-4 py-3 font-semibold">In-play CLV excess</th>
                 <th scope="col" className="px-4 py-3 font-semibold">P&amp;L</th>
@@ -95,23 +97,38 @@ export function StrategyTable({ data }: { data: EvidenceResponse }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-800/70">
-              {strategies.map((v) => (
-                <tr key={v.variant} className="align-top">
-                  <th scope="row" className="px-4 py-4 font-mono text-xs text-zinc-200 whitespace-nowrap">
-                    {v.variant}
-                  </th>
-                  <td className="px-4 py-4">
-                    <ExcessCellView cell={ex.pre_match[v.variant]} />
-                  </td>
-                  <td className="px-4 py-4">
-                    <ExcessCellView cell={ex.in_play[v.variant]} />
-                  </td>
-                  <td className="px-4 py-4">
-                    <PnlCell v={v} />
-                  </td>
-                  <td className="px-4 py-4 tabular-nums text-zinc-300">{fmtPct(v.fill_rate)}</td>
-                </tr>
-              ))}
+              {strategies.map((v) => {
+                const meta = getModelMeta(v.variant);
+                return (
+                  <tr key={v.variant} className="align-top hover:bg-zinc-900/30 transition-colors">
+                    <th scope="row" className="px-4 py-4 whitespace-nowrap text-left font-normal">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-semibold text-zinc-100 text-sm">{meta.displayName}</span>
+                          <ModelInfoPopover meta={meta} />
+                        </div>
+                        <div className="flex items-center gap-1.5 text-xs text-zinc-400">
+                          <span className="font-mono text-zinc-300 bg-zinc-900 px-1 py-0.5 rounded border border-zinc-800 text-[11px]">
+                            {v.variant}
+                          </span>
+                          <span className="text-zinc-600">•</span>
+                          <span className="text-zinc-500">{meta.shortTag}</span>
+                        </div>
+                      </div>
+                    </th>
+                    <td className="px-4 py-4">
+                      <ExcessCellView cell={ex.pre_match[v.variant]} />
+                    </td>
+                    <td className="px-4 py-4">
+                      <ExcessCellView cell={ex.in_play[v.variant]} />
+                    </td>
+                    <td className="px-4 py-4">
+                      <PnlCell v={v} />
+                    </td>
+                    <td className="px-4 py-4 tabular-nums text-zinc-300">{fmtPct(v.fill_rate)}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -145,27 +162,42 @@ export function ControlsTable({ data }: { data: EvidenceResponse }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-800/70">
-            {controls.map((v) => (
-              <tr key={v.variant} className="align-top">
-                <th scope="row" className="px-4 py-4 font-mono text-xs text-zinc-300 whitespace-nowrap">
-                  {v.variant}
-                </th>
-                <td className="px-4 py-4">
-                  <div className="space-y-0.5">
-                    <p className="font-semibold tabular-nums text-zinc-200">{fmtPp(v.clv.mean)}</p>
-                    <p className="text-xs text-zinc-500 tabular-nums">
-                      {fmtInterval(v.clv.ci_lo, v.clv.ci_hi, (x) => fmtPp(x))}
-                    </p>
-                    <p className="text-xs text-zinc-500 tabular-nums">{fmtMatchesBets(v.clv.matches, v.clv.bets)}</p>
-                    {v.clv.too_few_matches && <TooFew />}
-                  </div>
-                </td>
-                <td className="px-4 py-4">
-                  <PnlCell v={v} />
-                </td>
-                <td className="px-4 py-4 tabular-nums text-zinc-300">{fmtPct(v.fill_rate)}</td>
-              </tr>
-            ))}
+            {controls.map((v) => {
+              const meta = getModelMeta(v.variant);
+              return (
+                <tr key={v.variant} className="align-top hover:bg-zinc-900/30 transition-colors">
+                  <th scope="row" className="px-4 py-4 whitespace-nowrap text-left font-normal">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-semibold text-zinc-200 text-sm">{meta.displayName}</span>
+                        <ModelInfoPopover meta={meta} />
+                      </div>
+                      <div className="flex items-center gap-1.5 text-xs text-zinc-400">
+                        <span className="font-mono text-zinc-400 bg-zinc-900 px-1 py-0.5 rounded border border-zinc-800 text-[11px]">
+                          {v.variant}
+                        </span>
+                        <span className="text-zinc-600">•</span>
+                        <span className="text-zinc-500">{meta.shortTag}</span>
+                      </div>
+                    </div>
+                  </th>
+                  <td className="px-4 py-4">
+                    <div className="space-y-0.5">
+                      <p className="font-semibold tabular-nums text-zinc-200">{fmtPp(v.clv.mean)}</p>
+                      <p className="text-xs text-zinc-500 tabular-nums">
+                        {fmtInterval(v.clv.ci_lo, v.clv.ci_hi, (x) => fmtPp(x))}
+                      </p>
+                      <p className="text-xs text-zinc-500 tabular-nums">{fmtMatchesBets(v.clv.matches, v.clv.bets)}</p>
+                      {v.clv.too_few_matches && <TooFew />}
+                    </div>
+                  </td>
+                  <td className="px-4 py-4">
+                    <PnlCell v={v} />
+                  </td>
+                  <td className="px-4 py-4 tabular-nums text-zinc-300">{fmtPct(v.fill_rate)}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
