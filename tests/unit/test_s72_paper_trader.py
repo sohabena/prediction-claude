@@ -371,7 +371,7 @@ def test_build_variants_grid_and_control():
         "w03_e03", "w03_e06", "w05_e03", "w05_e06", "w07_e03", "w07_e06", "market_only",
         "mkt_dyn", "mkt_dyn_e06",  # S97: the market-dynamics variants (w = 1)
         "w05_e06_green",  # S112: auto green-up variant adopting w05_e06 with profit lock-in
-        "bmodel_green_v1", "bmodel_scalp_v1",  # S113: stake-aware specialist bmodels
+        "bmodel_green_v1", "bmodel_scalp_v1", "bmodel_scalp_fast", "bmodel_swing_v1", "bmodel_deep_v1", "bmodel_fav_lock_v1",  # S113/S114: specialist bmodels
         "tail",  # S107: the chase-model variant (its own decision path)
         "placebo_random", "placebo_favourite",  # S85
     ]
@@ -384,6 +384,11 @@ def test_build_variants_grid_and_control():
     assert dyn.auto_green_up is True
     assert dyn.hard_ticket_limit is True
     assert dyn.ticket_budget == 15
+    for bname in ["bmodel_green_v1", "bmodel_scalp_v1", "bmodel_scalp_fast", "bmodel_swing_v1", "bmodel_deep_v1", "bmodel_fav_lock_v1"]:
+        b = next(v for v in variants if v.name == bname)
+        assert b.guard_double_negative is True
+        assert b.auto_green_up is True
+        assert b.hard_ticket_limit is True
 
 
 def test_report_and_log_line_are_json(tmp_path):

@@ -84,8 +84,19 @@ DYNAMICS_MIN_EDGE = {"mkt_dyn": 0.03, "mkt_dyn_e06": 0.06}
 # S113: New institutional specialist bmodels (Stake-Aware, Auto-Green, Churn Protected)
 BMODEL_GREEN_V1 = "bmodel_green_v1"
 BMODEL_SCALP_V1 = "bmodel_scalp_v1"
-BMODEL_VARIANTS = frozenset({BMODEL_GREEN_V1, BMODEL_SCALP_V1})
-DYNAMICS_VARIANTS = frozenset(DYNAMICS_MIN_EDGE) | {BMODEL_SCALP_V1}
+BMODEL_SCALP_FAST = "bmodel_scalp_fast"
+BMODEL_SWING_V1 = "bmodel_swing_v1"
+BMODEL_DEEP_V1 = "bmodel_deep_v1"
+BMODEL_FAV_LOCK_V1 = "bmodel_fav_lock_v1"
+BMODEL_VARIANTS = frozenset({
+    BMODEL_GREEN_V1,
+    BMODEL_SCALP_V1,
+    BMODEL_SCALP_FAST,
+    BMODEL_SWING_V1,
+    BMODEL_DEEP_V1,
+    BMODEL_FAV_LOCK_V1,
+})
+DYNAMICS_VARIANTS = frozenset(DYNAMICS_MIN_EDGE) | {BMODEL_SCALP_V1, BMODEL_SCALP_FAST}
 # S106 (operator, 2026-11-05): False means no new risk before the off (a strategy variant then gets no model
 # probability pre-match and may only reduce or green up; the placebos follow the reference). The operator first set it
 # False after R1 failed pre-match, then the same day asked to keep pre-match bets as optional (era H): True. Bets are
@@ -96,7 +107,7 @@ PREMATCH_NEW_RISK = False
 TAIL_VARIANT = tail_bet.VARIANT
 # S112: the auto-green-up variant (adopting w05_e06 with profit lock-in)
 GREEN_VARIANT = "w05_e06_green"
-GREEN_VARIANTS = frozenset({GREEN_VARIANT, BMODEL_GREEN_V1, BMODEL_SCALP_V1})
+GREEN_VARIANTS = frozenset({GREEN_VARIANT}) | BMODEL_VARIANTS
 # run_cycle's default for ``chase_model``: load models/chase/current.json at the start of each cycle (None: no model).
 LOAD_CURRENT: Any = object()
 
@@ -157,6 +168,54 @@ def build_variants(max_match_loss: float = MAX_MATCH_LOSS) -> tuple[Variant, ...
             guard_double_negative=True,
             hard_ticket_limit=True,
             ticket_budget=15,
+        ),
+        Variant(
+            BMODEL_SCALP_FAST,
+            w=1.0,
+            min_edge=0.03,
+            max_match_loss=max_match_loss,
+            max_trade_risk=15_000.0,
+            auto_green_up=True,
+            guard_double_negative=True,
+            hard_ticket_limit=True,
+            ticket_budget=15,
+        ),
+        Variant(
+            BMODEL_SWING_V1,
+            w=0.6,
+            min_edge=0.04,
+            max_match_loss=max_match_loss,
+            min_tradable_odds=1.70,
+            max_tradable_odds=3.00,
+            auto_green_up=True,
+            guard_double_negative=True,
+            hard_ticket_limit=True,
+            ticket_budget=15,
+        ),
+        Variant(
+            BMODEL_DEEP_V1,
+            w=0.4,
+            min_edge=0.08,
+            max_match_loss=max_match_loss,
+            max_trade_risk=20_000.0,
+            min_tradable_odds=2.10,
+            max_tradable_odds=3.80,
+            auto_green_up=True,
+            guard_double_negative=True,
+            hard_ticket_limit=True,
+            ticket_budget=10,
+        ),
+        Variant(
+            BMODEL_FAV_LOCK_V1,
+            w=0.5,
+            min_edge=0.04,
+            max_match_loss=max_match_loss,
+            min_tradable_odds=1.35,
+            max_tradable_odds=2.50,
+            auto_green_up=True,
+            guard_double_negative=True,
+            hard_ticket_limit=True,
+            ticket_budget=12,
         ),
     ]
     tail = [Variant(TAIL_VARIANT, w=1.0, min_edge=0.0, max_match_loss=max_match_loss)]  # S107: own decision path
@@ -1041,6 +1100,10 @@ __all__ = [
     "GREEN_VARIANTS",
     "BMODEL_GREEN_V1",
     "BMODEL_SCALP_V1",
+    "BMODEL_SCALP_FAST",
+    "BMODEL_SWING_V1",
+    "BMODEL_DEEP_V1",
+    "BMODEL_FAV_LOCK_V1",
     "BMODEL_VARIANTS",
     "DbFeed",
     "PriceCache",
