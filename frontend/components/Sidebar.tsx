@@ -8,6 +8,7 @@ const navItems = [
   { href: "/", label: "Today", icon: "📊" },
   { href: "/evidence", label: "Evidence", icon: "🔬" },
   { href: "/data", label: "Data", icon: "🗄️" },
+  { href: "/signals", label: "Signals", icon: "⚡" },
 ];
 
 interface HealthResponse {

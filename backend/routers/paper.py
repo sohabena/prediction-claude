@@ -400,3 +400,82 @@ async def get_evidence() -> dict[str, Any]:
         logger.warning("Database unavailable for evidence inputs: %s", exc)
         data = {}
     return jsonable(build_evidence(data, now, latest_daily_report()))
+
+
+# ----------------------------------------------------------------------------- S117: Real-Time Trading Signals
+SIGNALS_SQL = text("""
+    SELECT pb.bet_id, pb.variant, pb.match_id, pb.side, pb.selection, pb.team, 
+           COALESCE(pb.price_filled, pb.price_limit) as price,
+           pb.price_limit, pb.price_filled, pb.stake, pb.reason, pb.edge, 
+           pb.p_model, pb.p_market, pb.status, pb.decided_at, pb.in_play,
+           vm.team_home, vm.team_away, vm.competition,
+           mc.score, mc.wickets, mc.overs, mc.is_live, mc.batting_team
+    FROM paper_bets pb
+    LEFT JOIN v_matches vm ON pb.match_id = vm.match_id
+    LEFT JOIN (
+        SELECT DISTINCT ON (match_id) match_id, score, wickets, overs, is_live, batting_team
+        FROM match_context
+        ORDER BY match_id, time DESC
+    ) mc ON pb.match_id = mc.match_id
+    ORDER BY pb.decided_at DESC
+    LIMIT :limit
+""")
+
+
+@router.get("/signals")
+async def get_signals(limit: int = 150) -> dict[str, Any]:
+    """S117: Real-time trading signals stream across all running models with match context, scores, odds, and edge."""
+    now = datetime.now(timezone.utc)
+    clamped_limit = max(1, min(limit, 300))
+    async with read_only_session() as session:
+        rows = await session.execute(SIGNALS_SQL, {"limit": clamped_limit})
+        records = [dict(r) for r in rows.mappings().all()]
+    
+    signals = []
+    for r in records:
+        decided_at = r.get("decided_at")
+        age = age_seconds(decided_at, now)
+        price = float(r.get("price") or 0.0)
+        stake = float(r.get("stake") or 0.0)
+        side = str(r.get("side") or "").upper()
+        liability = stake * (price - 1.0) if side == "LAY" and price > 1.0 else stake
+        score_val = r.get("score")
+        wickets_val = r.get("wickets")
+        overs_val = r.get("overs")
+        score_state = f"{score_val}/{wickets_val} ({overs_val} ov)" if score_val is not None else None
+
+        signals.append({
+            "bet_id": str(r.get("bet_id")),
+            "variant": r.get("variant"),
+            "match_id": r.get("match_id"),
+            "match_name": f"{r.get('team_home') or 'Home'} v {r.get('team_away') or 'Away'}",
+            "competition": r.get("competition") or "Cricket Match",
+            "team_home": r.get("team_home"),
+            "team_away": r.get("team_away"),
+            "side": side,
+            "selection": r.get("selection"),
+            "team": r.get("team") or (r.get("team_home") if r.get("selection") == "home" else r.get("team_away")),
+            "price": price,
+            "price_limit": float(r.get("price_limit") or 0.0) if r.get("price_limit") else None,
+            "price_filled": float(r.get("price_filled") or 0.0) if r.get("price_filled") else None,
+            "stake": stake,
+            "liability": liability,
+            "reason": r.get("reason"),
+            "edge": float(r.get("edge") or 0.0) if r.get("edge") is not None else None,
+            "p_model": float(r.get("p_model") or 0.0) if r.get("p_model") is not None else None,
+            "p_market": float(r.get("p_market") or 0.0) if r.get("p_market") is not None else None,
+            "status": r.get("status"),
+            "in_play": bool(r.get("in_play")),
+            "score_state": score_state,
+            "batting_team": r.get("batting_team"),
+            "is_live": bool(r.get("is_live")),
+            "decided_at": decided_at.isoformat() if isinstance(decided_at, datetime) else str(decided_at or ""),
+            "age_seconds": age,
+            "is_fresh": age is not None and age <= 180,
+        })
+
+    return jsonable({
+        "generated_at": now.isoformat(),
+        "total": len(signals),
+        "signals": signals,
+    })

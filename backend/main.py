@@ -93,6 +93,11 @@ app.include_router(data.router, prefix="/api/data", tags=["Data"])
 app.include_router(websocket_router.router, tags=["WebSocket"])
 
 
+@app.get("/api/signals")
+async def get_signals_alias(limit: int = 150):
+    return await paper.get_signals(limit=limit)
+
+
 @app.get("/")
 async def root() -> dict[str, str]:
     """Root endpoint."""
