@@ -403,7 +403,27 @@ async def get_evidence() -> dict[str, Any]:
 
 
 # ----------------------------------------------------------------------------- S117: Real-Time Trading Signals
-SIGNALS_SQL = text("""
+MATCHES_SQL = text("""
+    SELECT pb.match_id,
+           COALESCE(vm.team_home, 'Home') as team_home,
+           COALESCE(vm.team_away, 'Away') as team_away,
+           COALESCE(vm.competition, 'Cricket Match') as competition,
+           COALESCE(mc.is_live, false) as is_live,
+           mc.score, mc.wickets, mc.overs,
+           COUNT(pb.bet_id) as total_signals,
+           MAX(pb.decided_at) as latest_signal_at
+    FROM paper_bets pb
+    LEFT JOIN v_matches vm ON pb.match_id = vm.match_id
+    LEFT JOIN (
+        SELECT DISTINCT ON (match_id) match_id, score, wickets, overs, is_live
+        FROM match_context
+        ORDER BY match_id, time DESC
+    ) mc ON pb.match_id = mc.match_id
+    GROUP BY pb.match_id, vm.team_home, vm.team_away, vm.competition, mc.is_live, mc.score, mc.wickets, mc.overs
+    ORDER BY is_live DESC, latest_signal_at DESC
+""")
+
+SIGNALS_ALL_SQL = text("""
     SELECT pb.bet_id, pb.variant, pb.match_id, pb.side, pb.selection, pb.team, 
            COALESCE(pb.price_filled, pb.price_limit) as price,
            pb.price_limit, pb.price_filled, pb.stake, pb.reason, pb.edge, 
@@ -421,16 +441,61 @@ SIGNALS_SQL = text("""
     LIMIT :limit
 """)
 
+SIGNALS_BY_MATCH_SQL = text("""
+    SELECT pb.bet_id, pb.variant, pb.match_id, pb.side, pb.selection, pb.team, 
+           COALESCE(pb.price_filled, pb.price_limit) as price,
+           pb.price_limit, pb.price_filled, pb.stake, pb.reason, pb.edge, 
+           pb.p_model, pb.p_market, pb.status, pb.decided_at, pb.in_play,
+           vm.team_home, vm.team_away, vm.competition,
+           mc.score, mc.wickets, mc.overs, mc.is_live, mc.batting_team
+    FROM paper_bets pb
+    LEFT JOIN v_matches vm ON pb.match_id = vm.match_id
+    LEFT JOIN (
+        SELECT DISTINCT ON (match_id) match_id, score, wickets, overs, is_live, batting_team
+        FROM match_context
+        ORDER BY match_id, time DESC
+    ) mc ON pb.match_id = mc.match_id
+    WHERE pb.match_id = :match_id
+    ORDER BY pb.decided_at DESC
+    LIMIT :limit
+""")
+
 
 @router.get("/signals")
-async def get_signals(limit: int = 150) -> dict[str, Any]:
+async def get_signals(limit: int = 150, match_id: Optional[str] = None) -> dict[str, Any]:
     """S117: Real-time trading signals stream across all running models with match context, scores, odds, and edge."""
     now = datetime.now(timezone.utc)
     clamped_limit = max(1, min(limit, 300))
+    match_param = match_id if match_id and match_id != "all" else None
+
     async with read_only_session() as session:
-        rows = await session.execute(SIGNALS_SQL, {"limit": clamped_limit})
-        records = [dict(r) for r in rows.mappings().all()]
+        match_rows = await session.execute(MATCHES_SQL)
+        match_records = [dict(r) for r in match_rows.mappings().all()]
+        if match_param:
+            signal_rows = await session.execute(SIGNALS_BY_MATCH_SQL, {"limit": clamped_limit, "match_id": match_param})
+        else:
+            signal_rows = await session.execute(SIGNALS_ALL_SQL, {"limit": clamped_limit})
+        records = [dict(r) for r in signal_rows.mappings().all()]
     
+    matches_list = []
+    for m in match_records:
+        score_val = m.get("score")
+        wickets_val = m.get("wickets")
+        overs_val = m.get("overs")
+        score_state = f"{score_val}/{wickets_val} ({overs_val} ov)" if score_val is not None else None
+        latest_at = m.get("latest_signal_at")
+        matches_list.append({
+            "match_id": m.get("match_id"),
+            "match_name": f"{m.get('team_home')} v {m.get('team_away')}",
+            "competition": m.get("competition"),
+            "team_home": m.get("team_home"),
+            "team_away": m.get("team_away"),
+            "is_live": bool(m.get("is_live")),
+            "score_state": score_state,
+            "total_signals": int(m.get("total_signals") or 0),
+            "latest_signal_at": latest_at.isoformat() if isinstance(latest_at, datetime) else str(latest_at or ""),
+        })
+
     signals = []
     for r in records:
         decided_at = r.get("decided_at")
@@ -477,5 +542,7 @@ async def get_signals(limit: int = 150) -> dict[str, Any]:
     return jsonable({
         "generated_at": now.isoformat(),
         "total": len(signals),
+        "selected_match_id": match_param,
+        "matches": matches_list,
         "signals": signals,
     })

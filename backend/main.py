@@ -94,8 +94,8 @@ app.include_router(websocket_router.router, tags=["WebSocket"])
 
 
 @app.get("/api/signals")
-async def get_signals_alias(limit: int = 150):
-    return await paper.get_signals(limit=limit)
+async def get_signals_alias(limit: int = 150, match_id: str | None = None):
+    return await paper.get_signals(limit=limit, match_id=match_id)
 
 
 @app.get("/")
