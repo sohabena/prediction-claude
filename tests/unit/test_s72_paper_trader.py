@@ -379,6 +379,11 @@ def test_build_variants_grid_and_control():
     control = next(v for v in variants if v.name == "market_only")
     assert control.market_only is True and control.min_edge == 0.03
     assert [v.placebo for v in variants if v.placebo] == ["random", "favourite"]
+    dyn = next(v for v in variants if v.name == "mkt_dyn")
+    assert dyn.guard_double_negative is True
+    assert dyn.auto_green_up is True
+    assert dyn.hard_ticket_limit is True
+    assert dyn.ticket_budget == 15
 
 
 def test_report_and_log_line_are_json(tmp_path):

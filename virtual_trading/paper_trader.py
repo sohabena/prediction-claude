@@ -112,13 +112,22 @@ def build_variants(max_match_loss: float = MAX_MATCH_LOSS) -> tuple[Variant, ...
     placebos. Every variant has its own cap and ledger. The placebos are placed from the reference's decisions (see
     ``run_cycle``); they are never ranked."""
     grid = [
-        Variant(variant_name(w, e), w=w, min_edge=e, max_match_loss=max_match_loss)
+        Variant(variant_name(w, e), w=w, min_edge=e, max_match_loss=max_match_loss, guard_double_negative=True)
         for w in W_GRID
         for e in EDGE_GRID
     ]
     control = Variant("market_only", w=0.0, min_edge=0.03, max_match_loss=max_match_loss, market_only=True)
     dynamics = [
-        Variant(name, w=1.0, min_edge=edge, max_match_loss=max_match_loss)  # S97: w=1, the model's probability alone
+        Variant(
+            name,
+            w=1.0,
+            min_edge=edge,
+            max_match_loss=max_match_loss,
+            auto_green_up=True,
+            guard_double_negative=True,
+            hard_ticket_limit=True,
+            ticket_budget=15,
+        )
         for name, edge in DYNAMICS_MIN_EDGE.items()
     ]
     placebos = [
@@ -127,7 +136,7 @@ def build_variants(max_match_loss: float = MAX_MATCH_LOSS) -> tuple[Variant, ...
         Variant(paper_review.PLACEBO_FAVOURITE, w=0.0, min_edge=0.03, max_match_loss=max_match_loss, market_only=True,
                 placebo="favourite"),
     ]
-    green = [Variant(GREEN_VARIANT, w=0.5, min_edge=0.06, max_match_loss=max_match_loss, auto_green_up=True)]
+    green = [Variant(GREEN_VARIANT, w=0.5, min_edge=0.06, max_match_loss=max_match_loss, auto_green_up=True, guard_double_negative=True)]
     bmodels = [
         Variant(
             BMODEL_GREEN_V1,
