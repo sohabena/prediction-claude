@@ -403,3 +403,83 @@ def test_hard_ticket_limit_enforced_strictly():
     prices = {"back_home": 2.0, "lay_home": 2.1, "back_away": 2.0, "lay_away": 2.1}
     intents = _run(v_hard, 0.5, 0.5, prices, book)
     assert intents == []
+
+
+# ----------------------------------------------------------------------------- S115: multi-cycle green compounding & loss margin
+def test_multi_cycle_green_allows_reentry_when_edge_exists():
+    v_single = Variant(name="single", w=0.5, min_edge=0.03, auto_green_up=True, multi_cycle_green=False)
+    v_multi = Variant(name="multi", w=0.5, min_edge=0.03, auto_green_up=True, multi_cycle_green=True, high_scenario_edge=0.06, reentry_loss_margin=0.25)
+
+    # Greened-up book with +5,000 locked across both sides
+    book = Book(home_pnl=5_000.0, away_pnl=5_000.0, trades=2)
+    prices = {"back_home": 2.5, "lay_home": 2.6, "back_away": 1.6, "lay_away": 1.65}
+
+    # Model has edge on home (p=0.55 vs back 2.5 -> edge > 0.10)
+    # Single-shot benchmark stops trading completely:
+    assert _run(v_single, 0.55, 0.40, prices, book) == []
+
+    # Multi-cycle specialist continues trading to compound profits:
+    intents = _run(v_multi, 0.55, 0.40, prices, book)
+    assert len(intents) == 1
+    assert intents[0].side == BACK
+    assert intents[0].selection == HOME
+
+
+def test_multi_cycle_high_scenario_loss_margin_scaling():
+    # S115: For a very high scenario (edge >= high_scenario_edge), allow utilizing loss margin (reentry_loss_margin * cap).
+    # For a moderate scenario, restrict to banked profit so worst-case stays >= 0.
+    v_multi = Variant(
+        name="multi",
+        w=0.5,
+        min_edge=0.03,
+        auto_green_up=True,
+        multi_cycle_green=True,
+        high_scenario_edge=0.06,
+        reentry_loss_margin=0.25,
+        max_trade_risk=25_000.0,
+        bankroll=2_000_000.0,
+    )
+    # Greened-up book with +1,500 locked
+    book = Book(home_pnl=1_500.0, away_pnl=1_500.0, trades=2)
+
+    # Moderate edge (edge = 0.04 < high_scenario_edge 0.06):
+    # p_model = 0.44 vs market back 2.5 (p_market = 0.40) -> edge = 0.04
+    prices = {"back_home": 2.5, "lay_home": 2.6, "back_away": 1.6, "lay_away": 1.65}
+    mod_intents = _run(v_multi, 0.44, 0.40, prices, book)
+    assert len(mod_intents) == 1
+    # Risk is constrained to banked profit (1,500), so worst case after trade stays >= 0
+    assert mod_intents[0].stake <= 1_500.0 + 1e-6
+
+    # Very high scenario (edge = 0.15 >= high_scenario_edge 0.06):
+    # p_model = 0.55 vs market back 2.5 -> edge = 0.15
+    high_intents = _run(v_multi, 0.55, 0.40, prices, book)
+    assert len(high_intents) == 1
+    # Uses loss margin (up to 25k), allowing a much larger, high-conviction stake!
+    assert high_intents[0].stake > 1_500.0
+
+
+def test_edge_aware_green_up_holds_when_edge_is_massive():
+    v_multi = Variant(
+        name="multi",
+        w=0.5,
+        min_edge=0.03,
+        auto_green_up=True,
+        multi_cycle_green=True,
+        min_green_profit=2_500.0,
+    )
+    # Backed home @ 2.5 with stake 20,000 -> Home PnL +30,000, Away PnL -20,000
+    book = Book(home_pnl=30_000.0, away_pnl=-20_000.0, trades=1)
+
+    # Market moves slightly in favor: Lay home is 2.40.
+    # Greening up now would yield only +833 common profit.
+    # But our model still has a massive edge (p_model = 0.60 vs p_market = 0.41):
+    prices = {"back_home": 2.35, "lay_home": 2.40, "back_away": 1.70, "lay_away": 1.75}
+    intents = _run(v_multi, 0.60, 0.41, prices, book)
+    # Does NOT sell out prematurely for +833 when edge is massive:
+    assert not any(i.reason == "green_up" for i in intents)
+
+    # When odds move to 1.60 and common profit would be +11,250 >= min_green_profit (2,500):
+    prices_target = {"back_home": 1.55, "lay_home": 1.60, "back_away": 2.60, "lay_away": 2.70}
+    intents_target = _run(v_multi, 0.60, 0.60, prices_target, book)
+    assert len(intents_target) == 1
+    assert intents_target[0].reason == "green_up"

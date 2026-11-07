@@ -125,6 +125,10 @@ class Variant:
     auto_green_up: bool = False  # S112: lock profit across both sides as soon as market moves favorably
     guard_double_negative: bool = False  # S113: reject trades that create negative P&L on both outcomes
     hard_ticket_limit: bool = False  # S113: enforce strict ticket budget including hedges
+    multi_cycle_green: bool = False  # S115: allow multi-cycle re-entry and profit compounding once greened up
+    reentry_loss_margin: float = 0.25  # S115: share of match cap allowed as loss margin for high-edge re-entries
+    high_scenario_edge: float = 0.06  # S115: edge threshold defining a "very high scenario" to unlock loss margin
+    min_green_profit: float = 2_000.0  # S115: target minimum common profit before green-up (unless edge decays)
 
     def __post_init__(self) -> None:
         _require(0.0 <= self.w <= 1.0, f"w must be in [0, 1], got {self.w!r}")
@@ -150,6 +154,9 @@ class Variant:
         _require(math.isfinite(self.min_tradable_odds) and self.min_tradable_odds > 1.0, f"min_tradable_odds must be > 1.0, got {self.min_tradable_odds!r}")
         _require(math.isfinite(self.max_tradable_odds) and self.max_tradable_odds > self.min_tradable_odds, f"max_tradable_odds must be > min_tradable_odds, got {self.max_tradable_odds!r}")
         _require(math.isfinite(self.max_adverse_drift) and self.max_adverse_drift >= 0.0, f"max_adverse_drift must be >= 0.0, got {self.max_adverse_drift!r}")
+        _require(0.0 <= self.reentry_loss_margin <= 1.0, f"reentry_loss_margin must be in [0, 1], got {self.reentry_loss_margin!r}")
+        _require(math.isfinite(self.high_scenario_edge) and self.high_scenario_edge >= 0.0, f"high_scenario_edge must be >= 0, got {self.high_scenario_edge!r}")
+        _require(math.isfinite(self.min_green_profit) and self.min_green_profit >= 0.0, f"min_green_profit must be >= 0, got {self.min_green_profit!r}")
 
     @property
     def no_trade_band(self) -> float:
@@ -472,17 +479,31 @@ def decide(
     cap = variant.match_cap(in_play)
 
     if variant.auto_green_up and book.locked > _EPS and abs(balance) <= variant.no_trade_band:
-        # S112: Profit is already locked and balanced across all outcomes on this match. Stop trading.
-        return []
+        # S112: Profit is already locked and balanced across all outcomes on this match.
+        # S115: If multi_cycle_green is False (benchmark control), stop trading permanently.
+        # If multi_cycle_green is True (specialist models), continue trading to compound profits.
+        if not variant.multi_cycle_green:
+            return []
 
     if abs(balance) > _EPS:
         favoured = HOME if balance > 0.0 else AWAY
         hold = _find(cands, favoured, BACK)
-        # S112: Auto green-up: lock in guaranteed profit across both outcomes as soon as market moves favorably
+        # S112/S115: Auto green-up: lock in guaranteed profit across both outcomes
         if variant.auto_green_up:
-            gu_intent = _green_up(variant, book, cands, cap, min_common=_EPS)
-            if gu_intent is not None:
-                return [gu_intent]
+            if not variant.multi_cycle_green:
+                gu_intent = _green_up(variant, book, cands, cap, min_common=_EPS)
+                if gu_intent is not None:
+                    return [gu_intent]
+            else:
+                # S115: Edge-aware green-up:
+                # If edge has decayed / normalized (hold is None or hold.edge <= variant.hedge_edge), green up with min_common > 0.
+                # If edge is still strong, only green up if target profit (min_green_profit) is reached,
+                # allowing winning trades to ride the trend rather than exiting on the first tick.
+                edge_decayed = hold is None or hold.edge <= variant.hedge_edge
+                target_min = _EPS if edge_decayed else variant.min_green_profit
+                gu_intent = _green_up(variant, book, cands, cap, min_common=target_min)
+                if gu_intent is not None:
+                    return [gu_intent]
         if hold is not None and hold.edge <= -variant.hedge_edge:
             # Reduce or flip: the favoured outcome is now overpriced, so the target is the opposite side.
             opposite = _find(cands, favoured, LAY)
@@ -505,7 +526,18 @@ def decide(
             best = cand
     if best is None:
         return []
-    intent = _move_to(variant, book, _kelly_target(variant, best), cands, cap, new_risk)
+    effective_cap = cap
+    if variant.multi_cycle_green and book.locked > _EPS:
+        # S115: High-scenario loss margin allocation:
+        # If the edge qualifies as a "very high scenario" (best.edge >= high_scenario_edge),
+        # allow utilizing a percentage of the match loss limit (reentry_loss_margin * cap).
+        # Otherwise, restrict the downside to 0.0 (banked house money only, worst-case stays >= 0).
+        if best.edge >= variant.high_scenario_edge:
+            effective_cap = variant.reentry_loss_margin * cap
+        else:
+            effective_cap = 0.0
+
+    intent = _move_to(variant, book, _kelly_target(variant, best), cands, effective_cap, new_risk)
     return [intent] if intent is not None else []
 
 
