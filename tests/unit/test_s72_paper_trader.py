@@ -146,7 +146,7 @@ async def test_cycle_places_fills_and_settles(monkeypatch):
     assert report["candidates"] == 1
     assert report["considered"] == 1
     # S97: the two market-dynamics variants trade only with a model (none here), so they are not counted
-    assert report["intents"] >= len(variants) - 1 - len(pt.DYNAMICS_VARIANTS) - 1  # every variant with a clear edge places one (S107: not the tail)
+    assert report["intents"] >= len(variants) - 1 - len(pt.DYNAMICS_VARIANTS) - 2  # S107: not tail, S120: not rl_specialist
     placed = [r for r in session.rows if r.status == "pending"]
     assert placed, "a cycle with a clear edge must place pending bets"
     assert all(r.decided_at == T0 and r.match_id == MID for r in placed)
@@ -156,7 +156,7 @@ async def test_cycle_places_fills_and_settles(monkeypatch):
     # strategy rows only.
     first = {r.variant: r for r in placed if not is_placebo(r.variant)}
     assert set(first) == {v.name for v in variants if not v.market_only and v.name not in pt.DYNAMICS_VARIANTS
-                          and v.name != pt.TAIL_VARIANT}  # S107: the tail places only on a chase state
+                          and v.name not in (pt.TAIL_VARIANT, pt.RL_SPECIALIST_V1)}  # S107/S120: tail & RL trade in play
     assert all(r.side == "BACK" and r.selection == "home" and r.price_limit <= 2.2 for r in first.values())
     assert {r.variant for r in placed if is_placebo(r.variant)} == {"placebo_random", "placebo_favourite"}
 
@@ -372,6 +372,7 @@ def test_build_variants_grid_and_control():
         "mkt_dyn", "mkt_dyn_e06",  # S97: the market-dynamics variants (w = 1)
         "w05_e06_green",  # S112: auto green-up variant adopting w05_e06 with profit lock-in
         "bmodel_green_v1", "bmodel_scalp_v1", "bmodel_scalp_fast", "bmodel_swing_v1", "bmodel_deep_v1", "bmodel_fav_lock_v1",  # S113/S114: specialist bmodels
+        "rl_specialist_v1",  # S120: format-specialist reinforcement learning
         "tail",  # S107: the chase-model variant (its own decision path)
         "placebo_random", "placebo_favourite",  # S85
     ]

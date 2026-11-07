@@ -74,6 +74,23 @@ export const MODEL_SECTIONS: Record<ModelSectionId, ModelSection> = {
 
 export const MODEL_REGISTRY: Record<string, ModelMeta> = {
   // ----------------- GREEN-UP SPECIALISTS -----------------
+  rl_specialist_v1: {
+    code: "rl_specialist_v1",
+    displayName: "Format-Specialist RL (PPO)",
+    shortTag: "Reinforcement Learning · Causal PPO",
+    section: "green_up",
+    badge: "PPO Specialist",
+    badgeClass: "bg-purple-500/15 text-purple-300 border-purple-500/40",
+    description: "Format-specialized reinforcement learning agent (PPO) trained causal time-series across Tier-1 tournaments (WBBL, BBL, IPL, Tests, ODIs, T20Is) with automated green-up and institutional execution guards.",
+    mechanics: "Uses a 50-dimensional quantitative feature observation vector and format routing from ModelZoo. Enforces single-bullet entries (no averaging down), capped lay odds (<= 2.50), and Pure House Money invariants so Worst Case >= $0 once greened up.",
+    keyStats: {
+      strategyType: "PPO Policy / Institutional Execution",
+      targetOdds: "1.35 – 2.50 (Lay)",
+      minEdge: "Dynamic PPO Value",
+      exitRule: "Auto Green-Up / Target Lock",
+      lossProtection: "Single Bullet + Pure House Money + Lay <= 2.50",
+    },
+  },
   bmodel_green_v1: {
     code: "bmodel_green_v1",
     displayName: "Fundamental Value Green-Up",

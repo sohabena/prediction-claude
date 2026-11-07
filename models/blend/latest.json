@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "generated_at": "2026-11-06T07:52:28.370686+00:00",
+  "generated_at": "2026-11-07T12:02:24.754840+00:00",
   "dataset": "data/historical_odds/training_dataset.jsonl",
   "snapshot": "close",
   "include_simulated": false,

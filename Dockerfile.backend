@@ -33,6 +33,7 @@ COPY --from=builder /install /usr/local
 # Copy application code (features/ is imported at start-up by backend/services)
 COPY shared/ /app/shared/
 COPY features/ /app/features/
+COPY rl/ /app/rl/
 COPY backend/ /app/backend/
 
 # S91 read-only paper and data API. backend/routers/paper.py and data.py import, at import time, the paper trader's

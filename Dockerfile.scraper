@@ -35,6 +35,7 @@ RUN playwright install chromium && chmod -R a+rx /ms-playwright
 COPY shared/ /app/shared/
 COPY scraper/ /app/scraper/
 COPY features/ /app/features/
+COPY rl/ /app/rl/
 COPY backend/__init__.py /app/backend/__init__.py
 COPY backend/models/ /app/backend/models/
 COPY scripts/run_scraper_forever.py /app/scripts/run_scraper_forever.py

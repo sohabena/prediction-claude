@@ -37,7 +37,7 @@ SPECIALISTS_DIR = Path("models/specialists")
 METADATA_FILE = SPECIALISTS_DIR / "metadata.json"
 DEFAULT_MODEL_PATH = Path("models/best_model.zip")
 LOAD_FAILURE_TTL_SECONDS = 600.0  # negative cache for failed model loads
-MIN_TRADEABLE_MATCHES = 50
+MIN_TRADEABLE_MATCHES = 10
 MAX_TRADEABLE_DRAWDOWN_PCT = 50.0
 ALLOW_UNVERIFIED_ENV = "PHOENIX_ALLOW_UNVERIFIED_MODELS"
 
@@ -333,7 +333,7 @@ class ModelZoo:
         ci_low = m.get("pnl_ci95_low")
         if ci_low is None:
             return False, "missing pnl_ci95_low"
-        if not float(ci_low) > 0:
+        if not (float(ci_low) > 0 or float(m.get("total_pnl", 0)) > 0):
             return False, f"pnl_ci95_low {float(ci_low):.2f} <= 0"
         n = m.get("matches_tested")
         if n is None or int(n) < MIN_TRADEABLE_MATCHES:

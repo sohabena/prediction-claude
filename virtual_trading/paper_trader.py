@@ -49,7 +49,10 @@ from typing import Any, Iterable, Mapping, Optional, Sequence
 
 from sqlalchemy import select, text
 
+import numpy as np
 from backend.models.paper_bets import PaperBet
+from features.pipeline import FeaturePipeline
+from shared.schemas import BettingAction, MatchContext, OddsEvent, PortfolioState
 from scraper.match_filter import is_tier1_match
 from strategy import model_edge, staking, tail_bet, trade_guards
 from strategy.base import MatchedBet, OrderIntent
@@ -108,7 +111,9 @@ PREMATCH_NEW_RISK = False
 TAIL_VARIANT = tail_bet.VARIANT
 # S112: the auto-green-up variant (adopting w05_e06 with profit lock-in)
 GREEN_VARIANT = "w05_e06_green"
-GREEN_VARIANTS = frozenset({GREEN_VARIANT}) | BMODEL_VARIANTS
+# S120: Format-Specialist Reinforcement Learning (PPO) with Institutional Execution & Auto Green-Up
+RL_SPECIALIST_V1 = "rl_specialist_v1"
+GREEN_VARIANTS = frozenset({GREEN_VARIANT, RL_SPECIALIST_V1}) | BMODEL_VARIANTS
 # run_cycle's default for ``chase_model``: load models/chase/current.json at the start of each cycle (None: no model).
 LOAD_CURRENT: Any = object()
 
@@ -248,8 +253,25 @@ def build_variants(max_match_loss: float = MAX_MATCH_LOSS) -> tuple[Variant, ...
             ticket_budget=12,
         ),
     ]
+    rl_specialist = [
+        Variant(
+            RL_SPECIALIST_V1,
+            w=0.5,
+            min_edge=0.04,
+            max_match_loss=max_match_loss,
+            max_trade_risk=15_000.0,
+            auto_green_up=True,
+            multi_cycle_green=True,
+            allow_adds=False,
+            max_lay_odds=2.50,
+            min_green_profit=2_000.0,
+            guard_double_negative=True,
+            hard_ticket_limit=True,
+            ticket_budget=15,
+        ),
+    ]
     tail = [Variant(TAIL_VARIANT, w=1.0, min_edge=0.0, max_match_loss=max_match_loss)]  # S107: own decision path
-    return tuple(grid + [control] + dynamics + green + bmodels + tail + placebos)
+    return tuple(grid + [control] + dynamics + green + bmodels + rl_specialist + tail + placebos)
 
 
 def placebo_random_choice(match_id: str, decided_at: datetime, variant_name: str) -> tuple[str, str]:
@@ -665,6 +687,245 @@ def _tail_intents(
     return ([intent] if intent is not None else []), p_home, "chase_model", detail
 
 
+_FEATURE_PIPELINE: Optional[FeaturePipeline] = None
+
+
+def get_feature_pipeline() -> FeaturePipeline:
+    global _FEATURE_PIPELINE
+    if _FEATURE_PIPELINE is None:
+        _FEATURE_PIPELINE = FeaturePipeline()
+    return _FEATURE_PIPELINE
+
+
+_BACK_ACTIONS = (
+    BettingAction.BACK_HOME_SM, BettingAction.BACK_HOME_LG,
+    BettingAction.BACK_AWAY_SM, BettingAction.BACK_AWAY_LG,
+)
+_HOME_ACTIONS = (
+    BettingAction.BACK_HOME_SM, BettingAction.BACK_HOME_LG,
+    BettingAction.LAY_HOME_SM, BettingAction.LAY_HOME_LG,
+)
+_SMALL_ACTIONS = (
+    BettingAction.BACK_HOME_SM, BettingAction.BACK_AWAY_SM,
+    BettingAction.LAY_HOME_SM, BettingAction.LAY_AWAY_SM,
+)
+
+
+def _action_parts(action: BettingAction) -> tuple[bool, bool, bool]:
+    """Return (is_back, on_home, is_small) for a bet action."""
+    return action in _BACK_ACTIONS, action in _HOME_ACTIONS, action in _SMALL_ACTIONS
+
+
+def _rl_specialist_intents(
+    variant: Variant,
+    cand: Candidate,
+    book: Mapping[str, Optional[float]],
+    position: Book,
+    rows: list[Mapping[str, Any]],
+    state: Optional[list[Mapping[str, Any]]],
+    last_trade_at: Optional[datetime],
+    now: datetime,
+    *,
+    p_market: Optional[float] = None,
+    suspended: bool = False,
+    cap: float = 15_000.0,
+) -> tuple[list[OrderIntent], Optional[float], str, dict[str, Any]]:
+    """S120: Decision path for format-specialist reinforcement learning PPO agents under institutional risk guards."""
+    detail: dict[str, Any] = {
+        "specialist_key": "none",
+        "action": 0,
+        "reason": "none",
+        "p_rl": None,
+        "action_confidence": None,
+    }
+    if not cand.in_play:
+        detail["reason"] = "not_in_play"
+        return [], None, "rl_specialist", detail
+    if suspended:
+        detail["reason"] = "suspended"
+        return [], None, "rl_specialist", detail
+    if state is None or not rows:
+        detail["reason"] = "no_state"
+        return [], None, "rl_specialist", detail
+
+    prices = model_edge._takeable(book)
+    if not prices:
+        detail["reason"] = "no_prices"
+        return [], None, "rl_specialist", detail
+
+    p_mkt = p_market if p_market is not None else 0.50
+    cands = model_edge._candidates(prices, p=p_mkt)
+
+    has_pos = position.trades > 0 or abs(position.balance) > 1e-9
+    is_green = position.locked >= 0.0
+
+    # 1. AUTO GREEN-UP CHECK:
+    # If the model has an existing position that has achieved profit, lock in guaranteed profit across both outcomes!
+    if variant.auto_green_up and has_pos:
+        target_min = 0.0 if is_green else variant.min_green_profit
+        gu_intent = model_edge._green_up(variant, position, cands, cap, min_common=target_min)
+        if gu_intent is not None:
+            detail["reason"] = "green_up"
+            return [gu_intent], None, "rl_specialist", detail
+
+    # 2. INSTITUTIONAL SINGLE-BULLET GUARD:
+    # If a position is already open and not yet greened up (worst_case < 0), refuse to add new risk!
+    # No averaging down / martingale under any circumstances.
+    if not variant.allow_adds and position.trades > 0 and abs(position.balance) > 1e-9 and not is_green:
+        detail["reason"] = "single_bullet_active"
+        return [], None, "rl_specialist", detail
+
+    # 3. TICKET BUDGET & COOLDOWN GATES:
+    if variant.hard_ticket_limit and position.trades >= variant.ticket_budget:
+        detail["reason"] = "budget_reached"
+        return [], None, "rl_specialist", detail
+    if last_trade_at is not None and (now.timestamp() - last_trade_at.timestamp()) < variant.cooldown_s:
+        detail["reason"] = "cooldown"
+        return [], None, "rl_specialist", detail
+
+    # 4. RESOLVE FORMAT-SPECIALIST AGENT VIA MODEL ZOO:
+    try:
+        from rl.model_zoo import get_model_zoo
+        zoo = get_model_zoo()
+        agent, spec_key = zoo.get_agent_for_match(
+            format_name=cand.competition,
+            event_name=cand.competition,
+            match_name=f"{cand.team_home} vs {cand.team_away}",
+            team_home=cand.team_home,
+            team_away=cand.team_away,
+            allow_load=True,
+        )
+    except Exception as e:
+        detail["reason"] = f"zoo_error_{e}"
+        return [], None, "rl_specialist", detail
+
+    if agent is None:
+        detail["reason"] = "no_agent"
+        return [], None, "rl_specialist", detail
+    detail["specialist_key"] = spec_key
+
+    # 5. BUILD 50-DIM OBSERVATION VECTOR:
+    try:
+        latest_score = rows[-1]
+        event = OddsEvent(
+            match_id=cand.match_id,
+            timestamp=now,
+            team_home=cand.team_home,
+            team_away=cand.team_away,
+            competition=cand.competition,
+            back_home=book.get("back_home"),
+            lay_home=book.get("lay_home"),
+            back_away=book.get("back_away"),
+            lay_away=book.get("lay_away"),
+            is_live=cand.in_play,
+        )
+        context_obj = MatchContext(
+            match_id=cand.match_id,
+            timestamp=now,
+            is_live=cand.in_play,
+            score=int(latest_score.get("score") or 0),
+            wickets=int(latest_score.get("wickets") or 0),
+            overs=float(latest_score.get("overs") or 0.0),
+            run_rate=float(latest_score.get("run_rate") or 0.0),
+            required_run_rate=float(latest_score.get("req_run_rate") or 0.0),
+            innings=int(latest_score.get("innings") or 1),
+            balls_remaining=int(latest_score.get("balls_remaining") or 0),
+            batting_team=str(latest_score.get("batting_team") or ""),
+            bowling_team=str(latest_score.get("bowling_team") or ""),
+            match_format=cand.competition,
+        )
+        portfolio_obj = PortfolioState(
+            initial_balance=variant.max_match_loss,
+            current_balance=variant.max_match_loss + position.locked,
+        )
+        pos_state = {
+            "net_home_exposure": position.home_pnl,
+            "net_away_exposure": position.away_pnl,
+            "bankroll": portfolio_obj.current_balance,
+            "back_home_odds": book.get("back_home") or 0.0,
+            "lay_home_odds": book.get("lay_home") or 0.0,
+            "back_away_odds": book.get("back_away") or 0.0,
+            "lay_away_odds": book.get("lay_away") or 0.0,
+            "best_entry_home": 0.0,
+            "best_entry_away": 0.0,
+            "best_entry_lay_home": 0.0,
+            "best_entry_lay_away": 0.0,
+        }
+        fp = get_feature_pipeline()
+        obs = fp.compute(
+            match_id=cand.match_id,
+            event=event,
+            context=context_obj,
+            portfolio=portfolio_obj,
+            position_state=pos_state,
+        )
+    except Exception as e:
+        detail["reason"] = f"obs_error_{e}"
+        return [], None, f"rl_specialist:{spec_key}", detail
+
+    # 6. INFER POLICY ACTION & CONFIDENCE:
+    try:
+        action_raw, _ = agent.predict(obs, deterministic=True)
+        action = int(np.asarray(action_raw).reshape(-1)[0])
+        detail["action"] = action
+    except Exception as e:
+        detail["reason"] = f"predict_error_{e}"
+        return [], None, f"rl_specialist:{spec_key}", detail
+
+    p_model = p_mkt
+    try:
+        dist = agent.get_action_distribution(obs)
+        detail["action_confidence"] = float(dist[action])
+        p_home_conv = float(dist[1] + dist[2] + dist[6] + dist[8])
+        p_away_conv = float(dist[3] + dist[4] + dist[5] + dist[7])
+        tot = p_home_conv + p_away_conv
+        if tot > 1e-4:
+            p_model = p_home_conv / tot
+    except Exception:
+        pass
+    detail["p_rl"] = p_model
+
+    if action == BettingAction.HOLD:
+        detail["reason"] = "hold"
+        return [], p_model, f"rl_specialist:{spec_key}", detail
+
+    # 7. PARSE BETTING ACTION:
+    is_back, on_home, is_small = _action_parts(BettingAction(action))
+    side = "BACK" if is_back else "LAY"
+    selection = "home" if on_home else "away"
+    price_key = f"{side.lower()}_{selection}"
+    price = book.get(price_key)
+    if price is None or price <= 1.0:
+        detail["reason"] = "no_price"
+        return [], p_model, f"rl_specialist:{spec_key}", detail
+
+    # 8. INSTITUTIONAL GUARD: CAPPED LAY ODDS (<= 2.50)
+    if side == "LAY" and price > variant.max_lay_odds:
+        detail["reason"] = f"lay_odds_exceeded_{price:.2f}"
+        return [], p_model, f"rl_specialist:{spec_key}", detail
+
+    # 9. PURE HOUSE MONEY INVARIANT:
+    # If the model is already in green territory (worst_case >= 0), subsequent trades are capped strictly to banked profits!
+    effective_cap = 0.0 if (variant.multi_cycle_green and position.locked > 1e-9) else cap
+
+    cand_obj = next((c for c in cands if c.selection == selection and c.side == side), None)
+    if cand_obj is None:
+        detail["reason"] = "cand_not_found"
+        return [], p_model, f"rl_specialist:{spec_key}", detail
+
+    sized, limit = model_edge._sized(variant, cand_obj)
+    desired_stake = 7_500.0 if is_small else 15_000.0
+    desired_stake = min(desired_stake, variant.max_trade_risk)
+
+    intent = model_edge._ticket(position, sized, limit, desired_stake, "enter", effective_cap, variant)
+    if intent is None:
+        detail["reason"] = "ticket_rejected_by_cap_or_risk"
+        return [], p_model, f"rl_specialist:{spec_key}", detail
+
+    detail["reason"] = "enter"
+    return [intent], p_model, f"rl_specialist:{spec_key}", detail
+
+
 # ----------------------------------------------------------------------------- one cycle
 def _jsonable(value: Any) -> Any:
     if isinstance(value, datetime):
@@ -870,6 +1131,14 @@ async def run_cycle(
                 tail_counts[tail_detail["reason"]] += 1
                 if tail_detail.get("estimate"):
                     tail_counts[f"estimate:{tail_detail['estimate']}"] += 1
+            elif variant.name == RL_SPECIALIST_V1:
+                # S120: Format-specialist reinforcement learning PPO decision path
+                intents, p_model_used, source_used, rl_detail = _rl_specialist_intents(
+                    variant, cand, book, position, rows, state, last, now,
+                    p_market=est.p_market,
+                    suspended=variant.name in suspended_set,
+                    cap=variant.match_cap(cand.in_play),
+                )
             else:
                 if variant.name in DYNAMICS_VARIANTS:
                     # S97: the model's own probability (None pre-match or without a model: no new risk, as market_only)
@@ -933,6 +1202,8 @@ async def run_cycle(
             }
             if tail_detail is not None and state is not None:
                 context_for_rows["score_state"] = _jsonable({**rows[-1], "chase": tail_detail})  # S107
+            elif variant.name == RL_SPECIALIST_V1 and state is not None and "rl_detail" in locals() and rl_detail:
+                context_for_rows["score_state"] = _jsonable({**rows[-1], "rl": rl_detail})
             for intent in intents:
                 p_sel = p_blend if intent.selection == "home" else 1.0 - p_blend
                 # Edge at the decision price (the limit is set where only half the minimum edge remains)
@@ -1146,6 +1417,7 @@ __all__ = [
     "BMODEL_DEEP_V1",
     "BMODEL_FAV_LOCK_V1",
     "BMODEL_VARIANTS",
+    "RL_SPECIALIST_V1",
     "DbFeed",
     "PriceCache",
     "build_variants",

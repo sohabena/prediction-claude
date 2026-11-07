@@ -72,7 +72,8 @@ interface SignalsResponse {
 }
 
 const DEFAULT_ENABLED_MODELS: Record<string, boolean> = {
-  // By default, enable the 7 Guaranteed Green-Up Specialists as preferred by user
+  // By default, enable the 8 Guaranteed Green-Up Specialists as preferred by user
+  rl_specialist_v1: true,
   bmodel_green_v1: true,
   bmodel_scalp_v1: true,
   bmodel_scalp_fast: true,
