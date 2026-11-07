@@ -425,37 +425,46 @@ def test_multi_cycle_green_allows_reentry_when_edge_exists():
     assert intents[0].selection == HOME
 
 
-def test_multi_cycle_high_scenario_loss_margin_scaling():
-    # S115: For a very high scenario (edge >= high_scenario_edge), allow utilizing loss margin (reentry_loss_margin * cap).
-    # For a moderate scenario, restrict to banked profit so worst-case stays >= 0.
+def test_multi_cycle_pure_house_money_invariant():
+    # S116: Once greened up, any re-entry trade is strictly constrained to banked profit.
+    # Worst-case across both outcomes CANNOT drop below 0.0.
     v_multi = Variant(
         name="multi",
         w=0.5,
         min_edge=0.03,
         auto_green_up=True,
         multi_cycle_green=True,
-        high_scenario_edge=0.06,
-        reentry_loss_margin=0.25,
+        max_lay_odds=3.00,
         max_trade_risk=25_000.0,
         bankroll=2_000_000.0,
     )
     # Greened-up book with +1,500 locked
     book = Book(home_pnl=1_500.0, away_pnl=1_500.0, trades=2)
 
-    # Moderate edge (edge = 0.04 < high_scenario_edge 0.06):
-    # p_model = 0.44 vs market back 2.5 (p_market = 0.40) -> edge = 0.04
+    # Even with a massive 15% edge, risk is strictly capped at banked profit (1,500):
     prices = {"back_home": 2.5, "lay_home": 2.6, "back_away": 1.6, "lay_away": 1.65}
-    mod_intents = _run(v_multi, 0.44, 0.40, prices, book)
-    assert len(mod_intents) == 1
-    # Risk is constrained to banked profit (1,500), so worst case after trade stays >= 0
-    assert mod_intents[0].stake <= 1_500.0 + 1e-6
+    intents = _run(v_multi, 0.55, 0.40, prices, book)
+    assert len(intents) == 1
+    assert intents[0].stake <= 1_500.0 + 1e-6
 
-    # Very high scenario (edge = 0.15 >= high_scenario_edge 0.06):
-    # p_model = 0.55 vs market back 2.5 -> edge = 0.15
-    high_intents = _run(v_multi, 0.55, 0.40, prices, book)
-    assert len(high_intents) == 1
-    # Uses loss margin (up to 25k), allowing a much larger, high-conviction stake!
-    assert high_intents[0].stake > 1_500.0
+    # Verify worst-case PnL after trade is >= 0:
+    i = intents[0]
+    new_home = book.home_pnl + (i.price_limit - 1.0) * i.stake
+    new_away = book.away_pnl - i.stake
+    assert min(new_home, new_away) >= -1e-6
+
+
+def test_max_lay_odds_guard_blocks_longshot_lays():
+    # S116: Strict max_lay_odds guard prevents laying selections at extreme odds
+    v = Variant(name="test_lay", w=0.5, min_edge=0.03, max_lay_odds=3.00)
+    book = Book()
+    # Market: Away is a massive underdog (Lay 12.0, Back 11.0). Model predicts 25% edge to lay away:
+    prices = {"back_home": 1.09, "lay_home": 1.10, "back_away": 11.0, "lay_away": 12.0}
+    intents = _run(v, 0.02, 0.08, prices, book)
+    # Lay away @ 12.0 is strictly BLOCKED by max_lay_odds=3.00:
+    for intent in intents:
+        if intent.side == LAY:
+            assert intent.price_limit <= 3.00
 
 
 def test_edge_aware_green_up_holds_when_edge_is_massive():

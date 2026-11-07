@@ -120,6 +120,7 @@ class Variant:
     no_trade_share: float = 0.4  # S90: no-trade band = this share of max_trade_risk (in balance units)
     prematch_budget_share: float = 0.5  # S90: pre-match worst case may not exceed this share of max_match_loss
     min_tradable_odds: float = 1.35  # S109: minimum decimal odds for new-risk LAY
+    max_lay_odds: float = 3.00  # S116: maximum decimal odds for new-risk LAY (prevents catastrophic liability)
     max_tradable_odds: float = 4.00  # S109: maximum decimal odds for new-risk BACK
     max_adverse_drift: float = 0.30  # S110: maximum adverse price drift allowed when adding to a position
     auto_green_up: bool = False  # S112: lock profit across both sides as soon as market moves favorably
@@ -152,6 +153,7 @@ class Variant:
         )
         _require(self.placebo in ("", "random", "favourite"), f"placebo must be '', 'random' or 'favourite', got {self.placebo!r}")
         _require(math.isfinite(self.min_tradable_odds) and self.min_tradable_odds > 1.0, f"min_tradable_odds must be > 1.0, got {self.min_tradable_odds!r}")
+        _require(math.isfinite(self.max_lay_odds) and self.max_lay_odds >= self.min_tradable_odds, f"max_lay_odds must be >= min_tradable_odds, got {self.max_lay_odds!r}")
         _require(math.isfinite(self.max_tradable_odds) and self.max_tradable_odds > self.min_tradable_odds, f"max_tradable_odds must be > min_tradable_odds, got {self.max_tradable_odds!r}")
         _require(math.isfinite(self.max_adverse_drift) and self.max_adverse_drift >= 0.0, f"max_adverse_drift must be >= 0.0, got {self.max_adverse_drift!r}")
         _require(0.0 <= self.reentry_loss_margin <= 1.0, f"reentry_loss_margin must be in [0, 1], got {self.reentry_loss_margin!r}")
@@ -392,7 +394,7 @@ def _move_to(
         # Enter from flat or extend the balance's side: new risk, capped per ticket.
         if not new_risk:
             return None
-        if sized.side == LAY and sized.price < variant.min_tradable_odds:
+        if sized.side == LAY and (sized.price < variant.min_tradable_odds or sized.price > variant.max_lay_odds):
             return None
         if sized.side == BACK and sized.price >= variant.max_tradable_odds:
             return None
@@ -411,7 +413,7 @@ def _move_to(
     # Moves toward zero: the part that closes the current balance is a reduce; any part past zero is new risk.
     close = _human(min(abs(balance), abs(gap)) / per_unit)
     opened = 0.0
-    corridor_ok = not ((sized.side == LAY and sized.price < variant.min_tradable_odds) or (sized.side == BACK and sized.price >= variant.max_tradable_odds))
+    corridor_ok = not ((sized.side == LAY and (sized.price < variant.min_tradable_odds or sized.price > variant.max_lay_odds)) or (sized.side == BACK and sized.price >= variant.max_tradable_odds))
     if new_risk and corridor_ok and abs(gap) > abs(balance):
         opened = min(_human((abs(gap) - abs(balance)) / per_unit), risk_room)
     if opened > 0.0:
@@ -520,7 +522,7 @@ def decide(
     # Target: the Kelly position on the best candidate; the ticket moves the balance toward it (either direction).
     best: Optional[_Cand] = None
     for cand in cands:
-        if cand.edge <= 0.0 or cand.edge < variant.min_edge or (cand.side == LAY and cand.price < variant.min_tradable_odds) or (cand.side == BACK and cand.price >= variant.max_tradable_odds):
+        if cand.edge <= 0.0 or cand.edge < variant.min_edge or (cand.side == LAY and (cand.price < variant.min_tradable_odds or cand.price > variant.max_lay_odds)) or (cand.side == BACK and cand.price >= variant.max_tradable_odds):
             continue
         if best is None or cand.edge > best.edge:
             best = cand
@@ -528,14 +530,11 @@ def decide(
         return []
     effective_cap = cap
     if variant.multi_cycle_green and book.locked > _EPS:
-        # S115: High-scenario loss margin allocation:
-        # If the edge qualifies as a "very high scenario" (best.edge >= high_scenario_edge),
-        # allow utilizing a percentage of the match loss limit (reentry_loss_margin * cap).
-        # Otherwise, restrict the downside to 0.0 (banked house money only, worst-case stays >= 0).
-        if best.edge >= variant.high_scenario_edge:
-            effective_cap = variant.reentry_loss_margin * cap
-        else:
-            effective_cap = 0.0
+        # S116: Pure House Money Invariant:
+        # Once greened up, all re-entries are strictly constrained to already banked profits.
+        # Setting effective_cap = 0.0 guarantees that neither outcome P&L can ever drop below 0.0.
+        # The model remains 100% Guaranteed Green (Worst Case >= 0) throughout the entire match.
+        effective_cap = 0.0
 
     intent = _move_to(variant, book, _kelly_target(variant, best), cands, effective_cap, new_risk)
     return [intent] if intent is not None else []
@@ -590,7 +589,7 @@ def placebo_ticket(
     if abs(balance) <= _EPS or _sign(balance) == _sign(effect):
         if not new_risk:
             return None
-        if sized.side == LAY and sized.price < variant.min_tradable_odds:
+        if sized.side == LAY and (sized.price < variant.min_tradable_odds or sized.price > variant.max_lay_odds):
             return None
         if sized.side == BACK and sized.price >= variant.max_tradable_odds:
             return None
