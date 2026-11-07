@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { Info, X, ShieldCheck, Zap, TrendingUp, FlaskConical } from "lucide-react";
 import type { ModelMeta } from "@/lib/modelMeta";
 import { MODEL_SECTIONS } from "@/lib/modelMeta";
@@ -13,13 +14,83 @@ function SectionIcon({ section }: { section: string }) {
 }
 
 export function ModelInfoPopover({ meta }: { meta: ModelMeta }) {
+  const [mounted, setMounted] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const closeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Close when clicking outside
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const updatePosition = useCallback(() => {
+    if (!buttonRef.current) return;
+    const rect = buttonRef.current.getBoundingClientRect();
+    const popoverWidth = Math.min(384, window.innerWidth - 32);
+    // Use actual rendered height if available, or a safe default of 440px
+    const popoverHeight = popoverRef.current ? popoverRef.current.offsetHeight : 440;
+
+    // Horizontal: default to right of button, adjust if off-screen
+    let left = rect.right + 12;
+    if (left + popoverWidth > window.innerWidth - 16) {
+      left = Math.max(16, window.innerWidth - popoverWidth - 16);
+    }
+
+    // Vertical: align with button, pull upwards if near bottom of screen
+    let top = rect.top - 8;
+    if (top + popoverHeight > window.innerHeight - 16) {
+      top = Math.max(16, window.innerHeight - popoverHeight - 16);
+    }
+    if (top < 16) {
+      top = 16;
+    }
+
+    setCoords({ top, left });
+  }, []);
+
+  useEffect(() => {
+    if (isOpen) {
+      updatePosition();
+      // Next frame to measure true offsetHeight after portal renders
+      const frameId = requestAnimationFrame(updatePosition);
+
+      const handleScroll = () => updatePosition();
+      const handleResize = () => updatePosition();
+      window.addEventListener("scroll", handleScroll, true);
+      window.addEventListener("resize", handleResize);
+      return () => {
+        cancelAnimationFrame(frameId);
+        window.removeEventListener("scroll", handleScroll, true);
+        window.removeEventListener("resize", handleResize);
+      };
+    }
+  }, [isOpen, updatePosition]);
+
+  const handleMouseEnter = () => {
+    if (closeTimeoutRef.current) {
+      clearTimeout(closeTimeoutRef.current);
+      closeTimeoutRef.current = null;
+    }
+    setIsOpen(true);
+  };
+
+  const handleMouseLeave = () => {
+    closeTimeoutRef.current = setTimeout(() => {
+      setIsOpen(false);
+    }, 220);
+  };
+
+  // Click outside to close
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+      if (
+        popoverRef.current &&
+        !popoverRef.current.contains(event.target as Node) &&
+        buttonRef.current &&
+        !buttonRef.current.contains(event.target as Node)
+      ) {
         setIsOpen(false);
       }
     }
@@ -34,29 +105,37 @@ export function ModelInfoPopover({ meta }: { meta: ModelMeta }) {
   const section = MODEL_SECTIONS[meta.section];
 
   return (
-    <div
-      ref={containerRef}
-      className="relative inline-flex items-center"
-      onMouseEnter={() => setIsOpen(true)}
-      onMouseLeave={() => setIsOpen(false)}
-    >
+    <>
       <button
+        ref={buttonRef}
         type="button"
         aria-label={`About ${meta.displayName}`}
         aria-expanded={isOpen}
         onClick={(e) => {
           e.stopPropagation();
-          setIsOpen(!isOpen);
+          setIsOpen((prev) => !prev);
         }}
-        className="rounded p-0.5 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/80 transition-colors focus:outline-none focus:ring-1 focus:ring-phoenix-500"
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
+        className="rounded p-0.5 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/80 transition-colors focus:outline-none focus:ring-1 focus:ring-phoenix-500 inline-flex items-center"
       >
         <Info className="h-3.5 w-3.5" />
       </button>
 
-      {isOpen && (
+      {mounted && isOpen && coords && createPortal(
         <div
+          ref={popoverRef}
           role="tooltip"
-          className="absolute left-6 top-0 z-50 w-80 sm:w-96 rounded-xl border border-zinc-700/90 bg-zinc-900/98 p-4 text-left shadow-2xl backdrop-blur-md transition-all duration-150 animate-in fade-in zoom-in-95 pointer-events-auto"
+          style={{
+            position: "fixed",
+            top: `${coords.top}px`,
+            left: `${coords.left}px`,
+            zIndex: 99999,
+            maxWidth: "calc(100vw - 32px)",
+          }}
+          className="w-80 sm:w-96 rounded-xl border border-zinc-700/90 bg-zinc-900/98 p-4 text-left shadow-2xl backdrop-blur-md animate-in fade-in zoom-in-95 pointer-events-auto"
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
@@ -88,8 +167,8 @@ export function ModelInfoPopover({ meta }: { meta: ModelMeta }) {
             </button>
           </div>
 
-          {/* Body */}
-          <div className="mt-3 space-y-3 text-xs leading-relaxed">
+          {/* Body with vertical scrolling if screen height is constrained */}
+          <div className="mt-3 space-y-3 text-xs leading-relaxed max-h-[70vh] overflow-y-auto pr-1">
             <div>
               <span className="font-semibold text-zinc-300 uppercase tracking-wider text-[10px] block mb-0.5">
                 Strategy Mandate
@@ -124,8 +203,9 @@ export function ModelInfoPopover({ meta }: { meta: ModelMeta }) {
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
-    </div>
+    </>
   );
 }
